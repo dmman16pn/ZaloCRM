@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { router } from '@/router/index';
 
 const api = axios.create({
   baseURL: '/api/v1',
@@ -20,7 +21,11 @@ api.interceptors.response.use(
   (error) => {
     if (error.response?.status === 401) {
       localStorage.removeItem('token');
-      window.location.href = '/login';
+      // Use Vue Router instead of hard reload to prevent redirect loops
+      const currentPath = router.currentRoute.value.path;
+      if (currentPath !== '/login' && currentPath !== '/setup') {
+        router.replace('/login');
+      }
     }
     return Promise.reject(error);
   },
