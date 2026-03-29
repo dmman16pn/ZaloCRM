@@ -5,6 +5,20 @@
     <div class="d-flex align-center mb-4 flex-wrap gap-2">
       <h1 class="text-h5 mr-4">Khách hàng</h1>
       <v-spacer />
+      <v-btn
+        variant="outlined"
+        prepend-icon="mdi-content-duplicate"
+        class="mr-2"
+        @click="showDuplicateDialog = true"
+      >
+        Trùng lặp
+        <v-badge
+          v-if="duplicateTotal > 0"
+          :content="duplicateTotal"
+          color="error"
+          inline
+        />
+      </v-btn>
       <v-btn color="primary" prepend-icon="mdi-plus" @click="openCreate">Thêm KH</v-btn>
     </div>
 
@@ -75,6 +89,23 @@
       <template #item.assignedUser="{ item }">
         <span class="text-body-2">{{ item.assignedUser?.fullName ?? '—' }}</span>
       </template>
+
+      <!-- Lead score -->
+      <template #item.leadScore="{ item }">
+        <v-chip
+          :color="scoreColor(item.leadScore)"
+          size="small"
+          variant="tonal"
+        >
+          {{ item.leadScore ?? 0 }}
+        </v-chip>
+      </template>
+
+      <!-- Last activity -->
+      <template #item.lastActivity="{ item }">
+        <span v-if="item.lastActivity" class="text-body-2">{{ relativeTime(item.lastActivity) }}</span>
+        <span v-else class="text-grey">—</span>
+      </template>
     </v-data-table>
 
     <!-- Contact detail/edit dialog -->
@@ -84,6 +115,11 @@
       @saved="onSaved"
       @deleted="onDeleted"
     />
+
+    <DuplicateReviewDialog
+      v-model="showDuplicateDialog"
+      @merged="onDuplicateMerged"
+    />
   </div>
 </template>
 
@@ -91,7 +127,8 @@
 import { ref, onMounted } from 'vue';
 import ContactFilters from '@/components/contacts/ContactFilters.vue';
 import ContactDetailDialog from '@/components/contacts/ContactDetailDialog.vue';
-import { useContacts, SOURCE_OPTIONS, STATUS_OPTIONS } from '@/composables/use-contacts';
+import DuplicateReviewDialog from '@/components/contacts/DuplicateReviewDialog.vue';
+import { useContacts, useContactIntelligence, SOURCE_OPTIONS, STATUS_OPTIONS } from '@/composables/use-contacts';
 import type { Contact } from '@/composables/use-contacts';
 import MobileContactView from '@/views/MobileContactView.vue';
 import { useMobile } from '@/composables/use-mobile';
@@ -99,8 +136,10 @@ import { useMobile } from '@/composables/use-mobile';
 const { isMobile } = useMobile();
 
 const { contacts, total, loading, filters, pagination, fetchContacts } = useContacts();
+const { duplicateTotal, fetchDuplicateGroups } = useContactIntelligence();
 
 const showDialog = ref(false);
+const showDuplicateDialog = ref(false);
 const selectedContact = ref<Contact | null>(null);
 
 const headers = [
@@ -113,6 +152,8 @@ const headers = [
   { title: 'Tái khám', key: 'nextAppointment', sortable: true },
   { title: 'Ngày tiếp nhận', key: 'firstContactDate', sortable: true },
   { title: 'Sale', key: 'assignedUser', sortable: false },
+  { title: 'Điểm', key: 'leadScore', sortable: true, width: '80px' },
+  { title: 'Hoạt động', key: 'lastActivity', sortable: true },
 ];
 
 function sourceLabel(value: string) {
@@ -137,6 +178,20 @@ function statusColor(status: string) {
 function formatDate(date: string) {
   if (!date) return '';
   return new Date(date).toLocaleDateString('vi-VN');
+}
+
+function scoreColor(score: number) {
+  if (score >= 70) return 'success';
+  if (score >= 40) return 'orange';
+  return 'error';
+}
+
+function relativeTime(dateStr: string) {
+  const diff = Date.now() - new Date(dateStr).getTime();
+  const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+  if (days === 0) return 'Hôm nay';
+  if (days === 1) return 'Hôm qua';
+  return `${days} ngày trước`;
 }
 
 function onFilterChange() {
@@ -167,5 +222,13 @@ function onDeleted() {
   fetchContacts();
 }
 
-onMounted(() => fetchContacts());
+function onDuplicateMerged() {
+  fetchContacts();
+  fetchDuplicateGroups();
+}
+
+onMounted(() => {
+  fetchContacts();
+  fetchDuplicateGroups();
+});
 </script>

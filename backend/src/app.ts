@@ -37,6 +37,7 @@ import { searchRoutes } from './modules/search/search-routes.js';
 import { startZaloHealthCheck } from './modules/zalo/zalo-health-check.js';
 import { publicApiRoutes } from './modules/api/public-api-routes.js';
 import { webhookSettingsRoutes } from './modules/api/webhook-settings-routes.js';
+import { startContactIntelligence } from './modules/contacts/contact-intelligence.js';
 import { analyticsRoutes } from './modules/analytics/analytics-routes.js';
 import { savedReportRoutes } from './modules/analytics/saved-report-routes.js';
 import { integrationRoutes } from './modules/integrations/integration-routes.js';
@@ -166,6 +167,7 @@ async function bootstrap() {
     logger.info(`Environment: ${config.nodeEnv}`);
     startAppointmentReminder(io);
     startZaloHealthCheck();
+    startContactIntelligence();
   } catch (err) {
     logger.error('Failed to start server:', err);
     process.exit(1);

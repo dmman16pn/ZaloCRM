@@ -11,9 +11,9 @@ app.use(router);
 app.use(vuetify);
 app.mount('#app');
 
-// Register PWA service worker
-if ('serviceWorker' in navigator) {
-  import('virtual:pwa-register').then(({ registerSW }) => {
-    registerSW({ immediate: true });
-  });
-}
+// TODO: Re-enable PWA when vite-plugin-pwa supports vite 8
+// if ('serviceWorker' in navigator) {
+//   import('virtual:pwa-register').then(({ registerSW }) => {
+//     registerSW({ immediate: true });
+//   });
+// }

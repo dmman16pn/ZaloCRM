@@ -1,4 +1,4 @@
-import { ref, onMounted, onUnmounted } from 'vue';
+import { ref } from 'vue';
 
 const MOBILE_BREAKPOINT = 768;
 

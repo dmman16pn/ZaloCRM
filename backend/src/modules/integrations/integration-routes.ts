@@ -47,7 +47,7 @@ export async function integrationRoutes(app: FastifyInstance): Promise<void> {
       }
 
       const integration = await prisma.integration.create({
-        data: { orgId, type, name: name || type, config: cfg ?? {}, enabled: enabled ?? true },
+        data: { orgId, type, name: name || type, config: (cfg ?? {}) as any, enabled: enabled ?? true },
       });
       return reply.status(201).send(integration);
     } catch (err) {
@@ -72,7 +72,7 @@ export async function integrationRoutes(app: FastifyInstance): Promise<void> {
         where: { id },
         data: {
           ...(name !== undefined && { name }),
-          ...(cfg !== undefined && { config: cfg }),
+          ...(cfg !== undefined && { config: cfg as any }),
           ...(enabled !== undefined && { enabled }),
         },
       });

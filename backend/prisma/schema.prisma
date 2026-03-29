@@ -16,12 +16,13 @@ model Organization {
   teams         Team[]
   users         User[]
   zaloAccounts  ZaloAccount[]
-  contacts      Contact[]
-  conversations Conversation[]
+  contacts        Contact[]
+  conversations   Conversation[]
   appointments    Appointment[]
   activityLogs    ActivityLog[]
   dailyStats      DailyMessageStat[]
   settings        AppSetting[]
+  duplicateGroups DuplicateGroup[]
   savedReports    SavedReport[]
   integrations    Integration[]
   automationRules AutomationRule[]
@@ -126,14 +127,22 @@ model Contact {
   notes            String?
   tags             Json      @default("[]")
   metadata         Json      @default("{}")
+  leadScore        Int       @default(0) @map("lead_score")
+  lastActivity     DateTime? @map("last_activity")
+  mergedInto       String?   @map("merged_into")
   createdAt        DateTime  @default(now()) @map("created_at")
   updatedAt        DateTime  @updatedAt @map("updated_at")
 
-  org           Organization   @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  assignedUser  User?          @relation("AssignedContacts", fields: [assignedUserId], references: [id])
-  conversations Conversation[]
-  appointments  Appointment[]
+  org               Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  assignedUser      User?        @relation("AssignedContacts", fields: [assignedUserId], references: [id])
+  mergedIntoContact Contact?     @relation("ContactMerge", fields: [mergedInto], references: [id])
+  mergedFrom        Contact[]    @relation("ContactMerge")
+  conversations     Conversation[]
+  appointments      Appointment[]
 
+  @@index([orgId, phone])
+  @@index([orgId, zaloUid])
+  @@index([orgId, mergedInto])
   @@map("contacts")
 }
 
@@ -288,6 +297,22 @@ model AppSetting {
 
   @@unique([orgId, settingKey])
   @@map("app_settings")
+}
+
+// Groups of potentially duplicate contacts detected by the intelligence cron
+model DuplicateGroup {
+  id         String   @id @default(uuid())
+  orgId      String   @map("org_id")
+  contactIds String[] @map("contact_ids")
+  matchType  String   @map("match_type") // phone, zalo_uid, name
+  confidence Float    @default(1.0)
+  resolved   Boolean  @default(false)
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId, resolved])
+  @@map("duplicate_groups")
 }
 
 // Saved analytics report configuration

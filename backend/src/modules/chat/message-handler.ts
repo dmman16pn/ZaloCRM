@@ -57,6 +57,14 @@ export async function handleIncomingMessage(
 
     const contactId = await upsertContact(msg, account.orgId);
 
+    // Update lastActivity for lead scoring freshness
+    if (contactId) {
+      prisma.contact.update({
+        where: { id: contactId },
+        data: { lastActivity: new Date() },
+      }).catch(() => {});
+    }
+
     const conversation = await findOrCreateConversation(msg, account.orgId, contactId);
 
     const sentAt = new Date(msg.timestamp);

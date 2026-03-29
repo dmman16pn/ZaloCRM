@@ -15,6 +15,7 @@ export interface Contact {
   avatarUrl?: string | null;
   source: string | null;
   status: string | null;
+  zaloUid?: string | null;
   nextAppointment: string | null;
   notes: string | null;
   tags: string[];
@@ -22,6 +23,19 @@ export interface Contact {
   assignedUser?: { fullName: string } | null;
   createdAt?: string;
   firstContactDate?: string | null;
+  leadScore: number;
+  lastActivity: string | null;
+  mergedInto: string | null;
+}
+
+export interface DuplicateGroup {
+  id: string;
+  contactIds: string[];
+  matchType: string;
+  confidence: number;
+  resolved: boolean;
+  createdAt: string;
+  contacts: Contact[];
 }
 
 export interface ContactFilters {
@@ -148,5 +162,55 @@ export function useContacts() {
     fetchContacts, fetchContact,
     createContact, updateContact, deleteContact,
     resetFilters,
+  };
+}
+
+export function useContactIntelligence() {
+  const duplicateGroups = ref<DuplicateGroup[]>([]);
+  const duplicateTotal = ref(0);
+  const loadingDuplicates = ref(false);
+  const merging = ref(false);
+
+  async function fetchDuplicateGroups(page = 1, limit = 20) {
+    loadingDuplicates.value = true;
+    try {
+      const res = await api.get('/contacts/duplicates', {
+        params: { page, limit, resolved: 'false' },
+      });
+      duplicateGroups.value = res.data.groups ?? [];
+      duplicateTotal.value = res.data.total ?? 0;
+    } catch (err) {
+      console.error('Failed to fetch duplicate groups:', err);
+    } finally {
+      loadingDuplicates.value = false;
+    }
+  }
+
+  async function mergeDuplicateGroup(groupId: string, primaryContactId: string): Promise<boolean> {
+    merging.value = true;
+    try {
+      await api.post(`/contacts/duplicates/${groupId}/merge`, { primaryContactId });
+      return true;
+    } catch (err) {
+      console.error('Failed to merge contacts:', err);
+      return false;
+    } finally {
+      merging.value = false;
+    }
+  }
+
+  async function recomputeIntelligence(): Promise<boolean> {
+    try {
+      await api.post('/contacts/intelligence/recompute');
+      return true;
+    } catch (err) {
+      console.error('Failed to trigger recompute:', err);
+      return false;
+    }
+  }
+
+  return {
+    duplicateGroups, duplicateTotal, loadingDuplicates, merging,
+    fetchDuplicateGroups, mergeDuplicateGroup, recomputeIntelligence,
   };
 }

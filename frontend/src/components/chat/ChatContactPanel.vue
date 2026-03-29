@@ -13,6 +13,21 @@
     </div>
 
     <div class="pa-3">
+      <!-- Lead score + last activity display -->
+      <div v-if="props.contact" class="d-flex align-center mb-3 ga-2">
+        <v-chip
+          :color="scoreColor(props.contact.leadScore)"
+          size="small"
+          variant="tonal"
+          prepend-icon="mdi-star"
+        >
+          {{ props.contact.leadScore ?? 0 }} điểm
+        </v-chip>
+        <span v-if="props.contact.lastActivity" class="text-caption text-grey">
+          {{ relativeTime(props.contact.lastActivity) }}
+        </span>
+      </div>
+
       <v-text-field v-model="form.fullName" label="Họ tên" density="compact" variant="outlined" class="mb-2" hide-details />
       <v-text-field v-model="form.phone" label="Số điện thoại" density="compact" variant="outlined" class="mb-2" hide-details />
       <v-text-field v-model="form.email" label="Email" type="email" density="compact" variant="outlined" class="mb-2" hide-details />
@@ -98,4 +113,18 @@ const {
   () => props.contact,
   () => emit('saved'),
 );
+
+function scoreColor(score: number) {
+  if (score >= 70) return 'success';
+  if (score >= 40) return 'orange';
+  return 'error';
+}
+
+function relativeTime(dateStr: string) {
+  const diff = Date.now() - new Date(dateStr).getTime();
+  const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+  if (days === 0) return 'Hôm nay';
+  if (days === 1) return 'Hôm qua';
+  return `${days} ngày trước`;
+}
 </script>

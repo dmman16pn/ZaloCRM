@@ -7,6 +7,8 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { prisma } from '../../shared/database/prisma-client.js';
 import { authMiddleware } from '../auth/auth-middleware.js';
 import { logger } from '../../shared/utils/logger.js';
+import { mergeContacts } from './merge-service.js';
+import { runContactIntelligence } from './contact-intelligence.js';
 import { runAutomationRules } from '../automation/automation-service.js';
 
 type QueryParams = Record<string, string>;
@@ -27,7 +29,7 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
         assignedUserId = '',
       } = request.query as QueryParams;
 
-      const where: any = { orgId: user.orgId };
+      const where: any = { orgId: user.orgId, mergedInto: null };
       if (source) where.source = source;
       if (status) where.status = status;
       if (assignedUserId) where.assignedUserId = assignedUserId;
@@ -71,7 +73,7 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
 
       const pipeline = await prisma.contact.groupBy({
         by: ['status'],
-        where: { orgId, status: { not: null } },
+        where: { orgId, status: { not: null }, mergedInto: null },
         _count: true,
       });
 
@@ -81,7 +83,7 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
 
       await Promise.all(
         statuses.map(async (st) => {
-          const where: any = { orgId, status: st ?? null };
+          const where: any = { orgId, status: st ?? null, mergedInto: null };
           const contacts = await prisma.contact.findMany({
             where,
             select: {
@@ -289,6 +291,91 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
     } catch (err) {
       logger.error('[contacts] Delete error:', err);
       return reply.status(500).send({ error: 'Failed to delete contact' });
+    }
+  });
+
+  // ── GET /api/v1/contacts/duplicates — list unresolved duplicate groups ────
+  app.get('/api/v1/contacts/duplicates', async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const user = request.user!;
+      const { page = '1', limit = '20', resolved = 'false' } = request.query as QueryParams;
+
+      const pageNum = parseInt(page);
+      const limitNum = parseInt(limit);
+      const where = { orgId: user.orgId, resolved: resolved === 'true' };
+
+      const [groups, total] = await Promise.all([
+        prisma.duplicateGroup.findMany({
+          where,
+          orderBy: { createdAt: 'desc' },
+          skip: (pageNum - 1) * limitNum,
+          take: limitNum,
+        }),
+        prisma.duplicateGroup.count({ where }),
+      ]);
+
+      // Expand contact data for each group
+      const expanded = await Promise.all(
+        groups.map(async (group) => {
+          const contacts = await prisma.contact.findMany({
+            where: { id: { in: group.contactIds } },
+            select: {
+              id: true, fullName: true, phone: true, email: true,
+              zaloUid: true, avatarUrl: true, source: true, status: true,
+              tags: true, createdAt: true, leadScore: true, lastActivity: true,
+            },
+          });
+          return { ...group, contacts };
+        }),
+      );
+
+      return { groups: expanded, total, page: pageNum, limit: limitNum };
+    } catch (err) {
+      logger.error('[contacts] Duplicates list error:', err);
+      return reply.status(500).send({ error: 'Failed to fetch duplicate groups' });
+    }
+  });
+
+  // ── POST /api/v1/contacts/duplicates/:groupId/merge — merge a group ──────
+  app.post('/api/v1/contacts/duplicates/:groupId/merge', async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const user = request.user!;
+      const { groupId } = request.params as { groupId: string };
+      const { primaryContactId } = request.body as { primaryContactId: string };
+
+      if (!primaryContactId) return reply.status(400).send({ error: 'primaryContactId is required' });
+
+      const group = await prisma.duplicateGroup.findFirst({
+        where: { id: groupId, orgId: user.orgId, resolved: false },
+      });
+      if (!group) return reply.status(404).send({ error: 'Duplicate group not found' });
+
+      const secondaryIds = group.contactIds.filter((id) => id !== primaryContactId);
+      if (secondaryIds.length === 0) return reply.status(400).send({ error: 'Primary must be in the group' });
+
+      const merged = await mergeContacts(user.orgId, user.id, primaryContactId, secondaryIds);
+
+      // Resolve the group
+      await prisma.duplicateGroup.update({ where: { id: groupId }, data: { resolved: true } });
+
+      return merged;
+    } catch (err: any) {
+      logger.error('[contacts] Merge error:', err);
+      return reply.status(400).send({ error: err.message || 'Failed to merge contacts' });
+    }
+  });
+
+  // ── POST /api/v1/contacts/intelligence/recompute — manual trigger ────────
+  app.post('/api/v1/contacts/intelligence/recompute', async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      // Fire and forget — return 202 immediately
+      runContactIntelligence().catch((err) => {
+        logger.error('[contacts] Recompute error:', err);
+      });
+      return reply.status(202).send({ message: 'Intelligence recompute started' });
+    } catch (err) {
+      logger.error('[contacts] Recompute trigger error:', err);
+      return reply.status(500).send({ error: 'Failed to start recompute' });
     }
   });
 }

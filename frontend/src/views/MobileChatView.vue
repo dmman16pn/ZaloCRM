@@ -30,6 +30,9 @@
         :loading="loadingMsgs"
         :sending="sendingMsg"
         :show-contact-panel="false"
+        :ai-suggestion="(null as any)"
+        :ai-suggestion-loading="false"
+        :ai-suggestion-error="(null as any)"
         @send="handleSend"
         style="flex: 1; min-height: 0;"
       />
@@ -38,7 +41,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch, computed } from 'vue';
+import { onMounted, onUnmounted, watch, computed } from 'vue';
 import ConversationList from '@/components/chat/ConversationList.vue';
 import MessageThread from '@/components/chat/MessageThread.vue';
 import { useChat } from '@/composables/use-chat';
