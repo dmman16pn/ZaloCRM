@@ -22,6 +22,7 @@ model Organization {
   activityLogs    ActivityLog[]
   dailyStats      DailyMessageStat[]
   settings        AppSetting[]
+  integrations    Integration[]
   automationRules AutomationRule[]
   messageTemplates MessageTemplate[]
   aiConfig      AiConfig?
@@ -237,6 +238,39 @@ model DailyMessageStat {
 
   @@unique([userId, zaloAccountId, statDate])
   @@map("daily_message_stats")
+}
+
+// External service integration (Google Sheets, Telegram, Facebook, Zapier)
+model Integration {
+  id         String    @id @default(uuid())
+  orgId      String    @map("org_id")
+  type       String    // google_sheets | telegram | facebook | zapier
+  name       String    @default("")
+  config     Json      @default("{}") // credentials + settings
+  enabled    Boolean   @default(true)
+  lastSyncAt DateTime? @map("last_sync_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+  updatedAt  DateTime  @updatedAt @map("updated_at")
+
+  org      Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  syncLogs SyncLog[]
+
+  @@map("integrations")
+}
+
+// Sync execution log for integrations
+model SyncLog {
+  id            String   @id @default(uuid())
+  integrationId String   @map("integration_id")
+  direction     String   // import | export
+  recordCount   Int      @default(0) @map("record_count")
+  status        String   // success | partial | failed
+  errorMessage  String?  @map("error_message")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  integration Integration @relation(fields: [integrationId], references: [id], onDelete: Cascade)
+
+  @@map("sync_logs")
 }
 
 // Encrypted or plain key-value settings per org
