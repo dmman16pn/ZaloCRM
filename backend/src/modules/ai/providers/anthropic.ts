@@ -8,6 +8,7 @@ export async function generateWithAnthropic(baseUrl: string, apiKey: string, mod
       headers: {
         'content-type': 'application/json',
         'x-api-key': apiKey,
+        authorization: `Bearer ${apiKey}`,
         'anthropic-version': '2023-06-01',
       },
       body: JSON.stringify({
@@ -20,8 +21,8 @@ export async function generateWithAnthropic(baseUrl: string, apiKey: string, mod
     });
 
     if (!response.ok) {
-      const status = response.status;
-      throw new Error(`Anthropic request failed with status ${status}`);
+      const body = await response.text().catch(() => '');
+      throw new Error(`Anthropic request failed (${response.status}): ${body}`);
     }
 
     const data = await response.json() as { content?: Array<{ type: string; text?: string }> };
