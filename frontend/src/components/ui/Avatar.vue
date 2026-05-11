@@ -121,10 +121,10 @@ const initialsStyle = computed(() => ({
 }));
 
 const stickerStyle = computed(() => {
-  // 20% nhỏ hơn so với bản trước (factor 0.42 → 0.34)
-  const sz = Math.round(props.size * 0.34);
-  // 2/3 sticker nằm NGOÀI vòng tròn avatar, 1/3 chồng lên
-  const offset = Math.round(sz * 0.66);
+  // Tăng 10% so với bản trước (0.34 → 0.374)
+  const sz = Math.round(props.size * 0.374);
+  // 2/3 sticker DÍNH VÀO trong vòng tròn avatar, 1/3 nhô ra ngoài
+  const offset = Math.round(sz * 0.33);
   return {
     width: `${sz}px`,
     height: `${sz}px`,
