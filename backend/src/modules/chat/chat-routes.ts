@@ -376,6 +376,68 @@ export async function chatRoutes(app: FastifyInstance) {
     }
   });
 
+  // ── Upload image(s) and send qua Zalo (paste image / nút Gửi ảnh) ────────
+  app.post('/api/v1/conversations/:id/upload-image', { preHandler: requireZaloAccess('chat') }, async (request: FastifyRequest, reply: FastifyReply) => {
+    const user = request.user!;
+    const { id } = request.params as { id: string };
+
+    const conversation = await prisma.conversation.findFirst({
+      where: { id, orgId: user.orgId },
+      include: { zaloAccount: true },
+    });
+    if (!conversation) return reply.status(404).send({ error: 'Conversation not found' });
+    if (!conversation.externalThreadId) return reply.status(400).send({ error: 'No external thread ID' });
+
+    const instance = zaloPool.getInstance(conversation.zaloAccountId);
+    if (!instance?.api) return reply.status(400).send({ error: 'Zalo account not connected' });
+
+    const limits = await zaloRateLimiter.checkLimits(conversation.zaloAccountId);
+    if (!limits.allowed) return reply.status(429).send({ error: limits.reason });
+
+    const path = await import('node:path');
+    const os = await import('node:os');
+    const fs = await import('node:fs');
+    const { pipeline } = await import('node:stream/promises');
+
+    const tmpFiles: string[] = [];
+    try {
+      const parts = (request as unknown as { parts(): AsyncIterable<{ type: string; file: NodeJS.ReadableStream; filename: string }> }).parts();
+      for await (const part of parts) {
+        if (part.type === 'file' && part.file) {
+          const safeName = (part.filename || 'image').replace(/[^a-zA-Z0-9._-]/g, '_');
+          const tmpPath = path.join(os.tmpdir(), `zalo-upload-${randomUUID()}-${safeName}`);
+          await pipeline(part.file, fs.createWriteStream(tmpPath));
+          tmpFiles.push(tmpPath);
+        }
+      }
+      if (!tmpFiles.length) return reply.status(400).send({ error: 'No files uploaded' });
+
+      const threadType = conversation.threadType === 'group' ? 1 : 0;
+      zaloRateLimiter.recordSend(conversation.zaloAccountId);
+      // zca-js sendMessage với attachments = file paths → upload + send image
+      await instance.api.sendMessage(
+        { msg: '', attachments: tmpFiles },
+        conversation.externalThreadId,
+        threadType,
+      );
+
+      await prisma.conversation.update({
+        where: { id },
+        data: { lastMessageAt: new Date(), isReplied: true, unreadCount: 0 },
+      });
+
+      return { success: true, count: tmpFiles.length };
+    } catch (err) {
+      logger.error('[chat] Upload image error:', err);
+      return reply.status(500).send({ error: 'Upload failed', detail: String(err) });
+    } finally {
+      // Cleanup tmp files
+      for (const f of tmpFiles) {
+        fs.promises.unlink(f).catch(() => { /* ignore */ });
+      }
+    }
+  });
+
   // ── Mark conversation as read ────────────────────────────────────────────
   app.post('/api/v1/conversations/:id/mark-read', async (request: FastifyRequest, reply: FastifyReply) => {
     const user = request.user!;

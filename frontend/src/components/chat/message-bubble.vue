@@ -162,24 +162,16 @@
         @toggle="(emoji) => emit('toggle-reaction', emoji)"
       />
 
-      <!-- Hover reaction trigger -->
+      <!-- Hover reaction picker — bubble hover → trigger button visible →
+           hover trigger → emoji picker mở (open-on-hover trong reaction-picker) -->
       <div class="reaction-trigger" :class="isSelf ? 'reaction-trigger--left' : 'reaction-trigger--right'">
-        <v-btn
-          icon
-          size="x-small"
-          variant="text"
-          @click.stop="showPicker = !showPicker"
-        >
-          <v-icon size="14">mdi-emoticon-outline</v-icon>
-        </v-btn>
-        <reaction-picker v-if="showPicker" @react="onPickerReact" />
+        <reaction-picker @react="onPickerReact" />
       </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue';
 import type { Message } from '@/composables/use-chat';
 import { computed } from 'vue';
 import SpecialMessageRenderer from '@/components/chat/special-message-renderer.vue';
@@ -204,8 +196,6 @@ const emit = defineEmits<{
   'preview-image': [url: string];
   'toggle-reaction': [emoji: string];
 }>();
-
-const showPicker = ref(false);
 
 const SPECIAL_TYPES = new Set([
   'bank_transfer', 'call', 'qr_code', 'reminder', 'poll', 'note', 'forwarded', 'rich',
@@ -449,7 +439,6 @@ function formatTime(d: string): string {
 }
 
 function onPickerReact(key: string) {
-  showPicker.value = false;
   emit('toggle-reaction', key);
 }
 

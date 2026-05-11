@@ -587,15 +587,42 @@ function onPasteImage(files: File[]) {
   handleImageFiles(files);
 }
 
-function handleImageFiles(files: File[]) {
-  // MOCK: chờ backend POST /conversations/:id/upload-image
-  // Hiện hiển thị toast + log; sale sẽ thấy ngay để biết feature có ghi nhận.
-  toast.push(`📷 Đã nhận ${files.length} ảnh — chờ wire endpoint upload`, 'warning');
-  // TODO: FormData upload → response { url } → send as image message
+async function handleImageFiles(files: File[]) {
+  if (!props.conversation?.id) return;
+  if (!files.length) return;
+  toast.push(`📷 Đang gửi ${files.length} ảnh…`);
+  try {
+    const fd = new FormData();
+    for (const f of files) fd.append('files', f, f.name);
+    await api.post(`/conversations/${props.conversation.id}/upload-image`, fd, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    toast.success(`Đã gửi ${files.length} ảnh`);
+    emit('refresh-thread');
+  } catch (err) {
+    const detail = (err as { response?: { data?: { error?: string } } })?.response?.data?.error || 'Upload thất bại';
+    toast.error(`Lỗi gửi ảnh: ${detail}`);
+    console.error('[upload-image]', err);
+  }
 }
-function handleFiles(files: File[]) {
-  toast.push(`📎 Đã nhận ${files.length} file — chờ wire endpoint upload`, 'warning');
-  // TODO: similar upload flow
+async function handleFiles(files: File[]) {
+  // TODO: backend chưa có endpoint /upload-file riêng cho non-image
+  // Tạm dùng same endpoint upload-image — Zalo SDK auto detect type qua extension
+  if (!props.conversation?.id) return;
+  if (!files.length) return;
+  toast.push(`📎 Đang gửi ${files.length} file…`);
+  try {
+    const fd = new FormData();
+    for (const f of files) fd.append('files', f, f.name);
+    await api.post(`/conversations/${props.conversation.id}/upload-image`, fd, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    toast.success(`Đã gửi ${files.length} file`);
+    emit('refresh-thread');
+  } catch (err) {
+    const detail = (err as { response?: { data?: { error?: string } } })?.response?.data?.error || 'Upload thất bại';
+    toast.error(`Lỗi gửi file: ${detail}`);
+  }
 }
 
 // ── Format toggle (HTML formatting toolbar of RichTextEditor) ────────────────
