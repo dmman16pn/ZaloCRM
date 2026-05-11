@@ -1,20 +1,25 @@
 <template>
-  <div class="d-flex mb-2" :class="isSelf ? 'justify-end' : 'justify-start'">
-    <div style="max-width: 70%; position: relative;" class="bubble-wrapper">
-      <!-- Group sender name -->
-      <div
-        v-if="isGroup && !isSelf"
-        class="text-caption mb-1"
-        style="color: #00F2FF; font-weight: 500;"
-      >
+  <div class="msg-row" :class="{ self: isSelf }">
+    <!-- Avatar bên trái cho tin nhắn đến (cả group + 1-1) -->
+    <Avatar
+      v-if="!isSelf"
+      :src="senderAvatarUrl"
+      :name="message.senderName || '?'"
+      :size="32"
+      :gradient-seed="message.senderUid || message.senderName || ''"
+      class="msg-avatar"
+    />
+
+    <div class="bubble-wrapper">
+      <!-- Tên người gửi: hiện cho group + non-self -->
+      <div v-if="isGroup && !isSelf" class="sender-name">
         {{ message.senderName || 'Unknown' }}
       </div>
 
       <!-- Bubble -->
       <div
-        class="message-bubble pa-2 px-3 rounded-lg"
-        :class="isSelf ? 'bg-primary text-white' : 'bg-white'"
-        style="word-wrap: break-word;"
+        class="message-bubble"
+        :class="{ 'is-self': isSelf, 'is-other': !isSelf }"
         @contextmenu.prevent="emit('contextmenu', $event)"
       >
         <!-- Deleted -->
@@ -86,11 +91,7 @@
         </template>
 
         <!-- Timestamp -->
-        <div
-          class="text-caption mt-1 msg-time"
-          :class="isSelf ? 'text-end' : ''"
-          style="font-size: 0.7rem; opacity: 0.7;"
-        >
+        <div class="bubble-time" :class="{ 'text-end': isSelf }">
           {{ formatTime(message.sentAt) }}
         </div>
       </div>
@@ -125,13 +126,18 @@ import type { Message } from '@/composables/use-chat';
 import SpecialMessageRenderer from '@/components/chat/special-message-renderer.vue';
 import ReactionDisplay from '@/components/chat/reaction-display.vue';
 import ReactionPicker from '@/components/chat/reaction-picker.vue';
+import Avatar from '@/components/ui/Avatar.vue';
 
-const props = defineProps<{
+defineProps<{
   message: Message;
   isSelf: boolean;
   isGroup: boolean;
   reply?: Message['reply'];
   reactions?: { emoji: string; count: number; reacted: boolean }[];
+  /** Avatar URL của người gửi (lookup từ Contact theo senderUid).
+   *  Cho user thread: dùng conversation.contact.avatarUrl.
+   *  Cho group: chờ backend expose per-sender avatar; tạm null fallback initials. */
+  senderAvatarUrl?: string | null;
 }>();
 
 const emit = defineEmits<{
@@ -232,20 +238,72 @@ function openFile(href: string) {
 </script>
 
 <style scoped>
-.message-bubble {
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+.msg-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 7px;
+  margin-bottom: 5px;
 }
+.msg-row.self {
+  flex-direction: row-reverse;
+}
+.msg-avatar {
+  flex-shrink: 0;
+  margin-bottom: 16px;  /* align với bubble (offset bởi sender name + time) */
+}
+.bubble-wrapper {
+  max-width: 65%;
+  position: relative;
+}
+.sender-name {
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--smax-primary, #2962ff);
+  margin-bottom: 3px;
+  padding: 0 4px;
+}
+
+.message-bubble {
+  padding: 8px 13px;
+  border-radius: 15px;
+  font-size: 14px;
+  line-height: 1.45;
+  word-wrap: break-word;
+  word-break: break-word;
+  position: relative;
+  box-shadow: 0 1px 1px rgba(0, 0, 0, 0.06);
+}
+.message-bubble.is-other {
+  background: var(--smax-bg, #ffffff);
+  color: var(--smax-text, #212121);
+  border-radius: 4px 15px 15px 15px;
+  border: 1px solid var(--smax-grey-200, #ebedf0);
+}
+.message-bubble.is-self {
+  background: var(--smax-bubble-self, #d0e6ff);
+  color: var(--smax-text, #212121);
+  border-radius: 15px 15px 4px 15px;
+}
+
+.bubble-time {
+  font-size: 11px;
+  color: var(--smax-grey-700, #5a6478);
+  margin-top: 3px;
+  padding: 0 2px;
+}
+.bubble-time.text-end { text-align: right; }
+
 .reminder-card {
   padding: 8px 12px;
-  border-left: 3px solid #FFB74D;
-  border-radius: 8px;
-  background: rgba(255, 183, 77, 0.08);
+  border-left: 3px solid var(--smax-warning, #ff9100);
+  border-radius: 7px;
+  background: rgba(255, 145, 0, 0.08);
 }
 .reply-card {
-  padding: 8px 12px;
-  border-radius: 8px;
-  background: rgba(0, 242, 255, 0.08);
-  border-left: 3px solid #00F2FF;
+  padding: 6px 10px;
+  border-radius: 7px;
+  background: rgba(33, 150, 243, 0.08);
+  border-left: 3px solid var(--smax-primary, #2962ff);
 }
 .reply-text {
   opacity: 0.85;
@@ -254,9 +312,9 @@ function openFile(href: string) {
   display: flex;
   align-items: center;
   padding: 8px 12px;
-  border-radius: 8px;
-  background: rgba(0, 242, 255, 0.05);
-  border: 1px solid rgba(0, 242, 255, 0.1);
+  border-radius: 7px;
+  background: rgba(33, 150, 243, 0.06);
+  border: 1px solid var(--smax-grey-200, #ebedf0);
 }
 .chat-image {
   max-width: 100%;
@@ -264,10 +322,12 @@ function openFile(href: string) {
   border-radius: 12px;
   cursor: pointer;
   transition: transform 0.2s;
+  display: block;
 }
 .chat-image:hover {
   transform: scale(1.02);
 }
+
 .bubble-wrapper .reaction-trigger {
   position: absolute;
   top: 50%;

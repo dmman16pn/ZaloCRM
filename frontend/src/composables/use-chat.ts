@@ -78,6 +78,7 @@ export interface Message {
   contentType: string;
   senderType: string;
   senderName: string | null;
+  senderUid?: string | null;
   sentAt: string;
   isDeleted: boolean;
   zaloMsgId: string | null;

@@ -7,22 +7,34 @@
     </div>
 
     <template v-else>
-      <!-- ════════ Chat header (Smax-style) ════════ -->
+      <!-- ════════ Chat header (Smax-style — 2 rows) ════════ -->
       <header class="chat-header">
         <Avatar
           :src="headerAvatarSrc"
           :name="headerName"
-          :size="44"
+          :size="46"
           :gender="contactGender"
           :is-group="conversation.threadType === 'group'"
           :gradient-seed="conversation.id"
         />
 
         <div class="ch-info">
-          <div class="ch-name-row">
-            <div class="ch-name">{{ headerName }}</div>
-            <span v-if="friendshipChip" :class="['status-pill', friendshipChipClass]">
-              {{ friendshipChip }}
+          <!-- Row 1: Name | Gender/Group icon to + Care status -->
+          <div class="ch-row-1">
+            <div class="ch-name" :title="headerName">{{ headerName }}</div>
+            <span class="ch-sep">|</span>
+            <span class="ch-gender-chip" :class="genderChipClass" :title="genderTitle">
+              <svg v-if="conversation.threadType === 'group'" class="gender-svg" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/>
+              </svg>
+              <svg v-else-if="contactGender === 'female'" class="gender-svg" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M17 9.5C17 6.46 14.54 4 11.5 4S6 6.46 6 9.5c0 2.71 1.96 4.94 4.5 5.41V17H8v2h2.5v2.5h2V19H15v-2h-2.5v-2.09c2.54-.47 4.5-2.7 4.5-5.41zm-9 0C8 7.57 9.57 6 11.5 6S15 7.57 15 9.5S13.43 13 11.5 13S8 11.43 8 9.5z"/>
+              </svg>
+              <svg v-else-if="contactGender === 'male'" class="gender-svg" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M19 4h-6v2h2.59l-4.13 4.13C10.65 9.42 9.36 9 8 9c-3.31 0-6 2.69-6 6s2.69 6 6 6 6-2.69 6-6c0-1.36-.42-2.65-1.13-3.74L17 7.41V10h2V4h0zM8 19c-2.21 0-4-1.79-4-4s1.79-4 4-4 4 1.79 4 4-1.79 4-4 4z"/>
+              </svg>
+              <span v-else class="gender-q">?</span>
+              <span class="gender-label">{{ genderLabel }}</span>
             </span>
             <CareStatusBadge
               v-if="conversation.contact"
@@ -30,15 +42,29 @@
               @update:model-value="onCareStatusChange"
             />
           </div>
-          <div class="ch-meta">
-            <span v-if="conversation.contact?.phone">📞 {{ conversation.contact.phone }}</span>
-            <span v-if="friendshipDays" class="dot">·</span>
-            <span v-if="friendshipDays">{{ friendshipDays }} ngày là bạn</span>
-            <span v-if="msgCounts" class="dot">·</span>
-            <span v-if="msgCounts">{{ msgCounts }}</span>
-            <span v-if="conversation.zaloAccount?.displayName" class="dot">·</span>
-            <span v-if="conversation.zaloAccount?.displayName" class="from-nick">
-              từ nick: {{ conversation.zaloAccount.displayName }}
+
+          <!-- Row 2: nick avatar + nick name | in/out | last online -->
+          <div class="ch-row-2">
+            <Avatar
+              v-if="conversation.zaloAccount"
+              :src="conversation.zaloAccount.avatarUrl"
+              :name="conversation.zaloAccount.displayName || 'Nick'"
+              :size="22"
+              :gradient-seed="conversation.zaloAccount.id"
+              platform="zalo"
+            />
+            <span class="nick-name" :title="conversation.zaloAccount?.displayName || ''">
+              {{ conversation.zaloAccount?.displayName || '—' }}
+            </span>
+            <span class="ch-sep">|</span>
+            <span class="msg-counts" :title="`${msgInCount} tin đến / ${msgOutCount} tin gửi`">
+              <span class="cnt-in">{{ msgInCount }}</span>↘
+              <span class="cnt-out">{{ msgOutCount }}</span>↗
+            </span>
+            <span class="ch-sep">|</span>
+            <span class="last-online" :class="{ 'is-online': isOnline }">
+              <span class="online-dot" />
+              {{ lastOnlineLabel }}
             </span>
           </div>
         </div>
@@ -105,6 +131,7 @@
             :reactions="item.msg.reactions || []"
             :is-self="item.msg.senderType === 'self'"
             :is-group="conversation.threadType === 'group'"
+            :sender-avatar-url="resolveSenderAvatar(item.msg)"
             @contextmenu="onContextMenu($event, item.msg)"
             @preview-image="previewImageUrl = $event"
             @toggle-reaction="onToggleReaction(item.msg, $event)"
@@ -292,21 +319,68 @@ const headerAvatarSrc = computed(() => {
   return props.conversation?.contact?.avatarUrl || null;
 });
 const contactGender = computed(() => props.conversation?.contact?.gender || null);
+
+const genderLabel = computed(() => {
+  if (props.conversation?.threadType === 'group') return 'Nhóm';
+  if (contactGender.value === 'female') return 'Nữ';
+  if (contactGender.value === 'male') return 'Nam';
+  return 'Chưa rõ';
+});
+const genderTitle = computed(() => {
+  if (props.conversation?.threadType === 'group') return 'Nhóm hội thoại';
+  return `Giới tính: ${genderLabel.value}`;
+});
+const genderChipClass = computed(() => {
+  if (props.conversation?.threadType === 'group') return 'gender-group';
+  if (contactGender.value === 'female') return 'gender-female';
+  if (contactGender.value === 'male') return 'gender-male';
+  return 'gender-unknown';
+});
+
+// ── Message counts (per-pair, lấy từ contact aggregate cho user thread) ──────
+const msgInCount = computed(() => props.conversation?.contact?.totalInbound ?? 0);
+const msgOutCount = computed(() => props.conversation?.contact?.totalOutbound ?? 0);
+
+// ── Last online status ──────────────────────────────────────────────────────
+// MOCK: dùng contact.lastInboundAt làm proxy. Chờ wire endpoint
+// GET /zalo-accounts/:accountId/profile/last-online/:userId cho realtime.
+const onlineMins = computed<number | null>(() => {
+  if (props.conversation?.threadType === 'group') return null;
+  const at = props.conversation?.contact?.lastInboundAt;
+  if (!at) return null;
+  return Math.floor((Date.now() - new Date(at).getTime()) / 60000);
+});
+const isOnline = computed(() => onlineMins.value != null && onlineMins.value < 5);
+const lastOnlineLabel = computed(() => {
+  if (props.conversation?.threadType === 'group') {
+    const count = (props.conversation as { groupMembersCount?: number | null }).groupMembersCount;
+    return count ? `${count} thành viên` : 'Nhóm';
+  }
+  const mins = onlineMins.value;
+  if (mins == null) return 'Không rõ';
+  if (mins < 5) return 'Vừa online';
+  if (mins < 60) return `Online ${mins}p trước`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `Online ${hours}h trước`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `Online ${days}d trước`;
+  return 'Không rõ';
+});
+
+// ── Resolve sender avatar cho MessageBubble ─────────────────────────────────
+// User thread: incoming msgs → conversation.contact.avatarUrl
+// Group: per-sender avatar chờ backend bổ sung (tạm null, Avatar fallback initials)
+function resolveSenderAvatar(msg: Message): string | null {
+  if (msg.senderType === 'self') return null;
+  if (props.conversation?.threadType === 'user') {
+    return props.conversation?.contact?.avatarUrl || null;
+  }
+  return null;
+}
 const friendshipChip = computed(() => {
-  // Heuristic: if zaloUid set + thread is user, treat as friend.
   if (props.conversation?.threadType !== 'user') return null;
   if (!props.conversation?.contact?.zaloUid) return null;
   return '✓ Bạn bè';
-});
-const friendshipChipClass = computed(() => 'pill-success');
-const friendshipDays = computed(() => {
-  // MOCK: chờ field becameFriendAt expose qua /conversations payload
-  return null as number | null;
-});
-const msgCounts = computed(() => {
-  const c = props.conversation?.contact;
-  if (!c?.totalInbound && !c?.totalOutbound) return null;
-  return `${c.totalInbound ?? 0} in / ${c.totalOutbound ?? 0} out`;
 });
 const inputPlaceholder = computed(() => {
   const nick = props.conversation?.zaloAccount?.displayName || 'Zalo';
@@ -549,53 +623,118 @@ watch(() => props.messages.length, async () => {
   color: var(--smax-grey-700);
 }
 
-/* ════════ Chat header ════════ */
+/* ════════ Chat header (2-row layout) ════════ */
 .chat-header {
   background: var(--smax-bg);
-  padding: 11px 17px;
+  padding: 10px 17px;
   border-bottom: 1px solid var(--smax-grey-200);
   display: flex; align-items: center; gap: 13px;
   flex-shrink: 0;
 }
-.ch-avatar-wrap { position: relative; }
-.ch-avatar {
-  width: 44px; height: 44px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, #ff7043, #bf360c);
-  display: flex; align-items: center; justify-content: center;
-  color: white; font-weight: 600; font-size: 16px;
-}
-.gender-badge {
-  position: absolute; bottom: -2px; right: -4px;
-  width: 19px; height: 19px;
-  border-radius: 50%;
-  border: 2.5px solid var(--smax-bg);
-  display: flex; align-items: center; justify-content: center;
-  color: white; font-weight: 700; font-size: 10px;
-}
-.gender-female { background: var(--smax-female); }
-.gender-male   { background: var(--smax-male); }
 
-.ch-info { flex: 1; min-width: 0; }
-.ch-name-row {
-  display: flex; align-items: center; gap: 7px;
+.ch-info {
+  flex: 1; min-width: 0;
+  display: flex; flex-direction: column; gap: 5px;
+}
+
+/* Row 1: Name | Gender icon | Care status */
+.ch-row-1 {
+  display: flex; align-items: center; gap: 8px;
   flex-wrap: wrap;
 }
-.ch-name { font-weight: 600; font-size: 16px; color: var(--smax-text); }
+.ch-name {
+  font-weight: 600; font-size: 16px;
+  color: var(--smax-text);
+  max-width: 280px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ch-sep {
+  color: var(--smax-grey-300);
+  font-weight: 300;
+  user-select: none;
+}
+
+/* Gender/Group chip — icon to + label */
+.ch-gender-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 3px 9px 3px 5px;
+  border-radius: 13px;
+  font-size: 12px; font-weight: 500;
+}
+.ch-gender-chip .gender-svg {
+  width: 16px; height: 16px;
+  flex-shrink: 0;
+}
+.ch-gender-chip .gender-q {
+  width: 16px; height: 16px;
+  border-radius: 50%;
+  background: currentColor;
+  color: white;
+  font-size: 11px; font-weight: 700;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.ch-gender-chip .gender-q::before {
+  content: '?'; color: white;
+}
+.gender-female {
+  background: rgba(233, 30, 99, 0.10);
+  color: var(--smax-female, #e91e63);
+}
+.gender-male {
+  background: rgba(30, 136, 229, 0.10);
+  color: var(--smax-male, #1e88e5);
+}
+.gender-unknown {
+  background: var(--smax-grey-100);
+  color: var(--smax-grey-700);
+}
+.gender-unknown .gender-q { background: var(--smax-grey-700); }
+.gender-group {
+  background: rgba(13, 71, 161, 0.10);
+  color: #0D47A1;
+}
+
+/* Row 2: nick avatar + nick name | in/out | last online */
+.ch-row-2 {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 12px; color: var(--smax-grey-700);
+  flex-wrap: wrap;
+}
+.nick-name {
+  font-weight: 500; color: var(--smax-text);
+  max-width: 160px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.msg-counts {
+  display: inline-flex; align-items: center; gap: 7px;
+}
+.msg-counts .cnt-in {
+  color: #00897b; font-weight: 600;
+}
+.msg-counts .cnt-out {
+  color: var(--smax-primary); font-weight: 600;
+}
+.last-online {
+  display: inline-flex; align-items: center; gap: 4px;
+}
+.last-online .online-dot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--smax-grey-300);
+  flex-shrink: 0;
+}
+.last-online.is-online .online-dot {
+  background: var(--smax-success);
+  box-shadow: 0 0 0 2px rgba(0, 200, 83, 0.15);
+}
+
+/* Legacy keeps */
 .status-pill {
   display: inline-flex; align-items: center; gap: 3px;
   padding: 2px 7px; border-radius: 9px;
   font-size: 10px; font-weight: 500;
 }
 .pill-success { background: rgba(0,200,83,0.12); color: #00897b; }
-.ch-meta {
-  font-size: 12px; color: var(--smax-grey-700);
-  margin-top: 3px;
-  display: flex; align-items: center; gap: 5px;
-  flex-wrap: wrap;
-}
-.ch-meta .dot { color: var(--smax-grey-300); }
-.ch-meta .from-nick { font-style: italic; }
 
 .ch-actions { display: flex; gap: 5px; align-items: center; }
 .btn-action {
