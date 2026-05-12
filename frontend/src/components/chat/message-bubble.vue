@@ -278,6 +278,16 @@ function safeParse(s: unknown): Record<string, unknown> | null {
   try { return JSON.parse(s); } catch { return null; }
 }
 
+function getVideoUrl(msg: Message): string | null {
+  if (msg.contentType !== 'video' || !msg.content) return null;
+  if (msg.content.startsWith('http')) return msg.content;
+  if (!msg.content.startsWith('{')) return null;
+  try {
+    const p = JSON.parse(msg.content);
+    return p.href || p.fileUrl || p.normalUrl || null;
+  } catch { return null; }
+}
+
 function getFileInfo(msg: Message): { name: string; size: string; href: string } | null {
   if (!msg.content?.startsWith('{')) return null;
   try {
@@ -294,16 +304,6 @@ function getFileInfo(msg: Message): { name: string; size: string; href: string }
     }
   } catch {}
   return null;
-}
-
-function getVideoUrl(msg: Message): string | null {
-  if (msg.contentType !== 'video' || !msg.content) return null;
-  if (msg.content.startsWith('http')) return msg.content;
-  if (!msg.content.startsWith('{')) return null;
-  try {
-    const p = JSON.parse(msg.content);
-    return p.href || p.fileUrl || p.normalUrl || null;
-  } catch { return null; }
 }
 
 function parseDisplayContent(content: string | null): string {
