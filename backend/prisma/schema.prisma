@@ -69,6 +69,7 @@ model User {
   zaloAccess       ZaloAccountAccess[]
   assignedContacts Contact[]           @relation("AssignedContacts")
   appointments     Appointment[]
+  statusChangedAppointments Appointment[] @relation("AppointmentStatusChanger")
   repliedMessages  Message[]           @relation("RepliedMessages")
   activityLogs     ActivityLog[]
   messageTemplates MessageTemplate[]
@@ -309,6 +310,11 @@ model Appointment {
   externalRef   String?  @map("external_ref") // Zalo reminderId (params.actions[0].data.reminderId)
   zaloMessageId String?  @map("zalo_message_id") // FK mềm → Message.id (không cascade, giữ data nếu msg xoá)
   emoji         String?  // ⏰ 🔔 từ params hoặc default
+
+  // Status audit — track ai đổi status cuối cùng + lúc nào (cron auto-flip không set)
+  statusChangedByUserId String?   @map("status_changed_by_user_id")
+  statusChangedAt       DateTime? @map("status_changed_at")
+  statusChangedBy       User?     @relation("AppointmentStatusChanger", fields: [statusChangedByUserId], references: [id])
 
   org          Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
   contact      Contact      @relation(fields: [contactId], references: [id], onDelete: Cascade)

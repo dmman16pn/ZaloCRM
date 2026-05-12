@@ -23,6 +23,9 @@ export interface Appointment {
   zaloMessageId: string | null;
   emoji: string | null;
   conversationId: string | null; // resolve từ backend join với Message.conversation
+  // Audit: ai đổi status cuối + lúc nào (cron auto-flip không set)
+  statusChangedAt: string | null;
+  statusChangedBy: { id: string; fullName: string | null; email: string } | null;
 }
 
 export interface AppointmentFilters {
@@ -165,12 +168,32 @@ export function useAppointments() {
     }
   }
 
+  // Đổi status qua PATCH endpoint dedicate → backend tự set statusChangedByUserId/At
+  async function changeStatus(id: string, status: 'completed' | 'cancelled' | 'no_show' | 'scheduled' | 'overdue'): Promise<boolean> {
+    saving.value = true;
+    try {
+      const res = await api.patch(`/appointments/${id}/status`, { status });
+      const idx = appointments.value.findIndex(a => a.id === id);
+      if (idx !== -1) appointments.value[idx] = { ...appointments.value[idx], ...res.data };
+      return true;
+    } catch (err) {
+      console.error('Failed to change status:', err);
+      return false;
+    } finally {
+      saving.value = false;
+    }
+  }
+
   async function markComplete(id: string): Promise<boolean> {
-    return updateAppointment(id, { status: 'completed' } as Partial<Appointment>);
+    return changeStatus(id, 'completed');
   }
 
   async function cancelAppointment(id: string): Promise<boolean> {
-    return updateAppointment(id, { status: 'cancelled' } as Partial<Appointment>);
+    return changeStatus(id, 'cancelled');
+  }
+
+  async function markNoShow(id: string): Promise<boolean> {
+    return changeStatus(id, 'no_show');
   }
 
   return {
@@ -179,6 +202,6 @@ export function useAppointments() {
     filters,
     fetchAppointments, fetchToday, fetchUpcoming,
     createAppointment, updateAppointment, deleteAppointment,
-    markComplete, cancelAppointment,
+    markComplete, cancelAppointment, markNoShow, changeStatus,
   };
 }

@@ -111,11 +111,16 @@
         {{ typeLabel(item.type) }}
       </template>
 
-      <!-- Status chip -->
+      <!-- Status chip + audit info -->
       <template #item.status="{ item }">
         <v-chip :color="statusChipColor(item.status)" size="small" variant="tonal">
           {{ statusLabel(item.status) }}
         </v-chip>
+        <div v-if="item.statusChangedBy && item.status !== 'scheduled' && item.status !== 'overdue'" class="text-caption text-grey mt-1">
+          <v-icon size="11">mdi-account-check-outline</v-icon>
+          {{ item.statusChangedBy.fullName || item.statusChangedBy.email }}
+          <span v-if="item.statusChangedAt"> · {{ formatRelativeTime(item.statusChangedAt) }}</span>
+        </div>
       </template>
 
       <!-- Notes -->
@@ -123,29 +128,37 @@
         <span class="text-body-2">{{ item.notes ?? '—' }}</span>
       </template>
 
-      <!-- Quick actions -->
+      <!-- Quick actions: 1-click status change cho appointment chưa có outcome -->
       <template #item.actions="{ item }">
-        <div class="d-flex gap-1">
+        <div class="d-flex gap-1 flex-wrap">
+          <template v-if="item.status === 'scheduled' || item.status === 'overdue'">
+            <v-btn
+              size="x-small"
+              variant="tonal"
+              color="success"
+              prepend-icon="mdi-check"
+              title="Hoàn thành"
+              @click.stop="onMarkComplete(item.id)"
+            >Xong</v-btn>
+            <v-btn
+              size="x-small"
+              variant="tonal"
+              color="error"
+              prepend-icon="mdi-account-cancel-outline"
+              title="Khách không đến"
+              @click.stop="onNoShow(item.id)"
+            >Vắng</v-btn>
+            <v-btn
+              size="x-small"
+              variant="text"
+              color="grey"
+              prepend-icon="mdi-close"
+              title="Huỷ"
+              @click.stop="onCancel(item.id)"
+            >Huỷ</v-btn>
+          </template>
           <v-btn
-            v-if="item.status === 'scheduled'"
-            size="small"
-            variant="text"
-            color="success"
-            icon="mdi-check"
-            title="Hoàn thành"
-            @click.stop="onMarkComplete(item.id)"
-          />
-          <v-btn
-            v-if="item.status === 'scheduled'"
-            size="small"
-            variant="text"
-            color="grey"
-            icon="mdi-cancel"
-            title="Huỷ"
-            @click.stop="onCancel(item.id)"
-          />
-          <v-btn
-            size="small"
+            size="x-small"
             variant="text"
             color="error"
             icon="mdi-delete"
@@ -223,7 +236,7 @@ const {
   appointments, todayAppointments, upcomingAppointments,
   loading, saving, filters, sourceCounts,
   fetchAppointments, fetchToday, fetchUpcoming,
-  createAppointment, deleteAppointment, markComplete, cancelAppointment,
+  createAppointment, deleteAppointment, markComplete, cancelAppointment, markNoShow,
 } = useAppointments();
 
 const activeTab = ref<'today' | 'upcoming' | 'all'>('today');
@@ -291,9 +304,27 @@ async function onCancel(id: string) {
   refreshActive();
 }
 
+async function onNoShow(id: string) {
+  await markNoShow(id);
+  refreshActive();
+}
+
 async function onDelete(id: string) {
   await deleteAppointment(id);
   refreshActive();
+}
+
+function formatRelativeTime(iso: string): string {
+  const then = new Date(iso).getTime();
+  const now = Date.now();
+  const diffMin = Math.floor((now - then) / 60000);
+  if (diffMin < 1) return 'vừa xong';
+  if (diffMin < 60) return `${diffMin} phút trước`;
+  const diffH = Math.floor(diffMin / 60);
+  if (diffH < 24) return `${diffH} giờ trước`;
+  const diffD = Math.floor(diffH / 24);
+  if (diffD < 7) return `${diffD} ngày trước`;
+  return new Date(iso).toLocaleDateString('vi-VN');
 }
 
 async function onCreateSave() {

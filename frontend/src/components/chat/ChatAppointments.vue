@@ -146,6 +146,41 @@
             <v-icon size="14">mdi-pencil</v-icon>
           </v-btn>
         </div>
+
+        <!-- Row 3: quick action buttons (chỉ show khi status còn ở scheduled/overdue) -->
+        <div v-if="canQuickAction(apt)" class="apt-quick-actions">
+          <v-btn
+            size="x-small"
+            variant="tonal"
+            color="success"
+            prepend-icon="mdi-check"
+            :loading="changingId === apt.id && changingTo === 'completed'"
+            @click="quickChangeStatus(apt, 'completed')"
+          >Hoàn thành</v-btn>
+          <v-btn
+            size="x-small"
+            variant="tonal"
+            color="error"
+            prepend-icon="mdi-account-cancel-outline"
+            :loading="changingId === apt.id && changingTo === 'no_show'"
+            @click="quickChangeStatus(apt, 'no_show')"
+          >Không đến</v-btn>
+          <v-btn
+            size="x-small"
+            variant="text"
+            color="grey"
+            prepend-icon="mdi-close"
+            :loading="changingId === apt.id && changingTo === 'cancelled'"
+            @click="quickChangeStatus(apt, 'cancelled')"
+          >Huỷ</v-btn>
+        </div>
+
+        <!-- Audit line: hiển thị ai đổi status + lúc nào -->
+        <div v-if="apt.statusChangedBy && apt.status !== 'scheduled' && apt.status !== 'overdue'" class="apt-audit">
+          <v-icon size="11">mdi-account-check-outline</v-icon>
+          {{ apt.statusChangedBy.fullName || apt.statusChangedBy.email }}
+          <span v-if="apt.statusChangedAt">· {{ formatRelativeTime(apt.statusChangedAt) }}</span>
+        </div>
       </div>
 
       <!-- Edit mode -->
@@ -208,6 +243,8 @@ export interface Appointment {
   emoji?: string | null;
   externalRef?: string | null;
   zaloMessageId?: string | null;
+  statusChangedAt?: string | null;
+  statusChangedBy?: { id: string; fullName: string | null; email: string } | null;
 }
 
 const props = defineProps<{
@@ -223,6 +260,8 @@ const showForm = ref(false);
 const creating = ref(false);
 const saving = ref(false);
 const editingId = ref<string | null>(null);
+const changingId = ref<string | null>(null);
+const changingTo = ref<string | null>(null);
 
 // Form: date là Date object (cho v-date-picker), time là "HH:mm" string
 const createForm = reactive({
@@ -388,6 +427,38 @@ function startEdit(apt: Appointment) {
   editForm.status = apt.status;
 }
 
+// Quick action: chỉ active khi status đang ở scheduled/overdue (chưa có outcome cuối)
+function canQuickAction(apt: Appointment): boolean {
+  return apt.status === 'scheduled' || apt.status === 'overdue';
+}
+
+async function quickChangeStatus(apt: Appointment, newStatus: 'completed' | 'cancelled' | 'no_show') {
+  changingId.value = apt.id;
+  changingTo.value = newStatus;
+  try {
+    await api.patch(`/appointments/${apt.id}/status`, { status: newStatus });
+    emit('refresh');
+  } catch (err) {
+    console.error('Quick status change error:', err);
+  } finally {
+    changingId.value = null;
+    changingTo.value = null;
+  }
+}
+
+function formatRelativeTime(iso: string): string {
+  const then = new Date(iso).getTime();
+  const now = Date.now();
+  const diffMin = Math.floor((now - then) / 60000);
+  if (diffMin < 1) return 'vừa xong';
+  if (diffMin < 60) return `${diffMin} phút trước`;
+  const diffH = Math.floor(diffMin / 60);
+  if (diffH < 24) return `${diffH} giờ trước`;
+  const diffD = Math.floor(diffH / 24);
+  if (diffD < 7) return `${diffD} ngày trước`;
+  return new Date(iso).toLocaleDateString('vi-VN');
+}
+
 async function submitCreate() {
   if (!createForm.date || !createForm.time || !props.contactId) return;
   creating.value = true;
@@ -486,6 +557,31 @@ async function submitEdit(appointmentId: string) {
   color: #757575;
   margin-top: 2px;
   line-height: 1.4;
+}
+
+.apt-quick-actions {
+  display: flex;
+  gap: 4px;
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px dashed rgba(0, 0, 0, 0.08);
+}
+.apt-quick-actions :deep(.v-btn) {
+  font-size: 10px !important;
+  letter-spacing: 0;
+}
+
+.apt-audit {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 6px;
+  font-size: 10px;
+  color: #757575;
+  font-style: italic;
+}
+.apt-audit .v-icon {
+  font-size: 11px;
 }
 
 .apt-empty {

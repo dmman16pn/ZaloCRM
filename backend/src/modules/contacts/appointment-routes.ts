@@ -13,6 +13,7 @@ type QueryParams = Record<string, string>;
 const APPOINTMENT_INCLUDE = {
   contact: { select: { id: true, fullName: true, phone: true, avatarUrl: true } },
   assignedUser: { select: { id: true, fullName: true } },
+  statusChangedBy: { select: { id: true, fullName: true, email: true } },
 } as const;
 
 export async function appointmentRoutes(app: FastifyInstance): Promise<void> {
@@ -201,14 +202,21 @@ export async function appointmentRoutes(app: FastifyInstance): Promise<void> {
   });
 
   // ── PUT /api/v1/appointments/:id — update ─────────────────────────────────
+  // Khi body.status đổi so với existing.status → set statusChangedByUserId + statusChangedAt
+  // để track sale nào ra quyết định (cron auto-flip overdue KHÔNG đi qua route này).
   app.put('/api/v1/appointments/:id', async (request: FastifyRequest, reply: FastifyReply) => {
     try {
       const user = request.user!;
       const { id } = request.params as { id: string };
       const body = request.body as Record<string, any>;
 
-      const existing = await prisma.appointment.findFirst({ where: { id, orgId: user.orgId }, select: { id: true } });
+      const existing = await prisma.appointment.findFirst({
+        where: { id, orgId: user.orgId },
+        select: { id: true, status: true },
+      });
       if (!existing) return reply.status(404).send({ error: 'Appointment not found' });
+
+      const statusChanging = body.status !== undefined && body.status !== existing.status;
 
       const updated = await prisma.appointment.update({
         where: { id },
@@ -220,6 +228,7 @@ export async function appointmentRoutes(app: FastifyInstance): Promise<void> {
           type: body.type,
           status: body.status,
           notes: body.notes,
+          ...(statusChanging ? { statusChangedByUserId: user.id, statusChangedAt: new Date() } : {}),
         },
         include: APPOINTMENT_INCLUDE,
       });
@@ -228,6 +237,39 @@ export async function appointmentRoutes(app: FastifyInstance): Promise<void> {
     } catch (err) {
       logger.error('[appointments] Update error:', err);
       return reply.status(500).send({ error: 'Failed to update appointment' });
+    }
+  });
+
+  // ── PATCH /api/v1/appointments/:id/status — quick status change ───────────
+  // Endpoint riêng cho 1-click action buttons trên row (Hoàn thành / Huỷ / Không đến)
+  app.patch('/api/v1/appointments/:id/status', async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const user = request.user!;
+      const { id } = request.params as { id: string };
+      const { status } = request.body as { status: string };
+      const VALID = ['scheduled', 'overdue', 'completed', 'cancelled', 'no_show'];
+      if (!VALID.includes(status)) return reply.status(400).send({ error: 'Invalid status' });
+
+      const existing = await prisma.appointment.findFirst({
+        where: { id, orgId: user.orgId },
+        select: { id: true, status: true },
+      });
+      if (!existing) return reply.status(404).send({ error: 'Appointment not found' });
+
+      const updated = await prisma.appointment.update({
+        where: { id },
+        data: {
+          status,
+          statusChangedByUserId: user.id,
+          statusChangedAt: new Date(),
+        },
+        include: APPOINTMENT_INCLUDE,
+      });
+      logger.info(`[appointments] User ${user.email} changed appt ${id} status: ${existing.status} → ${status}`);
+      return updated;
+    } catch (err) {
+      logger.error('[appointments] Status update error:', err);
+      return reply.status(500).send({ error: 'Failed to update status' });
     }
   });
 
