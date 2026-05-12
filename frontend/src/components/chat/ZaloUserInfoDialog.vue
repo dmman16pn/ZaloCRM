@@ -93,21 +93,109 @@
           </div>
         </div>
 
-        <!-- Action buttons -->
+        <!-- Action buttons hàng 1: Kết bạn + Nhắn tin (primary actions) -->
         <div class="zui-actions">
           <v-btn
-            size="small" variant="tonal" color="primary"
+            v-if="info.isFr !== 1 && info.isBlocked !== 1 && zaloAccountId"
+            size="small" variant="flat" color="success"
+            prepend-icon="mdi-account-plus"
+            :loading="friendRequestLoading"
+            :disabled="friendRequestSent"
+            @click="onSendFriendRequest"
+          >
+            {{ friendRequestSent ? 'Đã gửi lời mời' : 'Kết bạn' }}
+          </v-btn>
+          <v-btn
+            v-if="crmContact && crmContact.lastConversationId"
+            size="small" variant="flat" color="primary"
+            prepend-icon="mdi-message-text"
+            @click="onOpenChat"
+          >Nhắn tin</v-btn>
+        </div>
+
+        <!-- Action buttons hàng 2: secondary (zalo.me link + copy UID) -->
+        <div class="zui-actions zui-actions-secondary">
+          <v-btn
+            size="x-small" variant="text" color="primary"
             prepend-icon="mdi-link-variant"
             :href="`https://zalo.me/${info.uid}`"
             target="_blank"
           >Mở trên Zalo</v-btn>
           <v-btn
-            size="small" variant="text" color="grey"
+            size="x-small" variant="text" color="grey"
             prepend-icon="mdi-content-copy"
             @click="copy(info.uid)"
           >Copy UID</v-btn>
         </div>
       </v-card-text>
+
+      <!-- CRM Contact panel — tách biệt với phần Zalo info phía trên -->
+      <div v-if="crmContact" class="zui-crm-panel">
+        <div class="zui-crm-header">
+          <v-icon size="14" color="primary">mdi-account-circle-outline</v-icon>
+          <span>Khách hàng CRM</span>
+          <v-spacer />
+          <v-chip v-if="crmStatusLabel" size="x-small" :color="crmStatusColor" variant="tonal">
+            {{ crmStatusLabel }}
+          </v-chip>
+        </div>
+        <div class="zui-crm-body">
+          <div v-if="crmContact.crmName || crmContact.fullName" class="zui-row">
+            <v-icon size="13">mdi-account</v-icon>
+            <span>{{ crmContact.crmName || crmContact.fullName }}</span>
+          </div>
+          <div v-if="crmContact.phone" class="zui-row">
+            <v-icon size="13" color="success">mdi-phone</v-icon>
+            <span>{{ crmContact.phone }}</span>
+          </div>
+          <div v-if="crmContact.email" class="zui-row">
+            <v-icon size="13">mdi-email-outline</v-icon>
+            <span>{{ crmContact.email }}</span>
+          </div>
+          <div v-if="crmContact.assignedUser" class="zui-row">
+            <v-icon size="13" color="info">mdi-account-tie</v-icon>
+            <span>Phụ trách: <strong>{{ crmContact.assignedUser.fullName || crmContact.assignedUser.email }}</strong></span>
+          </div>
+          <div v-if="crmContact.source" class="zui-row">
+            <v-icon size="13">mdi-source-branch</v-icon>
+            <span>Nguồn: {{ crmContact.source }}</span>
+          </div>
+          <div class="zui-crm-stats">
+            <div class="zui-stat">
+              <div class="zui-stat-num">{{ crmContact.conversationsCount }}</div>
+              <div class="zui-stat-label">hội thoại</div>
+            </div>
+            <div class="zui-stat">
+              <div class="zui-stat-num">{{ crmContact.appointmentsCount }}</div>
+              <div class="zui-stat-label">lịch hẹn</div>
+            </div>
+            <div v-if="crmContact.leadScore > 0" class="zui-stat">
+              <div class="zui-stat-num zui-stat-score">{{ crmContact.leadScore }}</div>
+              <div class="zui-stat-label">lead score</div>
+            </div>
+          </div>
+          <div v-if="crmTags.length > 0" class="zui-crm-tags">
+            <v-chip v-for="tag in crmTags" :key="tag" size="x-small" variant="outlined" color="primary">
+              {{ tag }}
+            </v-chip>
+          </div>
+          <div v-if="crmContact.notes" class="zui-crm-notes">
+            <v-icon size="11" class="mr-1">mdi-note-text-outline</v-icon>
+            {{ crmContact.notes }}
+          </div>
+          <v-btn
+            size="x-small" variant="text" color="primary" block class="mt-2"
+            prepend-icon="mdi-account-details"
+            @click="onOpenContactDetail"
+          >Mở chi tiết khách hàng</v-btn>
+        </div>
+      </div>
+
+      <!-- Trạng thái khi không có CRM contact -->
+      <div v-else-if="crmContact === null && crmLoaded" class="zui-crm-empty">
+        <v-icon size="14" color="grey">mdi-account-off-outline</v-icon>
+        <span>Chưa có trong danh sách khách hàng CRM</span>
+      </div>
     </v-card>
 
     <v-card v-else-if="loading" class="zui-loading">
@@ -124,7 +212,12 @@
 
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue';
+import { useRouter } from 'vue-router';
 import { api } from '@/api/index';
+import { useToast } from '@/composables/use-toast';
+
+const router = useRouter();
+const toast = useToast();
 
 interface ZaloUserInfo {
   uid: string;
@@ -159,9 +252,29 @@ interface ZaloUserInfo {
   oaStatus: unknown;
 }
 
+interface CrmContact {
+  id: string;
+  fullName: string | null;
+  crmName: string | null;
+  phone: string | null;
+  email: string | null;
+  source: string | null;
+  status: string | null;
+  notes: string | null;
+  tags: unknown;
+  leadScore: number;
+  firstContactDate: string | null;
+  lastActivity: string | null;
+  assignedUser: { id: string; fullName: string | null; email: string } | null;
+  conversationsCount: number;
+  appointmentsCount: number;
+  lastConversationId: string | null;
+}
+
 const props = defineProps<{
   modelValue: boolean;
   uid: string;
+  zaloAccountId?: string; // dùng cho friend request endpoint
 }>();
 
 const emit = defineEmits<{
@@ -176,14 +289,27 @@ const open = computed({
 const info = ref<ZaloUserInfo | null>(null);
 const loading = ref(false);
 const error = ref(false);
+const crmContact = ref<CrmContact | null>(null);
+const crmLoaded = ref(false);
+const friendRequestLoading = ref(false);
+const friendRequestSent = ref(false);
 
 async function load(uid: string) {
   loading.value = true;
   error.value = false;
   info.value = null;
+  crmContact.value = null;
+  crmLoaded.value = false;
+  friendRequestSent.value = false;
   try {
-    const res = await api.get(`/zalo-user-info/${uid}`);
-    info.value = res.data as ZaloUserInfo;
+    // Fetch Zalo info + CRM contact song song
+    const [zaloRes, crmRes] = await Promise.all([
+      api.get(`/zalo-user-info/${uid}`),
+      api.get(`/contacts/by-zalo-uid/${uid}`).catch(() => ({ data: { contact: null } })),
+    ]);
+    info.value = zaloRes.data as ZaloUserInfo;
+    crmContact.value = (crmRes.data?.contact || null) as CrmContact | null;
+    crmLoaded.value = true;
   } catch (err) {
     console.error('[zalo-user-info] load error:', err);
     error.value = true;
@@ -194,6 +320,59 @@ async function load(uid: string) {
 
 watch(() => props.uid, (uid) => { if (uid && props.modelValue) void load(uid); });
 watch(() => props.modelValue, (v) => { if (v && props.uid) void load(props.uid); });
+
+async function onSendFriendRequest() {
+  if (!props.zaloAccountId || !info.value) return;
+  friendRequestLoading.value = true;
+  try {
+    await api.post(`/zalo-accounts/${props.zaloAccountId}/friends/requests`, {
+      userId: info.value.uid,
+      message: 'Xin chào, tôi muốn kết bạn với bạn.',
+    });
+    friendRequestSent.value = true;
+    toast.push('Đã gửi lời mời kết bạn', 'success');
+  } catch (err: unknown) {
+    const e = err as { response?: { data?: { error?: string } } };
+    toast.push(e.response?.data?.error || 'Không gửi được lời mời', 'error');
+  } finally {
+    friendRequestLoading.value = false;
+  }
+}
+
+function onOpenChat() {
+  if (!crmContact.value?.lastConversationId) return;
+  router.push(`/chat/${crmContact.value.lastConversationId}`);
+  emit('update:modelValue', false);
+}
+
+function onOpenContactDetail() {
+  if (!crmContact.value) return;
+  router.push(`/contacts/${crmContact.value.id}`);
+  emit('update:modelValue', false);
+}
+
+const crmTags = computed<string[]>(() => {
+  const t = crmContact.value?.tags;
+  if (!t) return [];
+  if (Array.isArray(t)) return t.filter((x): x is string => typeof x === 'string');
+  return [];
+});
+
+const CRM_STATUS_LABEL: Record<string, { label: string; color: string }> = {
+  new: { label: 'Mới', color: 'info' },
+  contacted: { label: 'Đã liên hệ', color: 'primary' },
+  interested: { label: 'Quan tâm', color: 'warning' },
+  converted: { label: 'Đã chốt', color: 'success' },
+  lost: { label: 'Mất khách', color: 'grey' },
+};
+const crmStatusLabel = computed(() => {
+  const s = crmContact.value?.status;
+  return s ? (CRM_STATUS_LABEL[s]?.label || s) : '';
+});
+const crmStatusColor = computed(() => {
+  const s = crmContact.value?.status;
+  return s ? (CRM_STATUS_LABEL[s]?.color || 'grey') : 'grey';
+});
 
 const initials = computed(() => {
   const name = info.value?.zaloName || info.value?.displayName || 'U';
@@ -311,6 +490,69 @@ function copy(text: string) {
 .zui-actions {
   display: flex; gap: 8px; justify-content: center;
   margin-top: 16px; flex-wrap: wrap;
+}
+.zui-actions-secondary {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed rgba(0, 0, 0, 0.06);
+}
+
+/* CRM contact panel — tách rõ với Zalo info bằng nền + border */
+.zui-crm-panel {
+  background: linear-gradient(180deg, #f5faff 0%, #ffffff 100%);
+  border-top: 1px solid rgba(25, 118, 210, 0.15);
+  padding: 12px 16px;
+}
+.zui-crm-header {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 11px; font-weight: 600; color: #1565c0;
+  text-transform: uppercase; letter-spacing: 0.5px;
+  margin-bottom: 8px;
+}
+.zui-crm-body {
+  font-size: 12px;
+}
+.zui-crm-body .zui-row {
+  padding: 3px 0;
+}
+.zui-crm-stats {
+  display: flex; gap: 12px;
+  margin-top: 8px;
+  padding: 8px 0;
+  border-top: 1px dashed rgba(0, 0, 0, 0.06);
+}
+.zui-stat {
+  flex: 1; text-align: center;
+}
+.zui-stat-num {
+  font-size: 18px; font-weight: 700; color: #1565c0;
+  line-height: 1;
+}
+.zui-stat-score { color: #f57c00; }
+.zui-stat-label {
+  font-size: 10px; color: #757575;
+  text-transform: uppercase; letter-spacing: 0.5px;
+  margin-top: 2px;
+}
+.zui-crm-tags {
+  display: flex; gap: 4px; flex-wrap: wrap;
+  margin-top: 6px;
+}
+.zui-crm-notes {
+  font-size: 11px;
+  color: #757575;
+  background: rgba(0, 0, 0, 0.03);
+  padding: 6px 8px;
+  border-radius: 6px;
+  margin-top: 8px;
+  font-style: italic;
+}
+.zui-crm-empty {
+  display: flex; align-items: center; gap: 6px;
+  justify-content: center;
+  font-size: 11px; color: #9e9e9e;
+  padding: 10px 16px;
+  border-top: 1px solid #f0f0f0;
 }
 .zui-loading, .zui-error {
   display: flex; align-items: center; justify-content: center;

@@ -335,7 +335,11 @@
     </v-dialog>
 
     <!-- Zalo user info dialog — click avatar/sender trong group → mở -->
-    <ZaloUserInfoDialog v-model="userInfoDialog" :uid="userInfoUid" />
+    <ZaloUserInfoDialog
+      v-model="userInfoDialog"
+      :uid="userInfoUid"
+      :zalo-account-id="conversation?.zaloAccount?.id || ''"
+    />
   </div>
 </template>
 
