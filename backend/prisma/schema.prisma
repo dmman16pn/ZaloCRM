@@ -123,6 +123,10 @@ model Contact {
   id               String    @id @default(uuid())
   orgId            String    @map("org_id")
   zaloUid          String?   @map("zalo_uid")
+  // Zalo identifiers toàn cục — KHÔNG đổi giữa các account viewer (khác với zaloUid per-account).
+  // Dùng làm khóa dedup chính: cùng person từ 2 account CRM khác nhau có cùng zaloGlobalId.
+  zaloGlobalId     String?   @map("zalo_global_id")
+  zaloUsername     String?   @map("zalo_username")
   phone            String?
   email            String?   @map("email")
   fullName         String?   @map("full_name")
@@ -213,6 +217,8 @@ model Contact {
 
   @@index([orgId, phone])
   @@index([orgId, zaloUid])
+  @@unique([orgId, zaloGlobalId])
+  @@index([orgId, zaloUsername])
   @@index([orgId, mergedInto])
   @@index([orgId, hasZalo])
   @@index([orgId, importBatchId])

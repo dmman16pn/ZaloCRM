@@ -1,0 +1,160 @@
+/**
+ * backfill-global-id.ts — One-off (idempotent) migration tool.
+ *
+ * Resolves zaloGlobalId + zaloUsername cho mọi Contact đã có zaloUid nhưng
+ * thiếu globalId. Sau khi backfill xong, chạy detectDuplicates() để auto-merge
+ * những Contact có cùng globalId (nhiều CRM account thấy cùng person với UID
+ * per-account khác nhau).
+ *
+ * Loop qua TẤT CẢ connected Zalo accounts cho mỗi UID — vì UID là per-viewer,
+ * chỉ account đã từng tương tác mới resolve được profile.
+ */
+import { prisma } from '../../shared/database/prisma-client.js';
+import { logger } from '../../shared/utils/logger.js';
+import { zaloPool } from '../zalo/zalo-pool.js';
+import { detectDuplicates } from './duplicate-detector.js';
+import { mergeContacts } from './merge-service.js';
+
+interface ZaloProfile {
+  globalId: string;
+  username: string;
+  zaloName: string;
+  avatar: string;
+}
+
+async function resolveProfile(uid: string, accountIds: string[]): Promise<ZaloProfile | null> {
+  for (const accId of accountIds) {
+    const instance = zaloPool.getInstance(accId);
+    const userApi = instance?.api as {
+      getUserInfo?: (uid: string) => Promise<{ changed_profiles?: Record<string, Record<string, unknown>> }>;
+    } | undefined;
+    if (!userApi?.getUserInfo) continue;
+    try {
+      const result = await userApi.getUserInfo(uid);
+      const profiles = result?.changed_profiles || {};
+      const p = profiles[uid] || profiles[`${uid}_0`];
+      if (p && (p.globalId || p.username || p.zaloName || p.displayName || p.avatar)) {
+        return {
+          globalId: String(p.globalId || ''),
+          username: String(p.username || ''),
+          zaloName: String(p.zaloName || p.zalo_name || p.displayName || p.display_name || ''),
+          avatar: String(p.avatar || ''),
+        };
+      }
+    } catch (err) {
+      logger.warn(`[backfill] account ${accId} failed for ${uid}:`, err);
+    }
+  }
+  return null;
+}
+
+export interface BackfillResult {
+  totalScanned: number;
+  resolved: number;
+  failed: number;
+  autoMergedGroups: number;
+}
+
+export async function backfillGlobalId(batchSize: number = 50): Promise<BackfillResult> {
+  const accounts = await prisma.zaloAccount.findMany({
+    where: { status: 'connected' },
+    select: { id: true },
+  });
+  const accountIds = accounts.map((a) => a.id);
+  if (accountIds.length === 0) {
+    logger.warn('[backfill] No connected Zalo account — skip.');
+    return { totalScanned: 0, resolved: 0, failed: 0, autoMergedGroups: 0 };
+  }
+
+  const contacts = await prisma.contact.findMany({
+    where: {
+      zaloUid: { not: null },
+      zaloGlobalId: null,
+      mergedInto: null,
+    },
+    select: { id: true, zaloUid: true, orgId: true },
+  });
+
+  logger.info(`[backfill] Found ${contacts.length} contact(s) with zaloUid but no zaloGlobalId`);
+
+  let resolved = 0;
+  let failed = 0;
+  let merged = 0;
+  for (let i = 0; i < contacts.length; i += batchSize) {
+    const batch = contacts.slice(i, i + batchSize);
+    // KHÔNG dùng Promise.all trên cùng globalId — gây race condition giữa các contact
+    // có cùng globalId trong cùng batch. Tuần tự an toàn hơn (vẫn 1 batch ~ 20 contact).
+    for (const c of batch) {
+      const profile = await resolveProfile(c.zaloUid!, accountIds);
+      if (!profile || !profile.globalId) { failed++; continue; }
+      try {
+        await prisma.contact.update({
+          where: { id: c.id },
+          data: {
+            zaloGlobalId: profile.globalId,
+            zaloUsername: profile.username || null,
+          },
+        });
+        resolved++;
+      } catch (err) {
+        if ((err as { code?: string }).code === 'P2002') {
+          // Đã có Contact khác cùng org với globalId này → merge ngay.
+          // Primary = contact tồn tại trước (sortable by createdAt).
+          const sibling = await prisma.contact.findFirst({
+            where: { orgId: c.orgId, zaloGlobalId: profile.globalId, mergedInto: null },
+            select: { id: true, createdAt: true },
+          });
+          if (sibling && sibling.id !== c.id) {
+            const selfRow = await prisma.contact.findUnique({
+              where: { id: c.id }, select: { createdAt: true },
+            });
+            // primary = older createdAt
+            const primaryId = selfRow && selfRow.createdAt < sibling.createdAt ? c.id : sibling.id;
+            const secondaryId = primaryId === c.id ? sibling.id : c.id;
+            try {
+              // Resolve user owner làm "system" cho audit log (FK requires real user UUID)
+              const owner = await prisma.user.findFirst({
+                where: { orgId: c.orgId, isActive: true },
+                orderBy: { createdAt: 'asc' },
+                select: { id: true },
+              });
+              if (!owner) {
+                logger.warn(`[backfill] org ${c.orgId} không có active user → skip merge ${c.id}`);
+                failed++;
+                continue;
+              }
+              await mergeContacts(c.orgId, owner.id, primaryId, [secondaryId]);
+              // Primary có thể chưa có globalId nếu trước đó nó là người khác cũng dup → patch luôn
+              await prisma.contact.update({
+                where: { id: primaryId },
+                data: { zaloGlobalId: profile.globalId, zaloUsername: profile.username || null },
+              }).catch(() => {});
+              merged++;
+              resolved++;
+            } catch (mergeErr) {
+              logger.error(`[backfill] merge ${c.id} → ${sibling.id} failed:`, mergeErr);
+              failed++;
+            }
+          } else {
+            failed++;
+          }
+        } else {
+          logger.error(`[backfill] update contact ${c.id} failed:`, err);
+          failed++;
+        }
+      }
+    }
+    logger.info(`[backfill] Progress: ${Math.min(i + batchSize, contacts.length)}/${contacts.length} (merged=${merged})`);
+  }
+
+  // Sau backfill inline merge: chạy detector để pick up các group còn sót (vd primary
+  // tạo mới có globalId trùng với primary cũ đã merged) + xử lý phone/zaloUid groups.
+  try {
+    await detectDuplicates();
+  } catch (err) {
+    logger.error('[backfill] detectDuplicates after backfill failed:', err);
+  }
+
+  logger.info(`[backfill] Complete: scanned=${contacts.length} resolved=${resolved} failed=${failed} merged=${merged}`);
+  return { totalScanned: contacts.length, resolved, failed, autoMergedGroups: merged };
+}

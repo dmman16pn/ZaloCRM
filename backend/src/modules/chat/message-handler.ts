@@ -22,6 +22,10 @@ export interface IncomingMessage {
   threadId: string;         // For user: contact UID. For group: group ID
   threadType: 'user' | 'group'; // user or group conversation
   recipientName?: string;   // For SELF user-thread msg: name of thread peer (resolved via getUserInfo)
+  // Zalo toàn cục identifiers cho dedup (independent of viewer account).
+  // Cho non-self: thuộc SENDER. Cho self: thuộc RECIPIENT (thread peer).
+  contactGlobalId?: string;
+  contactUsername?: string;
   groupName?: string;       // group name if group message
   groupAvatarUrl?: string;  // group avatar URL from Zalo (via getGroupInfo.avt)
   groupMembersCount?: number; // total members in group
@@ -282,30 +286,63 @@ async function upsertContact(msg: IncomingMessage, orgId: string): Promise<strin
   // thay vì 'Unknown' khi anh chủ động chat với người lạ.
   const contactUid = msg.isSelf ? msg.threadId : msg.senderUid;
   const contactName = msg.isSelf ? (msg.recipientName || '') : msg.senderName;
+  const globalId = msg.contactGlobalId || '';
+  const username = msg.contactUsername || '';
 
-  let contact = await prisma.contact.findFirst({
-    where: { zaloUid: contactUid, orgId },
-    select: { id: true, fullName: true },
-  });
+  // Lookup chain (theo policy hard-match anh chốt: globalId / username / phone / uid):
+  //  1. By zaloGlobalId — silver bullet, identical across viewer accounts
+  //  2. By zaloUsername — Zalo handle (t_xxx) cũng toàn cục
+  //  3. By zaloUid (per-account) — fallback khi global identifiers chưa resolve
+  //  4. Create new contact
+  let contact: { id: string; fullName: string | null; zaloGlobalId: string | null; zaloUid: string | null } | null = null;
+  if (globalId) {
+    contact = await prisma.contact.findFirst({
+      where: { orgId, zaloGlobalId: globalId },
+      select: { id: true, fullName: true, zaloGlobalId: true, zaloUid: true },
+    });
+  }
+  if (!contact && username) {
+    contact = await prisma.contact.findFirst({
+      where: { orgId, zaloUsername: username },
+      select: { id: true, fullName: true, zaloGlobalId: true, zaloUid: true },
+    });
+  }
+  if (!contact) {
+    contact = await prisma.contact.findFirst({
+      where: { orgId, zaloUid: contactUid },
+      select: { id: true, fullName: true, zaloGlobalId: true, zaloUid: true },
+    });
+  }
 
   if (!contact) {
-    contact = await prisma.contact.create({
+    const created = await prisma.contact.create({
       data: {
         id: randomUUID(),
         orgId,
         zaloUid: contactUid,
+        zaloGlobalId: globalId || null,
+        zaloUsername: username || null,
         fullName: contactName || 'Unknown',
       },
-      select: { id: true, fullName: true },
+      select: { id: true, fullName: true, zaloGlobalId: true, zaloUid: true },
     });
-    // Emit webhook for new contact created
+    contact = created;
     emitWebhook(orgId, 'contact.created', { contactId: contact.id, fullName: contact.fullName });
-  } else if (contactName && contact.fullName !== contactName && contact.fullName === 'Unknown') {
-    // Update name only if currently "Unknown" — don't overwrite user-edited names
-    await prisma.contact.update({
-      where: { id: contact.id },
-      data: { fullName: contactName },
-    });
+  } else {
+    // Backfill globalId/username nếu vừa resolve được, hoặc cập nhật fullName từ Unknown.
+    const patch: { zaloGlobalId?: string; zaloUsername?: string; fullName?: string; zaloUid?: string } = {};
+    if (globalId && contact.zaloGlobalId !== globalId) patch.zaloGlobalId = globalId;
+    if (username) patch.zaloUsername = username;
+    // Nếu contact match qua globalId nhưng zaloUid khác (đang được nhìn từ account khác) —
+    // KHÔNG ghi đè zaloUid (mỗi account thấy 1 UID; conversation bind theo externalThreadId riêng).
+    // Chỉ set zaloUid khi đang null.
+    if (!contact.zaloUid && contactUid) patch.zaloUid = contactUid;
+    if (contactName && contact.fullName !== contactName && contact.fullName === 'Unknown') {
+      patch.fullName = contactName;
+    }
+    if (Object.keys(patch).length > 0) {
+      await prisma.contact.update({ where: { id: contact.id }, data: patch });
+    }
   }
 
   return contact.id;

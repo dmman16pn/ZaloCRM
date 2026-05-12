@@ -99,7 +99,16 @@
                 />
               </td>
               <td>
-                <div class="name-text">{{ contact.crmName || contact.fullName || '—' }}</div>
+                <div class="name-text">
+                  {{ contact.crmName || contact.fullName || '—' }}
+                  <span
+                    v-if="(contact._count?.conversations || 0) > 1"
+                    class="chip chip-multi-nick"
+                    :title="`${contact._count?.conversations} nick CRM đang chăm khách này`"
+                  >
+                    👥 Đa nick ({{ contact._count?.conversations }})
+                  </span>
+                </div>
                 <div v-if="contact.fullName && contact.crmName && contact.fullName !== contact.crmName" class="name-sub">
                   {{ contact.fullName }}
                 </div>
@@ -705,6 +714,13 @@ onMounted(() => {
 .chip-info    { background: rgba(33,150,243,0.12); color: #1565c0; }
 .chip-grey    { background: rgba(90,100,120,0.10); color: var(--smax-grey-700); }
 .chip-error   { background: rgba(255,82,82,0.12); color: #c62828; }
+.chip-multi-nick {
+  background: linear-gradient(135deg, rgba(124,77,255,0.14), rgba(33,150,243,0.10));
+  color: #4527a0;
+  margin-left: 6px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+}
 
 .action-cell { display: flex; gap: 4px; }
 .row-action-btn {

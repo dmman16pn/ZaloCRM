@@ -104,20 +104,22 @@ export interface UserInfoCacheEntry {
   zaloName: string;
   avatar: string;
   phone?: string;
+  globalId: string;   // Zalo toàn cục, không đổi giữa các viewer account — khóa dedup chính
+  username: string;   // Zalo handle (t_xxx) — cũng toàn cục, debug-friendly
   cachedAt: number;
 }
 
 const USER_INFO_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
-// Fetch zaloName + avatar from API with a per-pool in-memory cache
+// Fetch zaloName + avatar + globalId + username from API with a per-pool in-memory cache
 async function resolveZaloName(
   api: any,
   uid: string,
   cache: Map<string, UserInfoCacheEntry>,
-): Promise<{ zaloName: string; avatar: string }> {
+): Promise<{ zaloName: string; avatar: string; globalId: string; username: string }> {
   const cached = cache.get(uid);
   if (cached && Date.now() - cached.cachedAt < USER_INFO_CACHE_TTL_MS) {
-    return { zaloName: cached.zaloName, avatar: cached.avatar };
+    return { zaloName: cached.zaloName, avatar: cached.avatar, globalId: cached.globalId, username: cached.username };
   }
 
   try {
@@ -134,15 +136,17 @@ async function resolveZaloName(
           '',
         avatar: profile.avatar || '',
         phone: profile.phoneNumber || '',
+        globalId: String(profile.globalId || ''),
+        username: String(profile.username || ''),
         cachedAt: Date.now(),
       };
       cache.set(uid, entry);
-      return { zaloName: entry.zaloName, avatar: entry.avatar };
+      return { zaloName: entry.zaloName, avatar: entry.avatar, globalId: entry.globalId, username: entry.username };
     }
   } catch (err) {
     logger.warn(`[zalo] getUserInfo failed for ${uid}:`, err);
   }
-  return { zaloName: '', avatar: '' };
+  return { zaloName: '', avatar: '', globalId: '', username: '' };
 }
 
 interface ResolvedGroup {
@@ -197,12 +201,17 @@ export function attachZaloListener(ctx: ListenerContext): void {
       // Resolve display name — prefer zaloName from API over dName.
       // Self msg gửi cho người lạ: resolve theo threadId để biết tên người NHẬN
       // → recipientName được dùng trong upsertContact thay vì 'Unknown'.
+      // Đồng thời resolve globalId + username (Zalo toàn cục) để dedup parent contact.
       let senderName: string = message.data?.dName || '';
       let recipientName: string = '';
+      let contactGlobalId: string = '';
+      let contactUsername: string = '';
       if (senderUid && api.getUserInfo) {
         const resolveUid = message.isSelf ? (message.threadId || '') : senderUid;
         if (resolveUid) {
           const userInfo = await resolveZaloName(api, resolveUid, userInfoCache);
+          contactGlobalId = userInfo.globalId;
+          contactUsername = userInfo.username;
           if (message.isSelf) {
             if (userInfo.zaloName) recipientName = userInfo.zaloName;
             if (userInfo.avatar && message.threadId) updateContactAvatar(message.threadId, userInfo.avatar);
@@ -242,6 +251,8 @@ export function attachZaloListener(ctx: ListenerContext): void {
         threadId: message.threadId || '',
         threadType: isGroup ? 'group' : 'user',
         recipientName: recipientName || undefined,
+        contactGlobalId: contactGlobalId || undefined,
+        contactUsername: contactUsername || undefined,
         groupName,
         groupAvatarUrl,
         groupMembersCount,
@@ -305,16 +316,23 @@ export function attachZaloListener(ctx: ListenerContext): void {
         const senderUid = String(message.data?.uidFrom || '');
         let senderName = message.data?.dName || '';
         let recipientName = '';
+        let contactGlobalId = '';
+        let contactUsername = '';
 
-        // Resolve display name — non-self: senderName; self user-thread: recipientName từ threadId
+        // Resolve display name — non-self: senderName; self user-thread: recipientName từ threadId.
+        // Đồng thời capture globalId + username để dedup parent contact.
         if (api.getUserInfo) {
           if (!message.isSelf && senderUid) {
             const userInfo = await resolveZaloName(api, senderUid, userInfoCache);
             if (userInfo.zaloName) senderName = userInfo.zaloName;
+            contactGlobalId = userInfo.globalId;
+            contactUsername = userInfo.username;
           } else if (message.isSelf && threadType === 'user' && message.threadId) {
             const userInfo = await resolveZaloName(api, message.threadId, userInfoCache);
             if (userInfo.zaloName) recipientName = userInfo.zaloName;
             if (userInfo.avatar) updateContactAvatar(message.threadId, userInfo.avatar);
+            contactGlobalId = userInfo.globalId;
+            contactUsername = userInfo.username;
           }
         }
 
@@ -346,6 +364,8 @@ export function attachZaloListener(ctx: ListenerContext): void {
           threadId: message.threadId || '',
           threadType,
           recipientName: recipientName || undefined,
+          contactGlobalId: contactGlobalId || undefined,
+          contactUsername: contactUsername || undefined,
           groupName,
           groupAvatarUrl,
           groupMembersCount,

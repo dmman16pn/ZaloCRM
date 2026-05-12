@@ -9,6 +9,7 @@ import { authMiddleware } from '../auth/auth-middleware.js';
 import { logger } from '../../shared/utils/logger.js';
 import { mergeContacts } from './merge-service.js';
 import { runContactIntelligence } from './contact-intelligence.js';
+import { backfillGlobalId } from './backfill-global-id.js';
 import { runAutomationRules } from '../automation/automation-service.js';
 
 type QueryParams = Record<string, string>;
@@ -379,6 +380,20 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
     } catch (err) {
       logger.error('[contacts] Recompute trigger error:', err);
       return reply.status(500).send({ error: 'Failed to start recompute' });
+    }
+  });
+
+  // ── POST /api/v1/contacts/backfill-global-id — one-off Zalo globalId backfill ──
+  // Resolve zaloGlobalId + zaloUsername cho contact đã có zaloUid, sau đó auto-merge
+  // những contact có cùng globalId (cross-account dedup). Sync (block) để admin
+  // thấy result ngay, có thể chạy lại idempotent.
+  app.post('/api/v1/contacts/backfill-global-id', async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const result = await backfillGlobalId();
+      return reply.send(result);
+    } catch (err) {
+      logger.error('[contacts] Backfill globalId error:', err);
+      return reply.status(500).send({ error: 'Backfill failed', detail: String(err) });
     }
   });
 }

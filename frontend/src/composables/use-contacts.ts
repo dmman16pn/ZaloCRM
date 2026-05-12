@@ -21,6 +21,9 @@ export interface Contact {
   sourceDate?: string | null;
   status: string | null;
   zaloUid?: string | null;
+  zaloGlobalId?: string | null;
+  zaloUsername?: string | null;
+  _count?: { conversations?: number; appointments?: number };
   nextAppointment: string | null;
   notes: string | null;
   tags: string[];
