@@ -217,9 +217,7 @@
 
         <!-- Compact toolbar (Zalo-style): chỉ 6 nút chức năng cốt lõi -->
         <div class="input-toolbar-top">
-          <button class="icon-tool" title="Gửi sticker" @click="todoToast('Sticker')">
-            <v-icon size="18">mdi-sticker-emoji</v-icon>
-          </button>
+          <StickerPicker @select="onSendSticker" />
           <button class="icon-tool" title="Gửi ảnh" @click="onPickImage">
             <v-icon size="18">mdi-image-outline</v-icon>
           </button>
@@ -347,6 +345,7 @@ import Avatar from '@/components/ui/Avatar.vue';
 import EmojiPicker from '@/components/chat/EmojiPicker.vue';
 import QuickTemplatePopup from '@/components/chat/quick-template-popup.vue';
 import MessageBubble from '@/components/chat/message-bubble.vue';
+import StickerPicker from '@/components/chat/StickerPicker.vue';
 import MessageContextMenu from '@/components/chat/message-context-menu.vue';
 import TypingIndicator from '@/components/chat/typing-indicator.vue';
 import ReplyPreviewBar from '@/components/chat/reply-preview-bar.vue';
@@ -602,6 +601,22 @@ function todoToast(label: string) {
 
 function onPickEmoji(emoji: string) {
   editorRef.value?.insertText(emoji);
+}
+
+// Send sticker từ picker — POST /sticker với {id, catId, type}
+async function onSendSticker(sticker: { id: number; catId: number; type: number }) {
+  if (!props.conversation?.id) return;
+  try {
+    await api.post(`/conversations/${props.conversation.id}/sticker`, {
+      stickerId: sticker.id,
+      cateId: sticker.catId,
+      type: sticker.type,
+    });
+    emit('refresh-thread');
+  } catch (err) {
+    console.error('[sticker] send error:', err);
+    toast.push('Không gửi được sticker', 'error');
+  }
 }
 
 // ── File / image upload ─────────────────────────────────────────────────────

@@ -12,9 +12,16 @@ import { logger } from '../../shared/utils/logger.js';
 import { zaloPool } from '../zalo/zalo-pool.js';
 import { prisma } from '../../shared/database/prisma-client.js';
 
-// In-memory cache cho sticker URL — key = `${catId}:${id}`, value = direct URL
-// Sticker URLs stable (Zalo CDN không xoá) → cache long-lived OK.
-const stickerUrlCache = new Map<string, { url: string; expiresAt: number }>();
+// In-memory cache cho sticker metadata — key = `${catId}:${id}`
+interface StickerMeta {
+  type: number;
+  staticUrl: string;
+  spriteUrl: string | null;
+  totalFrames: number;
+  duration: number;
+  size: number; // frame size 130x130
+}
+const stickerMetaCache = new Map<string, { data: StickerMeta; expiresAt: number }>();
 const STICKER_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24h
 
 const ALLOWED_HOSTS = new Set([
@@ -141,11 +148,9 @@ export async function zinstantProxyRoutes(app: FastifyInstance): Promise<void> {
     if (!catId || !id) return reply.status(400).send({ error: 'catId and id required' });
 
     const cacheKey = `${catId}:${id}`;
-    const cached = stickerUrlCache.get(cacheKey);
+    const cached = stickerMetaCache.get(cacheKey);
     if (cached && cached.expiresAt > Date.now()) {
-      return reply
-        .header('Cache-Control', 'public, max-age=86400')
-        .redirect(cached.url);
+      return reply.header('Cache-Control', 'public, max-age=86400').send(cached.data);
     }
 
     // Tìm connected Zalo account bất kì để gọi API (sticker là global Zalo data,
@@ -164,29 +169,82 @@ export async function zinstantProxyRoutes(app: FastifyInstance): Promise<void> {
     }
 
     try {
-      // getStickersDetail nhận array sticker IDs, trả về array sticker objects với URLs
+      // getStickersDetail trả: {stickerUrl (static), stickerSpriteUrl (animation sprite),
+      // totalFrames, duration, type}. Type=7 thường có sprite cho animation.
       const details = await api.getStickersDetail([Number(id)]);
       const sticker = (details?.[0] || {}) as Record<string, unknown>;
 
-      // Zalo trả: stickerUrl (static PNG), stickerWebpUrl (animated WebP),
-      // stickerSpriteUrl (sprite frames). Ưu tiên animated nếu có (type=7),
-      // fallback static cho sticker tĩnh (type=3).
-      const url = String(
-        sticker.stickerWebpUrl || sticker.stickerUrl ||
-        sticker.url || sticker.uri || ''
-      );
-
-      if (!url) {
-        logger.warn(`[sticker] No URL field. Available keys: ${Object.keys(sticker).join(',')}`);
-        return reply.status(404).send({ error: 'sticker URL not found', keys: Object.keys(sticker) });
+      if ((request.query as { debug?: string }).debug === '1') {
+        return reply.send(sticker);
       }
 
-      stickerUrlCache.set(cacheKey, { url, expiresAt: Date.now() + STICKER_CACHE_TTL_MS });
-      return reply
-        .header('Cache-Control', 'public, max-age=86400')
-        .redirect(url);
+      const staticUrl = String(sticker.stickerUrl || '');
+      const spriteUrl = sticker.stickerSpriteUrl ? String(sticker.stickerSpriteUrl) : null;
+
+      if (!staticUrl) {
+        return reply.status(404).send({ error: 'sticker URL not found' });
+      }
+
+      const meta: StickerMeta = {
+        type: Number(sticker.type || 0),
+        staticUrl,
+        spriteUrl,
+        totalFrames: Number(sticker.totalFrames || 1),
+        duration: Number(sticker.duration || 0), // ms per frame
+        size: 130, // Zalo default frame size
+      };
+
+      stickerMetaCache.set(cacheKey, { data: meta, expiresAt: Date.now() + STICKER_CACHE_TTL_MS });
+      return reply.header('Cache-Control', 'public, max-age=86400').send(meta);
     } catch (err) {
       logger.warn('[sticker] fetch error:', err);
+      return reply.status(502).send({ error: 'upstream Zalo API failed' });
+    }
+  });
+
+  // ── GET /api/v1/zalo-sticker-list — fetch popular categories cho picker
+  // Trả category list để frontend hiển thị sticker picker
+  app.get('/api/v1/zalo-sticker-list', async (request: FastifyRequest, reply: FastifyReply) => {
+    const { keyword } = request.query as { keyword?: string };
+
+    const account = await prisma.zaloAccount.findFirst({
+      where: { status: 'connected' },
+      select: { id: true },
+    });
+    if (!account) return reply.status(503).send({ error: 'no connected Zalo account' });
+
+    const instance = zaloPool.getInstance(account.id);
+    const stickerApi = instance?.api as {
+      getStickers?: (k: string) => Promise<number[]>;
+      getStickersDetail?: (ids: number[]) => Promise<unknown[]>;
+    } | undefined;
+
+    if (!stickerApi?.getStickers || !stickerApi.getStickersDetail) {
+      return reply.status(503).send({ error: 'Zalo sticker API not available' });
+    }
+
+    try {
+      // getStickers trả ids theo keyword (suggest stickers). Default keyword="vui" để
+      // lấy stickers phổ biến — sale có thể search keyword khác sau.
+      const ids = await stickerApi.getStickers(keyword || 'vui');
+      if (!ids || ids.length === 0) return reply.send({ stickers: [] });
+
+      const details = await stickerApi.getStickersDetail(ids.slice(0, 40));
+      const stickers = details.map((d) => {
+        const s = d as Record<string, unknown>;
+        return {
+          id: Number(s.id),
+          catId: Number(s.cateId),
+          type: Number(s.type || 0),
+          staticUrl: String(s.stickerUrl || ''),
+          spriteUrl: s.stickerSpriteUrl ? String(s.stickerSpriteUrl) : null,
+          totalFrames: Number(s.totalFrames || 1),
+          duration: Number(s.duration || 0),
+        };
+      });
+      return reply.header('Cache-Control', 'private, max-age=600').send({ stickers });
+    } catch (err) {
+      logger.warn('[sticker-list] fetch error:', err);
       return reply.status(502).send({ error: 'upstream Zalo API failed' });
     }
   });

@@ -212,9 +212,14 @@ async function sendImage(accountId: string, threadId: string, threadType: 0 | 1,
     (api) => api.sendMessage({ attachments }, threadId, threadType));
 }
 
-async function sendSticker(accountId: string, stickerId: number, threadId: string, threadType: 0 | 1) {
+async function sendSticker(
+  accountId: string,
+  sticker: { id: number; cateId: number; type: number },
+  threadId: string,
+  threadType: 0 | 1,
+) {
   return exec({ accountId, category: 'message', operation: 'sendSticker' },
-    (api) => api.sendSticker(stickerId, null, threadId, threadType));
+    (api) => api.sendSticker(sticker, threadId, threadType));
 }
 
 async function sendLink(accountId: string, threadId: string, threadType: 0 | 1, link: any) {

@@ -81,10 +81,28 @@
             <div v-if="formattedCaption" class="media-caption" v-html="formattedCaption" />
           </div>
 
-          <!-- Sticker (sticker hiếm khi có caption nhưng render nếu có) -->
+          <!-- Sticker — animated CSS sprite hoặc static image -->
           <div v-else-if="message.contentType === 'sticker'">
             <div class="sticker-msg">
-              <img v-if="stickerUrl" :src="stickerUrl" alt="sticker" class="sticker-img" />
+              <!-- Animated sticker: CSS sprite animation steps(N) duration -->
+              <div
+                v-if="stickerMeta && stickerMeta.spriteUrl && stickerMeta.totalFrames > 1"
+                class="sticker-anim"
+                :style="{
+                  width: stickerMeta.size + 'px',
+                  height: stickerMeta.size + 'px',
+                  backgroundImage: `url(${stickerMeta.spriteUrl})`,
+                  backgroundSize: `${stickerMeta.size * stickerMeta.totalFrames}px ${stickerMeta.size}px`,
+                  animation: `sticker-play ${stickerMeta.duration * stickerMeta.totalFrames}ms steps(${stickerMeta.totalFrames}) infinite`,
+                }"
+              ></div>
+              <!-- Static sticker: img tag -->
+              <img
+                v-else-if="stickerMeta && stickerMeta.staticUrl"
+                :src="stickerMeta.staticUrl"
+                alt="sticker"
+                class="sticker-img"
+              />
               <span v-else>🎴 Sticker</span>
             </div>
             <div v-if="formattedCaption" class="media-caption" v-html="formattedCaption" />
@@ -174,7 +192,7 @@
 
 <script setup lang="ts">
 import type { Message } from '@/composables/use-chat';
-import { computed } from 'vue';
+import { computed, ref, watch } from 'vue';
 import SpecialMessageRenderer from '@/components/chat/special-message-renderer.vue';
 import ReactionDisplay from '@/components/chat/reaction-display.vue';
 import ReactionPicker from '@/components/chat/reaction-picker.vue';
@@ -324,21 +342,36 @@ const messageCaption = computed<string>(() => {
 
 const formattedCaption = computed(() => highlightText(messageCaption.value));
 
-// ── Sticker / Video / Voice / GIF helpers ───────────────────────────────────
-// Zalo sticker content shape: { id, catId, type } — KHÔNG có URL trực tiếp.
-// URL phải lookup qua zca-js getStickerCategoryDetail (cần Zalo session) →
-// dùng backend proxy /api/v1/zalo-sticker/:catId/:id → redirect tới Zalo CDN.
-const stickerUrl = computed(() => {
-  const p = safeParse(props.message.content);
-  if (p && typeof p === 'object') {
-    const id = (p as Record<string, unknown>).id;
-    const catId = (p as Record<string, unknown>).catId;
-    if (id && catId) {
-      return `/api/v1/zalo-sticker/${catId}/${id}`;
-    }
+// ── Sticker — fetch metadata + CSS sprite animation cho animated stickers ──
+interface StickerMeta {
+  type: number;
+  staticUrl: string;
+  spriteUrl: string | null;
+  totalFrames: number;
+  duration: number; // ms per frame
+  size: number;
+}
+const stickerMeta = ref<StickerMeta | null>(null);
+
+async function fetchStickerMeta(catId: string | number, id: string | number) {
+  try {
+    const res = await fetch(`/api/v1/zalo-sticker/${catId}/${id}`);
+    if (!res.ok) return;
+    stickerMeta.value = (await res.json()) as StickerMeta;
+  } catch (err) {
+    console.error('[sticker] fetch meta error:', err);
   }
-  return extractMediaUrl('sticker', props.message.content);
-});
+}
+
+watch(() => props.message.content, (content) => {
+  if (props.message.contentType !== 'sticker' || !content) return;
+  const p = safeParse(content);
+  if (!p || typeof p !== 'object') return;
+  const id = (p as Record<string, unknown>).id;
+  const catId = (p as Record<string, unknown>).catId;
+  if (id && catId) void fetchStickerMeta(String(catId), String(id));
+}, { immediate: true });
+
 const gifUrl = computed(() => extractMediaUrl('gif', props.message.content));
 const voiceUrl = computed(() => extractMediaUrl('voice', props.message.content));
 
@@ -627,6 +660,18 @@ function openFile(href: string) {
   max-width: 120px;
   max-height: 120px;
   display: block;
+}
+/* Animated sticker via CSS sprite — duration * totalFrames per loop */
+.sticker-anim {
+  display: block;
+  background-repeat: no-repeat;
+  background-position: 0 0;
+}
+@keyframes sticker-play {
+  from { background-position: 0 0; }
+  /* Translate sprite từ trái sang phải. steps(N) trong animation property
+     sẽ chia thành N stops → mỗi frame nhảy 1 bước. */
+  to { background-position: -100% 0; }
 }
 
 /* GIF */

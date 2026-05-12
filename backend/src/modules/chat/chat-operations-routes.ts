@@ -345,10 +345,13 @@ export async function chatOperationsRoutes(app: FastifyInstance) {
   });
 
   // ── POST /sticker ────────────────────────────────────────────────────────────
+  // Body: { stickerId, cateId, type } — đúng shape zca-js SendStickerPayload
   app.post('/api/v1/conversations/:id/sticker', chatAccess, async (request: FastifyRequest, reply: FastifyReply) => {
     const user = request.user!;
     const { id } = request.params as { id: string };
-    const { stickerId } = request.body as { stickerId: number };
+    const { stickerId, cateId, type } = request.body as {
+      stickerId: number; cateId?: number; type?: number;
+    };
 
     if (!stickerId) return reply.status(400).send({ error: 'stickerId required' });
 
@@ -357,7 +360,13 @@ export async function chatOperationsRoutes(app: FastifyInstance) {
 
     try {
       const threadType = conv.threadType === 'group' ? 1 : 0;
-      const result = await zaloOps.sendSticker(conv.zaloAccountId, stickerId, conv.externalThreadId || '', threadType);
+      const stickerPayload = { id: stickerId, cateId: cateId || 0, type: type || 0 };
+      const result = await zaloOps.sendSticker(
+        conv.zaloAccountId,
+        stickerPayload,
+        conv.externalThreadId || '',
+        threadType,
+      );
 
       const created = await prisma.message.create({
         data: {
@@ -366,7 +375,9 @@ export async function chatOperationsRoutes(app: FastifyInstance) {
           senderType: 'self',
           senderUid: '',
           senderName: 'Staff',
-          content: String(stickerId),
+          // Lưu content shape JSON như Zalo native ({id, catId, type}) → frontend
+          // dùng metadata endpoint render đúng (animated CSS sprite hoặc static)
+          content: JSON.stringify({ id: stickerId, catId: cateId || 0, type: type || 0 }),
           contentType: 'sticker',
           sentAt: new Date(),
           repliedByUserId: user.id,
