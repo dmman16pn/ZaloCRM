@@ -613,6 +613,9 @@ async function onSendSticker(sticker: { id: number; catId: number; type: number 
       type: sticker.type,
     });
     emit('refresh-thread');
+    // Scroll xuống ngay (retry x3 trong scrollToBottom xử lý img async load)
+    await nextTick();
+    scrollToBottom();
   } catch (err) {
     console.error('[sticker] send error:', err);
     toast.push('Không gửi được sticker', 'error');
