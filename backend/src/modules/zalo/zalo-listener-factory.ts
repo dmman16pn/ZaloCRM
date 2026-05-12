@@ -194,15 +194,19 @@ export function attachZaloListener(ctx: ListenerContext): void {
       const isGroup = message.type === 1;
       const senderUid = String(message.data?.uidFrom || '');
 
-      // Resolve display name — prefer zaloName from API over dName
+      // Resolve display name — prefer zaloName from API over dName.
+      // Self msg gửi cho người lạ: resolve theo threadId để biết tên người NHẬN
+      // → recipientName được dùng trong upsertContact thay vì 'Unknown'.
       let senderName: string = message.data?.dName || '';
+      let recipientName: string = '';
       if (senderUid && api.getUserInfo) {
-        // For self messages, resolve recipient name using threadId
-        // For contact messages, resolve sender name using senderUid
         const resolveUid = message.isSelf ? (message.threadId || '') : senderUid;
         if (resolveUid) {
           const userInfo = await resolveZaloName(api, resolveUid, userInfoCache);
-          if (!message.isSelf) {
+          if (message.isSelf) {
+            if (userInfo.zaloName) recipientName = userInfo.zaloName;
+            if (userInfo.avatar && message.threadId) updateContactAvatar(message.threadId, userInfo.avatar);
+          } else {
             if (userInfo.zaloName) senderName = userInfo.zaloName;
             if (userInfo.avatar) updateContactAvatar(senderUid, userInfo.avatar);
           }
@@ -237,6 +241,7 @@ export function attachZaloListener(ctx: ListenerContext): void {
         isSelf: message.isSelf || false,
         threadId: message.threadId || '',
         threadType: isGroup ? 'group' : 'user',
+        recipientName: recipientName || undefined,
         groupName,
         groupAvatarUrl,
         groupMembersCount,
@@ -299,11 +304,18 @@ export function attachZaloListener(ctx: ListenerContext): void {
       try {
         const senderUid = String(message.data?.uidFrom || '');
         let senderName = message.data?.dName || '';
+        let recipientName = '';
 
-        // Resolve display name for non-self messages
-        if (!message.isSelf && senderUid && api.getUserInfo) {
-          const userInfo = await resolveZaloName(api, senderUid, userInfoCache);
-          if (userInfo.zaloName) senderName = userInfo.zaloName;
+        // Resolve display name — non-self: senderName; self user-thread: recipientName từ threadId
+        if (api.getUserInfo) {
+          if (!message.isSelf && senderUid) {
+            const userInfo = await resolveZaloName(api, senderUid, userInfoCache);
+            if (userInfo.zaloName) senderName = userInfo.zaloName;
+          } else if (message.isSelf && threadType === 'user' && message.threadId) {
+            const userInfo = await resolveZaloName(api, message.threadId, userInfoCache);
+            if (userInfo.zaloName) recipientName = userInfo.zaloName;
+            if (userInfo.avatar) updateContactAvatar(message.threadId, userInfo.avatar);
+          }
         }
 
         let groupName: string | undefined;
@@ -333,6 +345,7 @@ export function attachZaloListener(ctx: ListenerContext): void {
           isSelf: message.isSelf || false,
           threadId: message.threadId || '',
           threadType,
+          recipientName: recipientName || undefined,
           groupName,
           groupAvatarUrl,
           groupMembersCount,

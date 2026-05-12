@@ -21,6 +21,7 @@ export interface IncomingMessage {
   isSelf: boolean;
   threadId: string;         // For user: contact UID. For group: group ID
   threadType: 'user' | 'group'; // user or group conversation
+  recipientName?: string;   // For SELF user-thread msg: name of thread peer (resolved via getUserInfo)
   groupName?: string;       // group name if group message
   groupAvatarUrl?: string;  // group avatar URL from Zalo (via getGroupInfo.avt)
   groupMembersCount?: number; // total members in group
@@ -276,9 +277,11 @@ async function upsertContact(msg: IncomingMessage, orgId: string): Promise<strin
     return groupContact.id;
   }
 
-  // For self messages on user threads, the contact is the thread recipient (threadId = contact UID)
+  // For self messages on user threads, the contact is the thread recipient (threadId = contact UID).
+  // recipientName được listener resolve qua getUserInfo(threadId) — đảm bảo contact mới có tên thật
+  // thay vì 'Unknown' khi anh chủ động chat với người lạ.
   const contactUid = msg.isSelf ? msg.threadId : msg.senderUid;
-  const contactName = msg.isSelf ? '' : msg.senderName; // self msgs don't carry recipient name
+  const contactName = msg.isSelf ? (msg.recipientName || '') : msg.senderName;
 
   let contact = await prisma.contact.findFirst({
     where: { zaloUid: contactUid, orgId },
