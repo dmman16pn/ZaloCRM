@@ -83,11 +83,14 @@ export function useChatContactPanel(
     }
   }
 
-  watch(getContact, (c) => {
+  // Watch chỉ theo contact.id để KHÔNG refire khi conv.contact bị overwrite bởi
+  // mark-read / live updates (gây mất nội dung user đang edit trong form).
+  watch(() => getContact()?.id, () => {
+    const c = getContact();
     if (!c) return;
     populateForm(c);
     fetchContactExtras(c.id);
-  }, { immediate: true, deep: true });
+  }, { immediate: true });
 
   async function saveContact() {
     const contactId = getContactId();

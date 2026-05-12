@@ -361,6 +361,7 @@ import ReplyPreviewBar from '@/components/chat/reply-preview-bar.vue';
 import ForwardDialog from '@/components/chat/forward-dialog.vue';
 import RichTextEditor from '@/components/chat/rich-text-editor.vue';
 import { useToast } from '@/composables/use-toast';
+import { groupAvatarStore } from '@/composables/use-group-avatar-cache';
 
 interface TemplateItem { id: string; name: string; content: string; category: string | null; isPersonal: boolean; }
 
@@ -479,32 +480,29 @@ const lastOnlineLabel = computed(() => {
 
 // ── Resolve sender avatar cho MessageBubble ─────────────────────────────────
 // User thread: incoming msgs → conversation.contact.avatarUrl
-// Group: lookup per-sender qua backend cache via /api/v1/zalo-user-info/:uid
-const groupAvatarCache = ref<Record<string, string>>({}); // uid → avatar URL
-
-async function fetchGroupSenderAvatar(uid: string) {
-  if (!uid || groupAvatarCache.value[uid] !== undefined) return;
-  groupAvatarCache.value[uid] = ''; // mark fetching để tránh duplicate calls
-  try {
-    const res = await api.get(`/zalo-user-info/${uid}`);
-    groupAvatarCache.value[uid] = res.data?.avatar || '';
-  } catch {
-    groupAvatarCache.value[uid] = '';
-  }
-}
+// Group: prefetch batch khi messages thay đổi → tránh 20 HTTP request lazy.
+// Cache đặt ở module-level (groupAvatarStore) nên persist qua re-mount + qua các conv.
+watch(
+  [() => props.conversation?.id, () => props.messages],
+  () => {
+    if (props.conversation?.threadType !== 'group') return;
+    const uids = new Set<string>();
+    for (const m of props.messages) {
+      if (m.senderUid && m.senderType !== 'self' && !groupAvatarStore.has(m.senderUid)) {
+        uids.add(m.senderUid);
+      }
+    }
+    if (uids.size > 0) void groupAvatarStore.fetchBatch([...uids]);
+  },
+  { immediate: true },
+);
 
 function resolveSenderAvatar(msg: Message): string | null {
   if (msg.senderType === 'self') return null;
   if (props.conversation?.threadType === 'user') {
     return props.conversation?.contact?.avatarUrl || null;
   }
-  // Group: fetch async + return cached URL nếu có
-  if (msg.senderUid) {
-    if (groupAvatarCache.value[msg.senderUid] === undefined) {
-      void fetchGroupSenderAvatar(msg.senderUid);
-    }
-    return groupAvatarCache.value[msg.senderUid] || null;
-  }
+  if (msg.senderUid) return groupAvatarStore.get(msg.senderUid) || null;
   return null;
 }
 

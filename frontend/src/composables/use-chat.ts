@@ -106,6 +106,9 @@ export interface Message {
   reactions?: MessageReactionView[];
 }
 
+// In-memory cache per-conv messages — quay lại conv cũ render ngay, fetch fresh background.
+const messagesCache = new Map<string, Message[]>();
+
 export function useChat() {
   const authStore = useAuthStore();
   const conversations = ref<Conversation[]>([]);
@@ -207,16 +210,27 @@ export function useChat() {
   }
 
   async function fetchMessages(convId: string) {
-    loadingMsgs.value = true;
+    // Cache-then-refresh: nếu đã từng load conv này, set list ngay từ cache để
+    // user thấy giao diện tin nhắn lập tức; rồi fetch fresh in background.
+    const cached = messagesCache.get(convId);
+    if (cached) {
+      messages.value = cached;
+      loadingMsgs.value = false;
+    } else {
+      loadingMsgs.value = true;
+    }
     try {
       const res = await api.get(`/conversations/${convId}/messages`, {
         params: { limit: 100 },
       });
-      messages.value = (res.data.messages as RawMessage[]).map(normalizeMessage);
+      const list = (res.data.messages as RawMessage[]).map(normalizeMessage);
+      messagesCache.set(convId, list);
+      // Tránh ghi đè khi user đã đổi sang conv khác trong lúc đợi response
+      if (selectedConvId.value === convId) messages.value = list;
     } catch (err) {
       console.error('Failed to fetch messages:', err);
     } finally {
-      loadingMsgs.value = false;
+      if (selectedConvId.value === convId) loadingMsgs.value = false;
     }
   }
 
@@ -323,7 +337,9 @@ export function useChat() {
     // Auto-sync Zalo profile (gender/birth/phone/avatar) khi contact thiếu data.
     // Chỉ fire-and-forget; user không phải đợi.
     void autoSyncZaloProfile(convId);
-    await Promise.allSettled([generateAiSummary(), generateAiSentiment(), fetchAiUsage()]);
+    // AI summary + sentiment KHÔNG auto-fire mỗi lần đổi conv — user bấm nút refresh khi cần.
+    // Trước đây 2 LLM call awaited mỗi switch = 2-10s + tốn quota.
+    void fetchAiUsage();
   }
 
   /** Fetch Zalo profile để fill các field còn null (gender/birthDate/phone/avatar). */

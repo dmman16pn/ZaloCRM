@@ -262,6 +262,112 @@ export async function zinstantProxyRoutes(app: FastifyInstance): Promise<void> {
   const userInfoCache = new Map<string, { data: Record<string, unknown>; expiresAt: number }>();
   const USER_INFO_TTL_MS = 10 * 60 * 1000;
 
+  function normalizeProfile(uid: string, profile: Record<string, unknown>) {
+    const bizPkgRaw = profile.bizPkg as Record<string, unknown> | null | undefined;
+    return {
+      uid: String(uid),
+      userId: String(profile.userId || uid),
+      username: String(profile.username || ''),
+      globalId: String(profile.globalId || ''),
+      zaloName: String(profile.zaloName || profile.zalo_name || ''),
+      displayName: String(profile.displayName || profile.display_name || profile.zaloName || ''),
+      avatar: String(profile.avatar || ''),
+      avatarBig: String(profile.avatarBig || profile.avatar || ''),
+      bgavatar: String(profile.bgavatar || ''),
+      coverPhoto: String(profile.cover || profile.coverPhoto || ''),
+      gender: Number(profile.gender ?? -1),
+      dob: profile.dob || null,
+      sdob: profile.sdob || null,
+      phoneNumber: String(profile.phoneNumber || ''),
+      status: String(profile.status || ''),
+      isFr: Number(profile.isFr ?? 0),
+      isBlocked: Number(profile.isBlocked ?? 0),
+      isActive: Number(profile.isActive ?? 0),
+      isActivePC: Number(profile.isActivePC ?? 0),
+      isActiveWeb: Number(profile.isActiveWeb ?? 0),
+      isValid: Number(profile.isValid ?? 0),
+      lastActionTime: Number(profile.lastActionTime ?? 0),
+      lastUpdateTime: Number(profile.lastUpdateTime ?? 0),
+      type: Number(profile.type ?? 0),
+      accountStatus: Number(profile.accountStatus ?? 0),
+      userMode: Number(profile.user_mode ?? profile.userMode ?? 0),
+      bizPkg: bizPkgRaw ? {
+        label: bizPkgRaw.label ?? null,
+        pkgId: Number(bizPkgRaw.pkgId ?? 0),
+        createdTs: Number(bizPkgRaw.createdTs ?? 0),
+      } : null,
+      isEnterpriseAccount: Number(profile.isEnterpriseAccount ?? 0),
+      oaInfo: profile.oaInfo ?? null,
+      oaStatus: profile.oa_status ?? profile.oaStatus ?? null,
+    };
+  }
+
+  async function resolveProfile(uid: string, accountIds: string[]): Promise<Record<string, unknown> | null> {
+    for (const accId of accountIds) {
+      const instance = zaloPool.getInstance(accId);
+      const userApi = instance?.api as {
+        getUserInfo?: (uid: string) => Promise<{ changed_profiles?: Record<string, Record<string, unknown>> }>;
+      } | undefined;
+      if (!userApi?.getUserInfo) continue;
+      try {
+        const result = await userApi.getUserInfo(uid);
+        const profiles = result?.changed_profiles || {};
+        const p = profiles[uid] || profiles[`${uid}_0`];
+        if (p && (p.zaloName || p.zalo_name || p.displayName || p.avatar)) {
+          return normalizeProfile(uid, p);
+        }
+      } catch (err) {
+        logger.warn(`[user-info] account ${accId} failed for ${uid}:`, err);
+      }
+    }
+    return null;
+  }
+
+  // ── POST /api/v1/zalo-user-info/batch — bulk lookup tránh N+1 HTTP request từ FE
+  // Body: { uids: string[] } → trả { users: { [uid]: profile|null } }
+  // Hit cache trước, miss thì fetch song song qua tất cả connected accounts.
+  app.post('/api/v1/zalo-user-info/batch', async (request: FastifyRequest, reply: FastifyReply) => {
+    const { uids } = (request.body || {}) as { uids?: string[] };
+    if (!Array.isArray(uids) || uids.length === 0) return { users: {} };
+
+    const uniqueUids = Array.from(new Set(uids.filter(u => typeof u === 'string' && u.length > 0))).slice(0, 200);
+    const users: Record<string, Record<string, unknown> | null> = {};
+    const misses: string[] = [];
+
+    for (const uid of uniqueUids) {
+      const cached = userInfoCache.get(uid);
+      if (cached && cached.expiresAt > Date.now()) {
+        users[uid] = cached.data;
+      } else {
+        misses.push(uid);
+      }
+    }
+
+    if (misses.length === 0) return { users };
+
+    const accounts = await prisma.zaloAccount.findMany({
+      where: { status: 'connected' },
+      select: { id: true },
+    });
+    if (accounts.length === 0) {
+      misses.forEach(uid => { users[uid] = null; });
+      return { users };
+    }
+    const accountIds = accounts.map(a => a.id);
+
+    await Promise.all(misses.map(async (uid) => {
+      const data = await resolveProfile(uid, accountIds);
+      if (data) {
+        userInfoCache.set(uid, { data, expiresAt: Date.now() + USER_INFO_TTL_MS });
+        users[uid] = data;
+      } else {
+        users[uid] = null;
+      }
+    }));
+
+    return reply.header('Cache-Control', 'private, max-age=60').send({ users });
+  });
+
   app.get('/api/v1/zalo-user-info/:uid', async (request: FastifyRequest, reply: FastifyReply) => {
     const { uid } = request.params as { uid: string };
     if (!uid) return reply.status(400).send({ error: 'uid required' });
