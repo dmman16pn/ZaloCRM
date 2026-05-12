@@ -595,7 +595,7 @@ function formatTime(dateStr: string | null): string {
 .ci-name-row {
   display: flex; align-items: center;
   height: 20px;
-  padding-right: 38px; /* chừa chỗ cho time/badge absolute */
+  padding-right: 64px; /* chừa rộng hơn để fit "Vừa xong" (~58px), không đè lên tên */
 }
 .ci-name {
   font-size: 14px;
@@ -603,6 +603,10 @@ function formatTime(dateStr: string | null): string {
   display: inline-flex; align-items: center; gap: 4px;
   min-width: 0; flex: 1;
   line-height: 20px;
+}
+.ci-name > * { flex-shrink: 0; }
+.ci-name :first-child + * { /* tên thật sự — cho phép shrink */
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .group-icon { font-size: 11px; }
 /* Meta-right float ra góc phải, không nằm trong flex flow → badge không phá height */

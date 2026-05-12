@@ -126,6 +126,17 @@ export function useChat() {
   const aiUsage = ref({ usedToday: 0, maxDaily: 500, remaining: 500, enabled: true });
   const aiConfig = ref<AiConfig>({ provider: 'anthropic', model: 'claude-sonnet-4-6', maxDaily: 500, enabled: true });
   let socket: Socket | null = null;
+  let convSyncTimer: ReturnType<typeof setTimeout> | null = null;
+
+  // Debounce server-side reconcile: chỉ fetch full list sau 3s không có tin mới
+  // → tránh lag khi nhận burst (chat group nhiều người gửi liên tiếp).
+  function scheduleConvSync() {
+    if (convSyncTimer) clearTimeout(convSyncTimer);
+    convSyncTimer = setTimeout(() => {
+      void fetchConversations();
+      convSyncTimer = null;
+    }, 3000);
+  }
 
   const selectedConv = computed(() =>
     conversations.value.find(c => c.id === selectedConvId.value) || null,
@@ -367,10 +378,11 @@ export function useChat() {
           messages.value.push(normalizeMessage(data.message as RawMessage));
         }
       }
-      // Live bump số tin in/out + lastMessageAt cho conv tương ứng (optimistic
-      // update — fetchConversations chạy parallel sẽ correct lại từ DB sau).
-      const conv = conversations.value.find(c => c.id === data.conversationId);
-      if (conv) {
+      // Optimistic update conversation list — tránh fetch full HTTP mỗi message
+      // (cũ: fetchConversations() per event → 143 rows re-render → lag rõ).
+      const idx = conversations.value.findIndex(c => c.id === data.conversationId);
+      if (idx !== -1) {
+        const conv = conversations.value[idx];
         if (conv.contact) {
           if (data.message.senderType === 'self') {
             conv.contact.totalOutbound = (conv.contact.totalOutbound ?? 0) + 1;
@@ -382,11 +394,20 @@ export function useChat() {
           conv.contact.lastActivity = data.message.sentAt;
         }
         conv.lastMessageAt = data.message.sentAt;
+        // Cập nhật messages preview để conv list hiển thị tin mới nhất ngay
+        conv.messages = [data.message, ...(conv.messages || [])].slice(0, 1);
         if (data.message.senderType !== 'self' && conv.id !== selectedConvId.value) {
           conv.unreadCount = (conv.unreadCount ?? 0) + 1;
         }
+        // Move conv to top (in-place — sort theo lastMessageAt sẽ cần thêm overhead)
+        if (idx > 0) {
+          conversations.value.splice(idx, 1);
+          conversations.value.unshift(conv);
+        }
       }
-      fetchConversations();
+      // Debounce sync from server: chỉ fetch sau 3s im lặng → reconcile state
+      // (tránh chạy mỗi tin → lag list khi nhận burst).
+      scheduleConvSync();
     });
 
     socket.on('chat:deleted', (data: { messageId?: string; zaloMsgId?: string }) => {
