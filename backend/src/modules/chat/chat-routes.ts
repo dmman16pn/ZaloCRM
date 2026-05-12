@@ -330,8 +330,14 @@ export async function chatRoutes(app: FastifyInstance) {
 
       zaloRateLimiter.recordSend(conversation.zaloAccountId);
       const sendResult = await instance.api.sendMessage(quote ? { msg: content, quote } : { msg: content }, threadId, threadType);
-      // Extract zaloMsgId from sendMessage response for dedup with selfListen
-      const zaloMsgId = String(sendResult?.msgId || sendResult?.data?.msgId || '');
+      // zca-js trả về { message: { msgId } | null, attachment: [{ msgId }] }
+      // Extract zaloMsgId từ message (text) hoặc attachment[0] (media) để dedup với selfListen
+      const sr = sendResult as unknown as { message?: { msgId?: number | string } | null; attachment?: Array<{ msgId?: number | string }> };
+      const rawId = sr?.message?.msgId ?? sr?.attachment?.[0]?.msgId ?? '';
+      const zaloMsgId = String(rawId || '');
+      if (!zaloMsgId) {
+        logger.warn(`[chat] sendMessage không trả msgId — shape=${JSON.stringify(sendResult).slice(0, 200)}`);
+      }
 
       const message = await prisma.message.create({
         data: {
@@ -416,19 +422,83 @@ export async function chatRoutes(app: FastifyInstance) {
 
       const threadType = conversation.threadType === 'group' ? 1 : 0;
       zaloRateLimiter.recordSend(conversation.zaloAccountId);
-      // zca-js sendMessage với attachments = file paths → upload + send image
-      await instance.api.sendMessage(
+
+      // Bước 1: upload lên Zalo CDN trước để lấy URLs thật (hdUrl/normalUrl/thumbUrl)
+      // Phải làm trước vì sendMessage chỉ trả {msgId}, không lộ URLs.
+      const uploadResults = await instance.api.uploadAttachment(tmpFiles, conversation.externalThreadId, threadType);
+
+      // Bước 2: send message — zca-js sẽ re-upload (chấp nhận để có URLs đúng từ bước 1)
+      const sendResult = await instance.api.sendMessage(
         { msg: '', attachments: tmpFiles },
         conversation.externalThreadId,
         threadType,
       );
+
+      // zca-js trả { message, attachment: [{msgId}, ...] } — match với uploadResults theo index
+      const sr = sendResult as unknown as {
+        message?: { msgId?: number | string } | null;
+        attachment?: Array<{ msgId?: number | string }>;
+      };
+
+      // Tạo Message rows với URLs thật từ uploadResults
+      const createdMessages = [];
+      for (let i = 0; i < uploadResults.length; i++) {
+        const up = uploadResults[i] as unknown as {
+          fileType: 'image' | 'video' | 'others';
+          hdUrl?: string; normalUrl?: string; thumbUrl?: string;
+          fileUrl?: string; fileName?: string; totalSize?: number;
+          width?: number; height?: number;
+        };
+        const zaloMsgId = String(sr.attachment?.[i]?.msgId || '');
+
+        let content: string;
+        let contentType: string;
+        if (up.fileType === 'image') {
+          content = JSON.stringify({
+            hdUrl: up.hdUrl || up.normalUrl || '',
+            href: up.normalUrl || up.hdUrl || '',
+            thumb: up.thumbUrl || up.normalUrl || '',
+            thumbUrl: up.thumbUrl || '',
+            normalUrl: up.normalUrl || '',
+            width: up.width, height: up.height,
+          });
+          contentType = 'image';
+        } else if (up.fileType === 'video') {
+          content = JSON.stringify({ href: up.fileUrl || '', fileName: up.fileName, totalSize: up.totalSize });
+          contentType = 'video';
+        } else {
+          content = JSON.stringify({ href: up.fileUrl || '', fileName: up.fileName, totalSize: up.totalSize });
+          contentType = 'file';
+        }
+
+        const msg = await prisma.message.create({
+          data: {
+            id: randomUUID(),
+            conversationId: id,
+            zaloMsgId: zaloMsgId || null,
+            senderType: 'self',
+            senderUid: conversation.zaloAccount.zaloUid || '',
+            senderName: 'Staff',
+            content,
+            contentType,
+            sentAt: new Date(),
+            repliedByUserId: user.id,
+          },
+        });
+        createdMessages.push(msg);
+      }
 
       await prisma.conversation.update({
         where: { id },
         data: { lastMessageAt: new Date(), isReplied: true, unreadCount: 0 },
       });
 
-      return { success: true, count: tmpFiles.length };
+      const io = (app as any).io as Server;
+      for (const m of createdMessages) {
+        io?.emit('chat:message', { accountId: conversation.zaloAccountId, message: m, conversationId: id });
+      }
+
+      return { success: true, count: tmpFiles.length, messages: createdMessages };
     } catch (err) {
       logger.error('[chat] Upload image error:', err);
       return reply.status(500).send({ error: 'Upload failed', detail: String(err) });

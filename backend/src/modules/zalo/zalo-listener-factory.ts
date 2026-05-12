@@ -4,10 +4,100 @@
  * Extracted from ZaloAccountPool to keep zalo-pool.ts under 200 lines.
  */
 import type { Server } from 'socket.io';
+import { randomUUID } from 'node:crypto';
 import { logger } from '../../shared/utils/logger.js';
+import { prisma } from '../../shared/database/prisma-client.js';
 import { handleIncomingMessage, handleMessageUndo } from '../chat/message-handler.js';
 import { detectContentType, extractAlbumInfo, updateContactAvatar } from './zalo-message-helpers.js';
 import { handleFriendEvent } from './friend-event-handler.js';
+
+// Map Zalo Reactions enum code → display emoji (cùng map với chat-operations-routes)
+const ZALO_REACTION_DISPLAY: Record<string, string> = {
+  '/-heart': '❤️',
+  '/-strong': '👍',
+  ':>': '😆',
+  ':o': '😮',
+  ':-((': '😭',
+  ':-h': '😡',
+  '/-rose': '🌹',
+  '/-break': '💔',
+  '/-weak': '👎',
+};
+
+async function handleZaloReaction(accountId: string, io: Server | null, reaction: any) {
+  try {
+    const data = reaction?.data;
+    const threadId = reaction?.threadId;
+    if (!data || !threadId) return;
+
+    // Reactor info: uidFrom là Zalo UID của người thả; rIcon là emoji code, rType=0 thường nghĩa "add"
+    const reactorZaloUid: string = String(data.uidFrom || '');
+    const rawIcon: string = String(data.content?.rIcon || '');
+    const rType: number = Number(data.content?.rType || 0);
+    // Target message: gMsgID là Zalo msgId của tin bị react
+    const targetZaloMsgId: string = String(data.content?.rMsg?.[0]?.gMsgID || data.msgId || '');
+    if (!targetZaloMsgId || !reactorZaloUid) return;
+
+    // Tìm conversation theo externalThreadId + accountId
+    const conversation = await prisma.conversation.findFirst({
+      where: { zaloAccountId: accountId, externalThreadId: threadId },
+      select: { id: true },
+    });
+    if (!conversation) return;
+
+    // Tìm Message theo zaloMsgId
+    const message = await prisma.message.findFirst({
+      where: { conversationId: conversation.id, zaloMsgId: targetZaloMsgId },
+      select: { id: true },
+    });
+    if (!message) return;
+
+    const displayEmoji = ZALO_REACTION_DISPLAY[rawIcon] || rawIcon || '👍';
+    const reactorName = String(data.dName || '');
+
+    // rIcon rỗng = remove, có icon = add (Zalo gửi cùng 1 event cho cả 2 — phân biệt qua rIcon empty)
+    if (!rawIcon || rType < 0) {
+      // Remove tất cả emoji của reactor này trên message (Zalo client chỉ giữ 1 emoji per user)
+      await prisma.messageReaction.deleteMany({
+        where: { messageId: message.id, reactorId: reactorZaloUid, reactorSource: 'zalo' },
+      });
+    } else {
+      await prisma.messageReaction.upsert({
+        where: {
+          messageId_reactorId_emoji: {
+            messageId: message.id,
+            reactorId: reactorZaloUid,
+            emoji: displayEmoji,
+          },
+        },
+        update: { reactorName: reactorName || undefined },
+        create: {
+          id: randomUUID(),
+          messageId: message.id,
+          reactorId: reactorZaloUid,
+          reactorSource: 'zalo',
+          reactorName: reactorName || null,
+          emoji: displayEmoji,
+        },
+      });
+    }
+
+    io?.emit('chat:reactions', {
+      conversationId: conversation.id,
+      messageId: message.id,
+      msgId: message.id,
+      reactions: [{
+        userId: reactorZaloUid,
+        userName: reactorName,
+        reaction: displayEmoji,
+        action: (!rawIcon || rType < 0) ? 'remove' : 'add',
+        source: 'zalo',
+      }],
+    });
+  } catch (err) {
+    logger.warn(`[zalo:${accountId}] reaction handler error:`, err);
+  }
+}
 
 // Cached user info entry with 5-minute TTL
 export interface UserInfoCacheEntry {
@@ -174,6 +264,20 @@ export function attachZaloListener(ctx: ListenerContext): void {
     if (msgId) {
       await handleMessageUndo(accountId, String(msgId));
       io?.emit('chat:deleted', { accountId, msgId: String(msgId) });
+    }
+  });
+
+  // Reactions thả từ Zalo client → sync vào DB + emit socket
+  listener.on('reaction', async (reaction: any) => {
+    await handleZaloReaction(accountId, io, reaction);
+  });
+
+  // Backfill reactions trên reconnect (đã thả khi CRM offline)
+  listener.on('old_reactions', async (reactions: any[]) => {
+    if (!Array.isArray(reactions)) return;
+    logger.info(`[zalo:${accountId}] Backfill ${reactions.length} old reactions`);
+    for (const r of reactions) {
+      await handleZaloReaction(accountId, io, r);
     }
   });
 

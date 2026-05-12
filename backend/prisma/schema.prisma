@@ -502,16 +502,22 @@ model AiSuggestion {
 // ── Ported from openzca ────────────────────────────────────────────────────
 
 // Emoji reaction on a message (ported from openzca msg react)
+// reactorId có 2 nguồn: CRM User.id (khi nhân viên CRM thả qua route) hoặc Zalo UID
+// (khi sync từ Zalo client qua listener). Phân biệt qua reactorSource.
 model MessageReaction {
-  id        String   @id @default(uuid())
-  messageId String   @map("message_id")
-  reactorId String   @map("reactor_id") // Zalo UID of the person who reacted
-  emoji     String   // ❤️ 👍 😆 😮 😭 😡
-  createdAt DateTime @default(now()) @map("created_at")
+  id            String   @id @default(uuid())
+  messageId     String   @map("message_id")
+  reactorId     String   @map("reactor_id") // CRM user.id hoặc Zalo UID — xem reactorSource
+  reactorSource String   @default("crm") @map("reactor_source") // "crm" | "zalo"
+  reactorName   String?  @map("reactor_name")
+  emoji         String   // ❤️ 👍 😆 😮 😭 😡 — hoặc raw Zalo code khi sync
+  createdAt     DateTime @default(now()) @map("created_at")
 
   message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
 
-  @@unique([messageId, reactorId])
+  // Cho phép multi-emoji: 1 user (CRM hoặc Zalo) có thể thả nhiều emoji khác nhau trên cùng tin.
+  @@unique([messageId, reactorId, emoji])
+  @@index([messageId])
   @@map("message_reactions")
 }
 

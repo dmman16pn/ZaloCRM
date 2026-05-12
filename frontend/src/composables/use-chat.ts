@@ -2,6 +2,7 @@ import { ref, computed } from 'vue';
 import { api } from '@/api/index';
 import { io, Socket } from 'socket.io-client';
 import type { Contact } from '@/composables/use-contacts';
+import { useAuthStore } from '@/stores/auth';
 
 interface ZaloAccount {
   id: string;
@@ -106,6 +107,7 @@ export interface Message {
 }
 
 export function useChat() {
+  const authStore = useAuthStore();
   const conversations = ref<Conversation[]>([]);
   const selectedConvId = ref<string | null>(null);
   const messages = ref<Message[]>([]);
@@ -159,8 +161,11 @@ export function useChat() {
 
   function normalizeMessage(message: RawMessage): Message {
     const counts = new Map<string, number>();
+    const myEmojis = new Set<string>();
+    const myId = authStore.user?.id || '';
     for (const reaction of message.reactions || []) {
       counts.set(reaction.emoji, (counts.get(reaction.emoji) || 0) + 1);
+      if (myId && reaction.reactorId === myId) myEmojis.add(reaction.emoji);
     }
     const { reactions, quote, ...base } = message;
 
@@ -186,7 +191,7 @@ export function useChat() {
     return {
       ...base,
       reply,
-      reactions: Array.from(counts.entries()).map(([emoji, count]) => ({ emoji, count, reacted: false })),
+      reactions: Array.from(counts.entries()).map(([emoji, count]) => ({ emoji, count, reacted: myEmojis.has(emoji) })),
     };
   }
 
@@ -397,13 +402,28 @@ export function useChat() {
     socket.on('chat:reactions', (data: { messageId?: string; msgId?: string; zaloMsgId?: string; reactions: { userId: string; userName: string; reaction: string; action: 'add' | 'remove' }[] }) => {
       const msg = messages.value.find(m => m.id === data.messageId || m.id === data.msgId || m.zaloMsgId === data.zaloMsgId);
       if (!msg) return;
+      // Merge với reactions hiện có thay vì replace — tránh mất emoji của user khác
       const counts = new Map<string, number>();
-      for (const reaction of data.reactions) {
-        const emoji = reaction.reaction;
-        if (reaction.action === 'add') counts.set(emoji, (counts.get(emoji) || 0) + 1);
-        if (reaction.action === 'remove') counts.delete(emoji);
+      const myEmojis = new Set<string>();
+      for (const r of msg.reactions || []) {
+        counts.set(r.emoji, r.count);
+        if (r.reacted) myEmojis.add(r.emoji);
       }
-      msg.reactions = Array.from(counts.entries()).map(([emoji, count]) => ({ emoji, count, reacted: false }));
+      const myId = authStore.user?.id || '';
+      for (const r of data.reactions) {
+        const emoji = r.reaction;
+        const isMine = r.userId === myId;
+        if (r.action === 'add') {
+          counts.set(emoji, (counts.get(emoji) || 0) + 1);
+          if (isMine) myEmojis.add(emoji);
+        } else if (r.action === 'remove') {
+          const cur = (counts.get(emoji) || 0) - 1;
+          if (cur > 0) counts.set(emoji, cur);
+          else counts.delete(emoji);
+          if (isMine) myEmojis.delete(emoji);
+        }
+      }
+      msg.reactions = Array.from(counts.entries()).map(([emoji, count]) => ({ emoji, count, reacted: myEmojis.has(emoji) }));
     });
 
     socket.on('chat:pinned', () => {

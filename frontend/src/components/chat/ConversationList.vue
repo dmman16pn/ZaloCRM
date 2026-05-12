@@ -74,14 +74,20 @@
             <div class="ci-name">
               <span v-if="conv.threadType === 'group'" class="group-icon">👥</span>
               {{ displayName(conv) }}
-              <span v-if="conv.unreadCount > 9" class="badge-9plus">9+</span>
             </div>
-            <div class="ci-time">{{ formatTime(conv.lastMessageAt) }}</div>
+            <div class="ci-meta-right">
+              <div class="ci-time">{{ formatTime(conv.lastMessageAt) }}</div>
+              <div
+                v-if="conv.unreadCount > 0 && conv.id !== selectedId"
+                class="ci-unread-count"
+              >{{ conv.unreadCount > 5 ? '5+' : conv.unreadCount }}</div>
+            </div>
           </div>
 
           <div class="ci-preview">{{ lastMessagePreview(conv) }}</div>
 
-          <div v-if="conv.contact?.tags?.length || friendshipStatus(conv)" class="ci-tag-row">
+          <!-- Tag row luôn render (kể cả rỗng) để giữ layout cố định -->
+          <div class="ci-tag-row">
             <span
               v-for="tag in (conv.contact?.tags || []).slice(0, 2)"
               :key="tag"
@@ -94,7 +100,6 @@
           </div>
         </div>
 
-        <div v-if="conv.unreadCount > 0 && conv.id !== selectedId" class="unread-dot" />
         <AiSentimentBadge v-if="parseSentiment(conv)" :sentiment="parseSentiment(conv)" class="sentiment" />
       </div>
 
@@ -513,27 +518,48 @@ function formatTime(dateStr: string | null): string {
 .conv-item {
   padding: 11px 13px;
   display: flex; gap: 11px;
+  align-items: flex-start;
   cursor: pointer;
   border-bottom: 1px solid var(--smax-grey-100);
   position: relative;
   user-select: none;
+  /* Cố định chiều cao mỗi item — name + preview + tag row reserved */
+  min-height: 78px;
+  box-sizing: border-box;
 }
+/* Avatar dịch xuống nhẹ để canh giữa với name + preview (bỏ qua tag row) */
+.conv-item :deep(.smax-av) { margin-top: 2px; flex-shrink: 0; }
 .conv-item:hover { background: var(--smax-grey-50); }
-.conv-item.active { background: var(--smax-primary-soft); }
-.conv-item.active::before {
-  content: ''; position: absolute;
-  left: 0; top: 0; bottom: 0; width: 3px;
-  background: var(--smax-primary);
-}
 .conv-item.unread .ci-name { font-weight: 700; }
-.conv-item.is-group { background: var(--smax-group-bg); }
-.conv-item.is-group:hover { background: rgba(255,234,227,0.78); }
+/* Active: nền xanh nhạt đồng nhất + bo góc + viền xanh nhẹ */
+.conv-item.active,
+.conv-item.is-group.active {
+  background: var(--smax-primary-soft) !important;
+  border-radius: 12px;
+  margin: 2px 6px;
+  border-bottom-color: transparent !important;
+  box-shadow: inset 0 0 0 1.5px #64b5f6 !important;
+}
+.conv-item.active:hover,
+.conv-item.is-group.active:hover {
+  background: var(--smax-primary-soft) !important;
+}
 
-.unread-dot {
-  width: 9px; height: 9px;
-  background: var(--smax-primary);
-  border-radius: 50%;
-  position: absolute; right: 13px; top: 17px;
+/* Unread count badge — pill xám mờ dưới timestamp */
+.ci-meta-right {
+  display: flex; flex-direction: column;
+  align-items: flex-end; gap: 4px;
+  flex-shrink: 0;
+}
+.ci-unread-count {
+  min-width: 20px; height: 18px;
+  padding: 0 6px;
+  background: #b8bfc9;
+  color: white;
+  font-size: 10px; font-weight: 700;
+  border-radius: 9px;
+  display: inline-flex; align-items: center; justify-content: center;
+  line-height: 1;
 }
 
 .ci-avatar {
@@ -556,34 +582,48 @@ function formatTime(dateStr: string | null): string {
   display: flex; align-items: center; justify-content: center;
 }
 
-.ci-body { flex: 1; min-width: 0; }
+.ci-body {
+  flex: 1; min-width: 0;
+  display: flex; flex-direction: column;
+  position: relative;
+}
 .ci-name-row {
-  display: flex; justify-content: space-between; align-items: baseline;
+  display: flex; align-items: center;
+  height: 20px;
+  padding-right: 38px; /* chừa chỗ cho time/badge absolute */
 }
 .ci-name {
   font-size: 14px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   display: inline-flex; align-items: center; gap: 4px;
+  min-width: 0; flex: 1;
+  line-height: 20px;
 }
 .group-icon { font-size: 11px; }
-.badge-9plus {
-  background: var(--smax-error); color: white;
-  font-size: 10px; font-weight: 600;
-  padding: 0 5px; border-radius: 9px;
-  margin-left: 3px;
+/* Meta-right float ra góc phải, không nằm trong flex flow → badge không phá height */
+.ci-meta-right {
+  position: absolute; top: 0; right: 0;
+  display: flex; flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+  pointer-events: none;
 }
 .ci-time {
   font-size: 11px; color: var(--smax-grey-700);
-  flex-shrink: 0; margin-left: 4px;
+  line-height: 1;
 }
 .ci-preview {
   font-size: 12px; color: var(--smax-grey-700);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   margin-top: 2px;
+  height: 16px; line-height: 16px;
+  padding-right: 30px; /* chừa chỗ cho unread badge float trên */
 }
+/* Tag row luôn reserve khoảng nhỏ — kể cả khi không có tag */
 .ci-tag-row {
-  display: flex; gap: 4px; margin-top: 4px; align-items: center;
-  flex-wrap: wrap;
+  display: flex; gap: 4px; margin-top: 3px; align-items: center;
+  flex-wrap: nowrap; overflow: hidden;
+  height: 16px;
 }
 .tag-mini {
   display: inline-block;

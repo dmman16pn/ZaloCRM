@@ -115,13 +115,22 @@ export async function chatOperationsRoutes(app: FastifyInstance) {
       );
       eventBuffer.recordReaction(id, refs.messageId, user.id, user.email, reaction, 'add');
       const displayEmoji = reactionDisplay(reaction);
+      // Multi-emoji: upsert keyed theo (messageId, reactorId, emoji) — cùng user có thể có nhiều emoji
       await prisma.messageReaction.upsert({
-        where: { messageId_reactorId: { messageId: refs.messageId, reactorId: user.id } },
-        update: { emoji: displayEmoji },
+        where: {
+          messageId_reactorId_emoji: {
+            messageId: refs.messageId,
+            reactorId: user.id,
+            emoji: displayEmoji,
+          },
+        },
+        update: {}, // đã tồn tại — không cần update gì
         create: {
           id: randomUUID(),
           messageId: refs.messageId,
           reactorId: user.id,
+          reactorSource: 'crm',
+          reactorName: user.email,
           emoji: displayEmoji,
         },
       });
@@ -140,6 +149,33 @@ export async function chatOperationsRoutes(app: FastifyInstance) {
       });
       return { success: true, result };
     } catch (err) { return handleError(err, reply); }
+  });
+
+  // ── DELETE /reactions ────────────────────────────────────────────────────────
+  // Toggle off: user gỡ 1 emoji cụ thể khỏi tin (chỉ xoá row local — không gọi Zalo)
+  app.delete('/api/v1/conversations/:id/reactions', chatAccess, async (request: FastifyRequest, reply: FastifyReply) => {
+    const user = request.user!;
+    const { id } = request.params as { id: string };
+    const { msgId, reaction } = request.body as { msgId: string; reaction: string };
+    if (!msgId || !reaction) return reply.status(400).send({ error: 'msgId and reaction required' });
+
+    const conv = await getConversation(id, user.orgId, reply);
+    if (!conv) return;
+    const refs = await resolveMessageRefs(id, msgId, user.orgId);
+    if (!refs) return reply.status(404).send({ error: 'Message not found' });
+
+    const displayEmoji = reactionDisplay(reaction);
+    await prisma.messageReaction.deleteMany({
+      where: { messageId: refs.messageId, reactorId: user.id, emoji: displayEmoji },
+    });
+    const io = (app as any).io as Server;
+    io?.emit('chat:reactions', {
+      conversationId: id,
+      messageId: refs.messageId,
+      msgId: refs.messageId,
+      reactions: [{ userId: user.id, userName: user.email, reaction: displayEmoji, action: 'remove' }],
+    });
+    return { success: true };
   });
 
   // ── POST /typing ─────────────────────────────────────────────────────────────
