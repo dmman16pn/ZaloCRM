@@ -9,6 +9,13 @@
  */
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { logger } from '../../shared/utils/logger.js';
+import { zaloPool } from '../zalo/zalo-pool.js';
+import { prisma } from '../../shared/database/prisma-client.js';
+
+// In-memory cache cho sticker URL — key = `${catId}:${id}`, value = direct URL
+// Sticker URLs stable (Zalo CDN không xoá) → cache long-lived OK.
+const stickerUrlCache = new Map<string, { url: string; expiresAt: number }>();
+const STICKER_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24h
 
 const ALLOWED_HOSTS = new Set([
   'zinst-stc.zadn.vn',
@@ -123,6 +130,64 @@ export async function zinstantProxyRoutes(app: FastifyInstance): Promise<void> {
     } catch (err) {
       logger.warn('[bankcard-proxy] fetch error:', err);
       return reply.status(502).send({ error: 'upstream fetch failed' });
+    }
+  });
+
+  // ── GET /api/v1/zalo-sticker/:catId/:id — redirect tới sticker URL thật
+  // Dùng zca-js getStickerCategoryDetail (cần auth Zalo session) để lookup URL.
+  // Public endpoint vì <img src> không pass JWT header.
+  app.get('/api/v1/zalo-sticker/:catId/:id', async (request: FastifyRequest, reply: FastifyReply) => {
+    const { catId, id } = request.params as { catId: string; id: string };
+    if (!catId || !id) return reply.status(400).send({ error: 'catId and id required' });
+
+    const cacheKey = `${catId}:${id}`;
+    const cached = stickerUrlCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+      return reply
+        .header('Cache-Control', 'public, max-age=86400')
+        .redirect(cached.url);
+    }
+
+    // Tìm connected Zalo account bất kì để gọi API (sticker là global Zalo data,
+    // không phải per-account)
+    const account = await prisma.zaloAccount.findFirst({
+      where: { status: 'connected' },
+      select: { id: true },
+    });
+    if (!account) return reply.status(503).send({ error: 'no connected Zalo account' });
+
+    const instance = zaloPool.getInstance(account.id);
+    const api = instance?.api as { getStickersDetail?: (ids: number[]) => Promise<unknown[]> } | undefined;
+    if (!api?.getStickersDetail) {
+      logger.warn(`[sticker] getStickersDetail not available on account ${account.id}`);
+      return reply.status(503).send({ error: 'Zalo API not available' });
+    }
+
+    try {
+      // getStickersDetail nhận array sticker IDs, trả về array sticker objects với URLs
+      const details = await api.getStickersDetail([Number(id)]);
+      const sticker = (details?.[0] || {}) as Record<string, unknown>;
+
+      // Zalo trả: stickerUrl (static PNG), stickerWebpUrl (animated WebP),
+      // stickerSpriteUrl (sprite frames). Ưu tiên animated nếu có (type=7),
+      // fallback static cho sticker tĩnh (type=3).
+      const url = String(
+        sticker.stickerWebpUrl || sticker.stickerUrl ||
+        sticker.url || sticker.uri || ''
+      );
+
+      if (!url) {
+        logger.warn(`[sticker] No URL field. Available keys: ${Object.keys(sticker).join(',')}`);
+        return reply.status(404).send({ error: 'sticker URL not found', keys: Object.keys(sticker) });
+      }
+
+      stickerUrlCache.set(cacheKey, { url, expiresAt: Date.now() + STICKER_CACHE_TTL_MS });
+      return reply
+        .header('Cache-Control', 'public, max-age=86400')
+        .redirect(url);
+    } catch (err) {
+      logger.warn('[sticker] fetch error:', err);
+      return reply.status(502).send({ error: 'upstream Zalo API failed' });
     }
   });
 }

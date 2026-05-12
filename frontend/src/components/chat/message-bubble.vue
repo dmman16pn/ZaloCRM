@@ -325,16 +325,16 @@ const messageCaption = computed<string>(() => {
 const formattedCaption = computed(() => highlightText(messageCaption.value));
 
 // ── Sticker / Video / Voice / GIF helpers ───────────────────────────────────
-// Zalo sticker content shape: { id, catId, type } — KHÔNG có URL, phải tự build
-// từ Zalo CDN. Fallback về extractMediaUrl nếu (hiếm) Zalo lưu URL trực tiếp.
+// Zalo sticker content shape: { id, catId, type } — KHÔNG có URL trực tiếp.
+// URL phải lookup qua zca-js getStickerCategoryDetail (cần Zalo session) →
+// dùng backend proxy /api/v1/zalo-sticker/:catId/:id → redirect tới Zalo CDN.
 const stickerUrl = computed(() => {
   const p = safeParse(props.message.content);
   if (p && typeof p === 'object') {
     const id = (p as Record<string, unknown>).id;
     const catId = (p as Record<string, unknown>).catId;
     if (id && catId) {
-      // Zalo CDN sticker — đa số sticker là webp
-      return `https://zalo-api.zadn.vn/api/emoticon/sticker/webpc?stickerId=${id}&categoryId=${catId}&type=${(p as Record<string, unknown>).type || 0}`;
+      return `/api/v1/zalo-sticker/${catId}/${id}`;
     }
   }
   return extractMediaUrl('sticker', props.message.content);
