@@ -17,32 +17,57 @@
       </v-btn>
     </div>
 
-    <!-- Quick create form — single datetime-local + quick presets -->
+    <!-- Quick create form — date picker visual + time slot picker -->
     <div v-if="showForm" class="apt-form">
-      <!-- Quick preset chips -->
-      <div class="d-flex flex-wrap gap-1 mb-2">
+      <!-- Quick preset chips: 1-click cho 90% case -->
+      <div class="apt-form-label">Nhanh:</div>
+      <div class="d-flex flex-wrap gap-1 mb-3">
         <v-chip
           v-for="preset in quickPresets"
           :key="preset.label"
-          size="x-small"
-          variant="outlined"
+          size="small"
+          :variant="isPresetActive(preset) ? 'flat' : 'outlined'"
+          :color="isPresetActive(preset) ? 'warning' : undefined"
           @click="applyPreset(preset)"
         >
           {{ preset.label }}
         </v-chip>
       </div>
 
-      <!-- Combined datetime input (cleaner than separate date + time) -->
-      <v-text-field
-        v-model="createForm.datetime"
-        label="Thời gian hẹn"
-        type="datetime-local"
-        density="compact"
-        variant="outlined"
-        hide-details
-        prepend-inner-icon="mdi-clock-outline"
-        class="mb-2"
-      />
+      <!-- Date + Time side-by-side -->
+      <div class="apt-form-label">Hoặc chọn ngày + giờ:</div>
+      <div class="d-flex gap-2 mb-2">
+        <!-- Date input native (browser calendar) -->
+        <v-text-field
+          :model-value="dateInputValue"
+          label="Ngày"
+          type="date"
+          :min="todayStr"
+          density="compact"
+          variant="outlined"
+          hide-details
+          prepend-inner-icon="mdi-calendar"
+          style="flex: 1.4;"
+          @update:model-value="onDateInputChange"
+        />
+
+        <!-- Time với select 30 phút increments -->
+        <v-select
+          v-model="createForm.time"
+          :items="timeSlots"
+          label="Giờ"
+          density="compact"
+          variant="outlined"
+          hide-details
+          prepend-inner-icon="mdi-clock-outline"
+          style="flex: 1;"
+        />
+      </div>
+
+      <!-- Display nicely formatted preview -->
+      <div v-if="createForm.date && createForm.time" class="apt-form-preview">
+        📅 {{ formatDateDisplay(createForm.date) }} lúc <strong>{{ createForm.time }}</strong>
+      </div>
 
       <v-text-field
         v-model="createForm.notes"
@@ -59,12 +84,12 @@
         size="small"
         color="warning"
         block
-        :disabled="!createForm.datetime"
+        :disabled="!createForm.date || !createForm.time"
         :loading="creating"
         @click="submitCreate"
       >
         <v-icon size="14" class="mr-1">mdi-check</v-icon>
-        Tạo lịch hẹn
+        Tạo lịch hẹn — {{ formatDateDisplay(createForm.date) }} {{ createForm.time }}
       </v-btn>
     </div>
 
@@ -169,7 +194,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed } from 'vue';
+import { ref, reactive, computed, watch } from 'vue';
 import { api } from '@/api/index';
 
 export interface Appointment {
@@ -199,8 +224,70 @@ const creating = ref(false);
 const saving = ref(false);
 const editingId = ref<string | null>(null);
 
-const createForm = reactive({ datetime: '', notes: '' });
+// Form: date là Date object (cho v-date-picker), time là "HH:mm" string
+const createForm = reactive({
+  date: null as Date | null,
+  time: '',
+  notes: '',
+});
 const editForm = reactive({ datetime: '', notes: '', status: '' });
+
+// Time slots cho dropdown — 30 phút increment từ 07:00 → 21:30
+const timeSlots = (() => {
+  const slots: string[] = [];
+  for (let h = 7; h <= 21; h++) {
+    slots.push(`${pad(h)}:00`);
+    slots.push(`${pad(h)}:30`);
+  }
+  return slots;
+})();
+
+const todayStr = new Date().toISOString().split('T')[0];
+
+// Helpers cho prefill + format
+function nextRoundedHalfHour(): { date: Date; time: string } {
+  const now = new Date();
+  // Cộng 60-90 phút, làm tròn lên 30 phút
+  const target = new Date(now.getTime() + 60 * 60 * 1000);
+  const mins = target.getMinutes();
+  if (mins > 30) {
+    target.setHours(target.getHours() + 1);
+    target.setMinutes(0, 0, 0);
+  } else if (mins > 0) {
+    target.setMinutes(30, 0, 0);
+  }
+  return {
+    date: new Date(target.getFullYear(), target.getMonth(), target.getDate()),
+    time: `${pad(target.getHours())}:${pad(target.getMinutes())}`,
+  };
+}
+
+function formatDateDisplay(d: Date | null | string): string {
+  if (!d) return '';
+  const dt = typeof d === 'string' ? new Date(d) : d;
+  return dt.toLocaleDateString('vi-VN', { weekday: 'short', day: '2-digit', month: '2-digit', year: 'numeric' });
+}
+
+// Date <-> input value "YYYY-MM-DD" (HTML5 date input)
+const dateInputValue = computed<string>(() => {
+  if (!createForm.date) return '';
+  const d = createForm.date;
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+});
+function onDateInputChange(v: string | null) {
+  if (!v) { createForm.date = null; return; }
+  const [y, m, d] = v.split('-').map(Number);
+  createForm.date = new Date(y, (m || 1) - 1, d || 1);
+}
+
+// Auto-prefill khi mở form
+watch(showForm, (open) => {
+  if (open && !createForm.date) {
+    const def = nextRoundedHalfHour();
+    createForm.date = def.date;
+    createForm.time = def.time;
+  }
+});
 
 const statusOptions = [
   { title: 'Sắp tới', value: 'scheduled' },
@@ -216,21 +303,33 @@ function pad(n: number): string {
 function toLocalInput(d: Date): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
-const quickPresets = computed(() => {
+interface Preset { label: string; date: Date; time: string }
+
+const quickPresets = computed<Preset[]>(() => {
   const now = new Date();
-  const today14 = new Date(now); today14.setHours(14, 0, 0, 0);
-  const tomorrow9 = new Date(now); tomorrow9.setDate(now.getDate() + 1); tomorrow9.setHours(9, 0, 0, 0);
-  const tomorrow14 = new Date(now); tomorrow14.setDate(now.getDate() + 1); tomorrow14.setHours(14, 0, 0, 0);
-  const nextWeek = new Date(now); nextWeek.setDate(now.getDate() + 7); nextWeek.setHours(9, 0, 0, 0);
+  const dateOnly = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const today = dateOnly(now);
+  const tomorrow = new Date(today); tomorrow.setDate(today.getDate() + 1);
+  const nextWeek = new Date(today); nextWeek.setDate(today.getDate() + 7);
   return [
-    { label: 'Hôm nay 14:00', value: toLocalInput(today14) },
-    { label: 'Mai 09:00', value: toLocalInput(tomorrow9) },
-    { label: 'Mai 14:00', value: toLocalInput(tomorrow14) },
-    { label: 'Tuần sau', value: toLocalInput(nextWeek) },
+    { label: 'Hôm nay 14:00', date: today, time: '14:00' },
+    { label: 'Mai 09:00', date: tomorrow, time: '09:00' },
+    { label: 'Mai 14:00', date: tomorrow, time: '14:00' },
+    { label: 'Tuần sau 09:00', date: nextWeek, time: '09:00' },
   ];
 });
-function applyPreset(preset: { label: string; value: string }) {
-  createForm.datetime = preset.value;
+
+function applyPreset(preset: Preset) {
+  createForm.date = preset.date;
+  createForm.time = preset.time;
+}
+
+function isPresetActive(preset: Preset): boolean {
+  if (!createForm.date || !createForm.time) return false;
+  return (
+    createForm.date.getTime() === preset.date.getTime() &&
+    createForm.time === preset.time
+  );
 }
 
 const sortedAppointments = computed(() => {
@@ -288,19 +387,22 @@ function startEdit(apt: Appointment) {
 }
 
 async function submitCreate() {
-  if (!createForm.datetime || !props.contactId) return;
+  if (!createForm.date || !createForm.time || !props.contactId) return;
   creating.value = true;
   try {
-    const dt = new Date(createForm.datetime);
+    const [hh, mm] = createForm.time.split(':').map(Number);
+    const dt = new Date(createForm.date);
+    dt.setHours(hh || 0, mm || 0, 0, 0);
     await api.post('/appointments', {
       contactId: props.contactId,
       appointmentDate: dt.toISOString(),
-      appointmentTime: `${pad(dt.getHours())}:${pad(dt.getMinutes())}`,
+      appointmentTime: createForm.time,
       type: 'follow_up',
       notes: createForm.notes || null,
     });
     showForm.value = false;
-    createForm.datetime = '';
+    createForm.date = null;
+    createForm.time = '';
     createForm.notes = '';
     emit('refresh');
   } catch (err) {
@@ -337,6 +439,21 @@ async function submitEdit(appointmentId: string) {
   border-radius: 10px;
   padding: 10px;
   margin-bottom: 10px;
+}
+.apt-form-label {
+  font-size: 11px;
+  color: #757575;
+  margin-bottom: 4px;
+  font-weight: 500;
+}
+.apt-form-preview {
+  background: rgba(255, 183, 77, 0.15);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: #5d4037;
+  margin-bottom: 8px;
+  text-align: center;
 }
 
 .apt-row {
