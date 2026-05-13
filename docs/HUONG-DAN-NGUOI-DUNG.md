@@ -298,7 +298,22 @@ Trong list, click icon **🛡️ Cấu hình Proxy** (màu cam) ở cột Hành 
 
 ---
 
-## Liên hệ hỗ trợ
+## Cộng đồng & Hỗ trợ
+
+### Tham gia nhóm Telegram
+
+Trao đổi, hỏi đáp, nhận thông báo bản phát hành mới:
+
+<p align="left">
+  <a href="https://t.me/+KKJ3SJSx6PA3NDE1">
+    <img src="user-guide-images/qr-group-telegram.png" alt="Telegram Group QR" width="200" />
+  </a>
+</p>
+
+- 📲 Quét QR bằng Telegram, hoặc
+- 🔗 Click link: [https://t.me/+KKJ3SJSx6PA3NDE1](https://t.me/+KKJ3SJSx6PA3NDE1)
+
+### Liên hệ trực tiếp
 
 Cần tư vấn, custom thêm tính năng, hoặc triển khai ZaloCRM cho doanh nghiệp:
 
