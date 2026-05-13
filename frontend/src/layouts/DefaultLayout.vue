@@ -65,7 +65,21 @@
         </v-menu>
       </nav>
 
-      <div class="spacer" />
+      <!-- Contact marquee — scrolling banner to the left of search -->
+      <a
+        class="contact-marquee"
+        href="https://locnguyendata.com"
+        target="_blank"
+        rel="noopener"
+        title="Dịch vụ tư vấn, custom thêm tính năng, triển khai ZaloCRM cho doanh nghiệp"
+      >
+        <span class="marquee-track">
+          🛠 Dịch vụ tư vấn, custom thêm tính năng, triển khai ZaloCRM cho doanh nghiệp — Website: locnguyendata.com — Phone/Zalo: 0945031039
+          &nbsp;•&nbsp;
+          🛠 Dịch vụ tư vấn, custom thêm tính năng, triển khai ZaloCRM cho doanh nghiệp — Website: locnguyendata.com — Phone/Zalo: 0945031039
+          &nbsp;•&nbsp;
+        </span>
+      </a>
 
       <!-- Global search trigger -->
       <GlobalSearch class="topnav-search" />
@@ -251,7 +265,43 @@ function logout() {
 .nav-tab:hover { background: rgba(255,255,255,0.06); color: white; }
 .nav-tab.active { background: rgba(255,255,255,0.12); color: white; font-weight: 500; }
 
-.spacer { flex: 1; }
+.contact-marquee {
+  flex: 0 0 320px;
+  margin: 0 12px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  background: linear-gradient(90deg, rgba(0,242,255,0.12), rgba(0,119,182,0.12));
+  border: 1px solid rgba(0,242,255,0.30);
+  border-radius: 6px;
+  text-decoration: none;
+  color: #00F2FF;
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  position: relative;
+}
+.contact-marquee:hover {
+  background: linear-gradient(90deg, rgba(0,242,255,0.20), rgba(0,119,182,0.20));
+  border-color: rgba(0,242,255,0.50);
+}
+.marquee-track {
+  display: inline-block;
+  white-space: nowrap;
+  animation: marquee-scroll 32s linear infinite;
+  will-change: transform;
+}
+.contact-marquee:hover .marquee-track {
+  animation-play-state: paused;
+}
+@keyframes marquee-scroll {
+  0%   { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
+@media (max-width: 1280px) {
+  .contact-marquee { display: none; }
+}
 
 .topnav-search {
   max-width: 240px;
