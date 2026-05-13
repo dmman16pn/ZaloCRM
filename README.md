@@ -4,6 +4,18 @@ Hệ thống quản lý tập trung nhiều tài khoản Zalo cá nhân trên 1 
 
 **GitHub:** [https://github.com/locphamnguyen/ZaloCRM](https://github.com/locphamnguyen/ZaloCRM)
 
+## Ảnh chụp giao diện
+
+| Dashboard | Tin nhắn |
+|---|---|
+| ![Dashboard](docs/user-guide-images/02-dashboard.png) | ![Tin nhắn](docs/user-guide-images/03-chat.png) |
+
+| Bạn bè | Khách hàng |
+|---|---|
+| ![Bạn bè](docs/user-guide-images/04-friends.png) | ![Khách hàng](docs/user-guide-images/05-contacts.png) |
+
+> 📖 Xem hướng dẫn sử dụng đầy đủ tại [docs/HUONG-DAN-NGUOI-DUNG.md](docs/HUONG-DAN-NGUOI-DUNG.md).
+
 ## Tính năng
 
 ### Mới trong v3.0
