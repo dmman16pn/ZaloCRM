@@ -201,6 +201,17 @@ export interface ContactFilters {
   search: string;
   source: string;
   status: string;
+  // Mở rộng theo design office-hours 2026-05-13
+  statusId?: string;
+  assignedUserId?: string;
+  threadType?: 'user' | 'group' | '';
+  hasZalo?: 'true' | 'false' | 'unknown' | '';
+  multiNick?: 'true' | '';
+  scoreMin?: number | null;
+  scoreMax?: number | null;
+  relationshipKindAny?: string;
+  dateFrom?: string;
+  dateTo?: string;
 }
 
 export const SOURCE_OPTIONS = [
@@ -229,6 +240,16 @@ export function useContacts() {
     search: '',
     source: '',
     status: '',
+    statusId: '',
+    assignedUserId: '',
+    threadType: '',
+    hasZalo: '',
+    multiNick: '',
+    scoreMin: null,
+    scoreMax: null,
+    relationshipKindAny: '',
+    dateFrom: '',
+    dateTo: '',
   });
 
   const pagination = reactive({ page: 1, limit: 20 });
@@ -243,6 +264,16 @@ export function useContacts() {
           search: filters.search || undefined,
           source: filters.source || undefined,
           status: filters.status || undefined,
+          statusId: filters.statusId || undefined,
+          assignedUserId: filters.assignedUserId || undefined,
+          threadType: filters.threadType || undefined,
+          hasZalo: filters.hasZalo || undefined,
+          multiNick: filters.multiNick || undefined,
+          scoreMin: filters.scoreMin ?? undefined,
+          scoreMax: filters.scoreMax ?? undefined,
+          relationshipKindAny: filters.relationshipKindAny || undefined,
+          dateFrom: filters.dateFrom || undefined,
+          dateTo: filters.dateTo || undefined,
         },
       });
       contacts.value = res.data.contacts ?? res.data;

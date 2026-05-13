@@ -31,15 +31,51 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
         limit = '50',
         search = '',
         source = '',
-        status = '',
+        status = '',          // legacy enum
+        statusId = '',        // dynamic Status table
         assignedUserId = '',
+        threadType = '',      // 'user' | 'group' — filter qua conversations relation
+        hasZalo = '',         // 'true' | 'false' | 'unknown'
+        multiNick = '',       // 'true' = childrenCount > 1 (đa Zalo identity)
+        scoreMin = '',
+        scoreMax = '',
+        relationshipKindAny = '', // CSV: 'friend,pending_friend,...' — match KH có ≥1 Friend kind đó
+        dateFrom = '',
+        dateTo = '',
       } = request.query as QueryParams;
 
       const where: any = { orgId: user.orgId, mergedInto: null };
       // Model B: mỗi Contact tự nó là "KH Cha"; con = Friend rows. KHÔNG filter parentContactId.
       if (source) where.source = source;
       if (status) where.status = status;
+      if (statusId) where.statusId = statusId;
       if (assignedUserId) where.assignedUserId = assignedUserId;
+      if (hasZalo === 'true') where.hasZalo = true;
+      else if (hasZalo === 'false') where.hasZalo = false;
+      else if (hasZalo === 'unknown') where.hasZalo = null;
+      // Score range — fallback Contact.leadScore (aggregate displayLeadScore tính sau)
+      if (scoreMin || scoreMax) {
+        where.leadScore = {};
+        if (scoreMin) where.leadScore.gte = Number(scoreMin) || 0;
+        if (scoreMax) where.leadScore.lte = Number(scoreMax) || 100;
+      }
+      // Date range — theo lastActivity (sort cũng dùng field này → khớp UX intent)
+      if (dateFrom || dateTo) {
+        where.lastActivity = {};
+        if (dateFrom) where.lastActivity.gte = new Date(dateFrom);
+        if (dateTo) where.lastActivity.lte = new Date(dateTo + 'T23:59:59.999Z');
+      }
+      // ThreadType filter qua Conversation relation: KH có ≥1 conv loại đó
+      if (threadType === 'user' || threadType === 'group') {
+        where.conversations = { some: { threadType, orgId: user.orgId } };
+      }
+      // RelationshipKind aggregate: KH có ≥1 Friend với kind trong list
+      if (relationshipKindAny) {
+        const kinds = relationshipKindAny.split(',').map(s => s.trim()).filter(Boolean);
+        if (kinds.length > 0) {
+          where.friends = { some: { relationshipKind: { in: kinds } } };
+        }
+      }
       if (search) {
         // Fast path: phone chính match phoneNormalized indexed exact (normalize input
         // canonical về 84xxx). phone2/phone3 vẫn dùng contains variants (ít dùng).
@@ -70,6 +106,8 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
       const pageNum = parseInt(page);
       const limitNum = parseInt(limit);
 
+      // Sort: tương tác mới nhất lên đầu (theo design D2 trong office-hours doc).
+      // lastActivity null → cuối cùng. Indexed @@index([orgId, lastActivity]).
       const [contacts, total] = await Promise.all([
         prisma.contact.findMany({
           where,
@@ -78,28 +116,98 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
             _count: { select: { conversations: true, appointments: true } },
             ...AGGREGATE_INCLUDE,
           },
-          orderBy: { updatedAt: 'desc' },
+          orderBy: [
+            { lastActivity: { sort: 'desc', nulls: 'last' } },
+            { updatedAt: 'desc' },
+          ],
           skip: (pageNum - 1) * limitNum,
           take: limitNum,
         }),
         prisma.contact.count({ where }),
       ]);
 
-      // Aggregate counts per relationshipKind từ friends đã include sẵn.
-      // Model B: friends = "KH Con". Hiển thị 4 chip nick chăm trên master row.
-      const enriched = contacts.map((c) => {
-        const nicksByKind: Record<string, number> = {};
-        for (const f of c.friends ?? []) {
-          nicksByKind[f.relationshipKind] = (nicksByKind[f.relationshipKind] || 0) + 1;
-        }
-        const display = computeAggregateDisplay(c);
-        return { ...c, nicksByKind, ...display };
-      });
+      // Aggregate + multiNick post-filter (childrenCount requires friends count after load)
+      const multiNickOnly = multiNick === 'true';
+      const enriched = contacts
+        .map((c) => {
+          const nicksByKind: Record<string, number> = {};
+          for (const f of c.friends ?? []) {
+            nicksByKind[f.relationshipKind] = (nicksByKind[f.relationshipKind] || 0) + 1;
+          }
+          const display = computeAggregateDisplay(c);
+          return { ...c, nicksByKind, ...display };
+        })
+        .filter((c) => !multiNickOnly || (c.childrenCount ?? 0) > 1);
 
       return { contacts: enriched, total, page: pageNum, limit: limitNum };
     } catch (err) {
       logger.error('[contacts] List error:', err);
       return reply.status(500).send({ error: 'Failed to fetch contacts' });
+    }
+  });
+
+  // ── GET /api/v1/contacts/stats — metrics cho stats row đầu ContactsView ──
+  // Tổng hợp số liệu nhanh (count theo dimension) cho dashboard mini phía top.
+  // Tất cả filter scoped theo orgId + mergedInto IS NULL (skip merged secondaries).
+  app.get('/api/v1/contacts/stats', async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const user = request.user!;
+      const base = { orgId: user.orgId, mergedInto: null };
+      const now = new Date();
+      const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const sevenDaysAgo = new Date(now.getTime() - 7 * 86_400_000);
+      const sevenDaysAhead = new Date(now.getTime() + 7 * 86_400_000);
+
+      const [
+        total,
+        withNick,
+        multiClaim3,
+        revoked,
+        noZalo,
+        newToday,
+        activeRecently,
+        upcomingApt,
+        highScore,
+      ] = await Promise.all([
+        prisma.contact.count({ where: base }),
+        // Có nick chăm = có ≥1 Friend row
+        prisma.contact.count({ where: { ...base, friends: { some: {} } } }),
+        // Multi-claim ≥3 nick (Friend per-account distinct → count distinct zaloAccountId).
+        // Proxy: ≥3 Friend rows (đủ chính xác vì Friend unique theo (account, uid)).
+        prisma.contact.count({ where: { ...base, friends: { some: {} } } }).then(async () => {
+          const rows = await prisma.contact.findMany({
+            where: { ...base, friends: { some: {} } },
+            select: { id: true, _count: { select: { friends: true } } },
+          });
+          return rows.filter(r => r._count.friends >= 3).length;
+        }),
+        prisma.contact.count({ where: { ...base, consentStatus: 'revoked' } }),
+        prisma.contact.count({ where: { ...base, hasZalo: false } }),
+        prisma.contact.count({ where: { ...base, createdAt: { gte: startOfToday } } }),
+        prisma.contact.count({ where: { ...base, lastActivity: { gte: sevenDaysAgo } } }),
+        prisma.contact.count({
+          where: {
+            ...base,
+            appointments: { some: { appointmentDate: { gte: now, lte: sevenDaysAhead } } },
+          },
+        }),
+        prisma.contact.count({ where: { ...base, leadScore: { gte: 50 } } }),
+      ]);
+
+      return {
+        total,
+        withNick,
+        multiClaim: multiClaim3,
+        revoked,
+        noZalo,
+        newToday,
+        activeRecently,
+        upcomingApt,
+        highScore,
+      };
+    } catch (err) {
+      logger.error('[contacts] Stats error:', err);
+      return reply.status(500).send({ error: 'Failed to compute stats' });
     }
   });
 

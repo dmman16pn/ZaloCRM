@@ -234,6 +234,9 @@ model Contact {
   @@index([orgId, phone])
   @@index([orgId, phoneNormalized])
   @@index([orgId, zaloUid])
+  // Default sort cho ContactsView list: tương tác mới nhất lên đầu.
+  // Cần index để tránh seq scan khi 4500+ contacts.
+  @@index([orgId, lastActivity])
   @@unique([orgId, zaloGlobalId])
   @@index([orgId, zaloUsername])
   @@index([orgId, mergedInto])

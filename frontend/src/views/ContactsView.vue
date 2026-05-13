@@ -19,24 +19,31 @@
     </header>
 
     <!-- ════════ Toolbar ════════ -->
-    <div class="toolbar">
+    <!-- ════════ Toolbar Row 1: search + 4 filter chính + actions ════════ -->
+    <div class="toolbar toolbar-primary">
       <input
         v-model="filters.search"
         class="toolbar-search"
-        placeholder="🔍 Tìm tên / SĐT / nội dung tin nhắn…"
+        placeholder="🔍 Tìm tên / SĐT / UID / @username / globalId…"
         @input="debouncedFetch"
       />
-      <select v-model="filters.source" @change="fetchContacts">
+      <select v-model="filters.threadType" @change="fetchContacts" title="Loại hội thoại">
+        <option value="">Loại: tất cả</option>
+        <option value="user">👤 User 1-1</option>
+        <option value="group">👥 Nhóm</option>
+      </select>
+      <select v-model="filters.source" @change="fetchContacts" title="Nguồn KH">
         <option value="">Tất cả nguồn</option>
         <option v-for="o in SOURCE_OPTIONS" :key="o.value" :value="o.value">{{ o.text }}</option>
       </select>
-      <select v-model="filters.status" @change="fetchContacts">
-        <option value="">Tất cả trạng thái</option>
-        <option v-for="o in STATUS_OPTIONS" :key="o.value" :value="o.value">{{ o.text }}</option>
+      <select v-model="filters.statusId" @change="fetchContacts" title="Trạng thái KH (dynamic)">
+        <option value="">Tất cả trạng thái KH</option>
+        <option v-for="s in allMasterStatuses" :key="s.id" :value="s.id">{{ s.name }}</option>
       </select>
-      <input type="date" v-model="dateFrom" class="date-input" />
-      <span class="date-separator">→</span>
-      <input type="date" v-model="dateTo" class="date-input" />
+      <select v-model="filters.assignedUserId" @change="fetchContacts" title="Sale phụ trách KH">
+        <option value="">Tất cả sale</option>
+        <option v-for="u in allUsers" :key="u.id" :value="u.id">{{ u.fullName }}</option>
+      </select>
 
       <span class="spacer"></span>
 
@@ -80,11 +87,67 @@
       <button class="btn btn-primary" @click="openCreate">+ Thêm KH</button>
     </div>
 
+    <!-- ════════ Toolbar Row 2: date range + advanced filter toggle ════════ -->
+    <div class="toolbar toolbar-secondary">
+      <span class="row2-label">📅 Tương tác:</span>
+      <input type="date" v-model="filters.dateFrom" class="date-input" @change="fetchContacts" />
+      <span class="date-separator">→</span>
+      <input type="date" v-model="filters.dateTo" class="date-input" @change="fetchContacts" />
+      <button class="btn-advanced" :class="{ on: showAdvanced }" @click="showAdvanced = !showAdvanced">
+        {{ showAdvanced ? '▾' : '▸' }} Lọc nâng cao
+        <span v-if="advancedActiveCount > 0" class="btn-badge">{{ advancedActiveCount }}</span>
+      </button>
+      <span class="spacer"></span>
+      <button v-if="hasAnyFilter" class="btn-clear" @click="clearAllFilters" title="Xoá tất cả bộ lọc">
+        × Xoá lọc
+      </button>
+    </div>
+
+    <!-- Advanced filter panel (collapsible) -->
+    <div v-if="showAdvanced" class="advanced-panel">
+      <div class="adv-group">
+        <label>Trạng thái Zalo</label>
+        <select v-model="filters.hasZalo" @change="fetchContacts">
+          <option value="">Tất cả</option>
+          <option value="true">✓ Có Zalo</option>
+          <option value="false">✗ Không có Zalo</option>
+          <option value="unknown">? Chưa tra</option>
+        </select>
+      </div>
+      <div class="adv-group">
+        <label>Trạng thái KB Zalo (per-nick)</label>
+        <select v-model="filters.relationshipKindAny" @change="fetchContacts">
+          <option value="">Tất cả</option>
+          <option value="friend">✓ Đã KB</option>
+          <option value="pending_friend">… Đang mời</option>
+          <option value="chatting_stranger">💬 Chat lạ</option>
+          <option value="ghost">🚫 Ngắt</option>
+        </select>
+      </div>
+      <div class="adv-group">
+        <label>Đa nick chăm</label>
+        <select v-model="filters.multiNick" @change="fetchContacts">
+          <option value="">Tất cả</option>
+          <option value="true">≥ 2 nick chăm</option>
+        </select>
+      </div>
+      <div class="adv-group">
+        <label>Lead score</label>
+        <input type="number" v-model.number="filters.scoreMin" min="0" max="100" placeholder="Min" class="score-input-mini" @change="fetchContacts" />
+        <span class="dash">—</span>
+        <input type="number" v-model.number="filters.scoreMax" min="0" max="100" placeholder="Max" class="score-input-mini" @change="fetchContacts" />
+      </div>
+    </div>
+
     <!-- ════════ Stats row ════════ -->
     <div class="stats-row">
-      <div class="stat-box">📋 Tổng KH: <span class="stat-num">{{ total }}</span></div>
+      <div class="stat-box">📋 Tổng KH: <span class="stat-num">{{ stats.total ?? total }}</span></div>
       <div class="stat-box">🟢 Có nick chăm: <span class="stat-num">{{ stats.withNick }}</span></div>
-      <div class="stat-box">⚠ Multi-claim ≥3: <span class="stat-num">{{ stats.multiClaim }}</span></div>
+      <div class="stat-box">🔥 Tương tác 7d: <span class="stat-num">{{ stats.activeRecently ?? 0 }}</span></div>
+      <div class="stat-box">🆕 Mới hôm nay: <span class="stat-num">{{ stats.newToday ?? 0 }}</span></div>
+      <div class="stat-box">📅 Lịch hẹn ≤7d: <span class="stat-num">{{ stats.upcomingApt ?? 0 }}</span></div>
+      <div class="stat-box">⭐ Score ≥50: <span class="stat-num">{{ stats.highScore ?? 0 }}</span></div>
+      <div class="stat-box">⚠ Đa nick (≥3): <span class="stat-num">{{ stats.multiClaim }}</span></div>
       <div class="stat-box">🚫 Revoked: <span class="stat-num">{{ stats.revoked }}</span></div>
       <div class="stat-box">📵 No Zalo: <span class="stat-num">{{ stats.noZalo }}</span></div>
     </div>
@@ -119,9 +182,13 @@
         </thead>
         <tbody>
           <template v-for="contact in contacts" :key="contact.id">
-            <tr class="master-row" :class="{ open: expandedId === contact.id }">
+            <tr
+              class="master-row"
+              :class="{ open: expandedId === contact.id }"
+              @click="onRowClick($event, contact.id)"
+            >
               <td>
-                <button class="expand-btn" @click="toggleExpand(contact.id)">
+                <button class="expand-btn" @click.stop="toggleExpand(contact.id)">
                   {{ expandedId === contact.id ? '▾' : '▸' }}
                 </button>
               </td>
@@ -534,8 +601,87 @@ const expandedId = ref<string | null>(null);
 // Real friendship data per contact (key: contactId → ChildRow[]). Fetched on first expand.
 const friendshipCache = ref<Record<string, ChildRow[]>>({});
 const friendshipLoading = ref<Record<string, boolean>>({});
-const dateFrom = ref('');
-const dateTo = ref('');
+
+// Advanced filter panel toggle (Lọc nâng cao: hasZalo / relationshipKind / multiNick / score)
+const showAdvanced = ref(false);
+const advancedActiveCount = computed(() => {
+  let n = 0;
+  if (filters.hasZalo) n++;
+  if (filters.relationshipKindAny) n++;
+  if (filters.multiNick) n++;
+  if (filters.scoreMin != null || filters.scoreMax != null) n++;
+  return n;
+});
+const hasAnyFilter = computed(() =>
+  !!(filters.search || filters.source || filters.statusId || filters.assignedUserId
+     || filters.threadType || filters.hasZalo || filters.multiNick
+     || filters.relationshipKindAny || filters.scoreMin != null || filters.scoreMax != null
+     || filters.dateFrom || filters.dateTo),
+);
+function clearAllFilters() {
+  filters.search = '';
+  filters.source = '';
+  filters.statusId = '';
+  filters.assignedUserId = '';
+  filters.threadType = '';
+  filters.hasZalo = '';
+  filters.multiNick = '';
+  filters.relationshipKindAny = '';
+  filters.scoreMin = null;
+  filters.scoreMax = null;
+  filters.dateFrom = '';
+  filters.dateTo = '';
+  pagination.page = 1;
+  fetchContacts();
+}
+
+// Dynamic Status list cho dropdown "Trạng thái KH" (cấp Contact = statusId)
+interface MasterStatus { id: string; name: string; color: string | null; order: number }
+const allMasterStatuses = ref<MasterStatus[]>([]);
+async function loadMasterStatuses() {
+  if (allMasterStatuses.value.length > 0) return;
+  try {
+    const res = await api.get<{ statuses: MasterStatus[] }>('/settings/statuses');
+    allMasterStatuses.value = res.data.statuses || [];
+  } catch { /* non-critical */ }
+}
+
+// Sale users (cho dropdown "Sale chăm" = Contact.assignedUserId)
+interface UserLite { id: string; fullName: string }
+const allUsers = ref<UserLite[]>([]);
+async function loadUsers() {
+  if (allUsers.value.length > 0) return;
+  try {
+    const res = await api.get<{ users?: UserLite[] }>('/users');
+    allUsers.value = res.data?.users || [];
+  } catch {
+    // Fallback: extract distinct assignedUser từ contacts đã load
+    const seen = new Map<string, UserLite>();
+    for (const c of contacts.value) {
+      if (c.assignedUser?.id && !seen.has(c.assignedUser.id)) {
+        seen.set(c.assignedUser.id, { id: c.assignedUser.id, fullName: c.assignedUser.fullName || '—' });
+      }
+    }
+    allUsers.value = [...seen.values()];
+  }
+}
+
+// Stats from /contacts/stats endpoint (F5 reload). Fallback computed từ contacts nếu fail.
+interface ContactStats {
+  total?: number; withNick?: number; multiClaim?: number; revoked?: number;
+  noZalo?: number; newToday?: number; activeRecently?: number;
+  upcomingApt?: number; highScore?: number;
+}
+const stats = ref<ContactStats>({});
+async function loadStats() {
+  try {
+    const res = await api.get<ContactStats>('/contacts/stats');
+    stats.value = res.data || {};
+  } catch (err) {
+    console.error('[ContactsView] stats fetch failed:', err);
+    stats.value = {};
+  }
+}
 
 let searchTimeout: ReturnType<typeof setTimeout>;
 function debouncedFetch() {
@@ -558,6 +704,14 @@ function toggleExpand(id: string) {
     const contact = contacts.value.find(c => c.id === id);
     if (contact) void fetchFriendships(contact);
   }
+}
+
+// Click anywhere trên row Cha = toggle expand. Skip nếu click vào button / input /
+// link bên trong (để giữ behavior gốc của những control đó: edit name, click chat...).
+function onRowClick(e: MouseEvent, id: string) {
+  const t = e.target as HTMLElement;
+  if (t.closest('button, input, select, textarea, a, .v-menu, .action-cell')) return;
+  toggleExpand(id);
 }
 
 async function fetchFriendships(contact: Contact) {
@@ -762,12 +916,8 @@ function ageOf(c: Contact): number | null {
   return null;
 }
 
-const stats = computed(() => ({
-  withNick: contacts.value.filter(c => c.hasZalo === true).length,
-  multiClaim: contacts.value.filter(c => (c._count?.conversations || 0) >= 3).length,
-  revoked: contacts.value.filter(c => c.consentStatus === 'revoked').length,
-  noZalo: contacts.value.filter(c => c.hasZalo === false).length,
-}));
+// (Stats giờ load từ /contacts/stats endpoint — xem `const stats` ở phần advanced filter
+// state. Computed fallback cũ đã thay bằng ref reactive update qua loadStats.)
 
 function openCreate() {
   selectedContact.value = null;
@@ -873,6 +1023,9 @@ onMounted(() => {
   fetchContacts();
   fetchDuplicateGroups();
   fetchCandidateCount();
+  loadStats();
+  loadMasterStatuses();
+  loadUsers();
 });
 </script>
 
@@ -935,6 +1088,79 @@ onMounted(() => {
 .toolbar .date-input { max-width: 140px; }
 .date-separator { color: var(--smax-grey-700); font-size: 12px; }
 .spacer { flex: 1 0 auto; }
+
+/* Toolbar Row 2: date + advanced toggle — compact, secondary visual weight */
+.toolbar-secondary {
+  padding: 6px 11px;
+  margin-top: -6px;  /* dính vào row 1 */
+  margin-bottom: 9px;
+  background: var(--smax-grey-50);
+  font-size: 12px;
+}
+.row2-label {
+  color: var(--smax-grey-700);
+  font-weight: 600;
+  font-size: 11.5px;
+}
+.btn-advanced {
+  padding: 5px 10px;
+  border: 1px dashed var(--smax-primary);
+  background: transparent;
+  color: var(--smax-primary);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  font-family: inherit;
+  display: inline-flex; align-items: center; gap: 4px;
+}
+.btn-advanced.on { background: var(--smax-primary-soft); border-style: solid; }
+.btn-advanced:hover { background: var(--smax-primary-soft); }
+.btn-clear {
+  padding: 4px 10px;
+  border: 1px solid var(--smax-grey-300);
+  background: transparent;
+  color: var(--smax-grey-700);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  font-family: inherit;
+}
+.btn-clear:hover { color: var(--smax-error); border-color: var(--smax-error); }
+
+/* Advanced panel: collapse mở dưới row 2, grid 4 cột group filter */
+.advanced-panel {
+  background: var(--smax-bg);
+  border: 1px solid var(--smax-grey-200);
+  border-radius: 7px;
+  padding: 11px 13px;
+  margin-bottom: 9px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 11px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+}
+.adv-group {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 6px;
+}
+.adv-group label {
+  display: block; width: 100%;
+  font-size: 11px; font-weight: 600;
+  color: var(--smax-grey-700);
+  text-transform: uppercase; letter-spacing: 0.3px;
+  margin-bottom: 4px;
+}
+.adv-group select,
+.score-input-mini {
+  padding: 6px 9px;
+  border: 1px solid var(--smax-grey-300);
+  border-radius: 6px;
+  background: var(--smax-bg);
+  font-size: 12.5px;
+  font-family: inherit;
+  flex: 1; min-width: 0;
+}
+.score-input-mini { max-width: 80px; text-align: center; }
+.adv-group .dash { color: var(--smax-grey-700); font-size: 13px; }
 .toggle-inline { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--smax-grey-700); cursor: pointer; padding: 6px 10px; border-radius: 6px; }
 .toggle-inline:hover { background: rgba(0,0,0,0.04); }
 .toggle-inline input { cursor: pointer; }
@@ -1007,6 +1233,7 @@ onMounted(() => {
   font-size: 12.5px;
   min-width: 1500px;
 }
+/* Sticky header: pin thead khi scroll xuống. Tính từ top-nav (52px) trong DefaultLayout. */
 .smax-table thead th {
   background: var(--smax-grey-50);
   border-bottom: 1px solid var(--smax-grey-200);
@@ -1018,13 +1245,26 @@ onMounted(() => {
   font-size: 11.5px;
   text-transform: uppercase;
   letter-spacing: 0.3px;
+  position: sticky;
+  top: var(--smax-topnav-h, 52px);
+  z-index: 5;
 }
 .smax-table tbody tr.master-row {
   border-bottom: 1px solid var(--smax-grey-100);
-  cursor: default;
+  cursor: pointer; /* click anywhere toggle expand */
 }
 .smax-table tbody tr.master-row:hover { background: var(--smax-grey-50); }
-.smax-table tbody tr.master-row.open { background: var(--smax-primary-soft); }
+.smax-table tbody tr.master-row.open {
+  background: var(--smax-primary-soft);
+  position: relative;
+}
+.smax-table tbody tr.master-row.open::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 3px;
+  background: var(--smax-primary);
+}
 .smax-table td {
   padding: 9px 11px;
   vertical-align: top;
