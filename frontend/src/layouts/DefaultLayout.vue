@@ -65,6 +65,9 @@
         </v-menu>
       </nav>
 
+      <!-- Flexible spacer pushes everything after it to the right edge. -->
+      <div class="topnav-spacer" />
+
       <!--
         ATTRIBUTION BANNER — Required by Apache License 2.0 NOTICE clause §4(d).
         Source data is obfuscated in src/composables/use-attribution.ts; see that
@@ -273,9 +276,11 @@ function logout() {
 .nav-tab:hover { background: rgba(255,255,255,0.06); color: white; }
 .nav-tab.active { background: rgba(255,255,255,0.12); color: white; font-weight: 500; }
 
+.topnav-spacer { flex: 1; min-width: 0; }
+
 .contact-marquee {
   flex: 0 0 320px;
-  margin: 0 12px;
+  margin-right: 12px;
   height: 32px;
   display: flex;
   align-items: center;
