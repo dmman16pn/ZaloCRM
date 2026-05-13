@@ -49,11 +49,11 @@
 // Splitting + decoding at runtime is INTENTIONAL obfuscation to satisfy the
 // in-display attribution clause; see header comment.
 const _e_text_chunks = [
-  '8J+boCBE4buLY2ggduG7pSB0xrAgduG6pW4sIGN1c3RvbSB0',
-  'aMOqbSB0w61uaCBuxINuZywgdHJp4buDbiBraGFpIFphbG9D',
-  'Uk0gY2hvIGRvYW5oIG5naGnhu4dwIOKAlCBXZWJzaXRlOiBs',
-  'b2NuZ3V5ZW5kYXRhLmNvbSDigJQgUGhvbmUvWmFsbzogMDk0',
-  'NTAzMTAzOQ==',
+  '8J+boCBUxrAgduG6pW4sIGN1c3RvbSB0aMOqbS',
+  'B0w61uaCBuxINuZywgdHJp4buDbiBraGFpIFph',
+  'bG9DUk0gY2hvIGRvYW5oIG5naGnhu4dwIOKAlC',
+  'BXZWJzaXRlOiBsb2NuZ3V5ZW5kYXRhLmNvbSDi',
+  'gJQgUGhvbmUvWmFsbzogMDk0NTAzMTAzOQ==',
 ];
 
 const _e_href_chunks = [
@@ -67,14 +67,15 @@ const _e_href_chunks = [
 // If the decoded text is tampered, the runtime sum will diverge and the
 // banner falls back to an unambiguous "LICENSE VIOLATION" warning instead
 // of silently failing. This is by design.
-const _expected_text_checksum = 227;
+const _expected_text_checksum = 78;
 const _expected_href_checksum = 88;
 
 function _decode(chunks: string[]): string {
-  // atob() is the standard browser API for base64 decoding. We then convert
-  // the binary string back to UTF-8 via a TextDecoder, so non-ASCII (Vietnamese
-  // diacritics, emoji) survive the round-trip.
-  const bin = chunks.map((c) => atob(c)).join('');
+  // Concatenate chunks BEFORE decoding — base64 requires the full string be a
+  // multiple of 4 characters. Decoding chunks individually would fail when a
+  // chunk is split mid-quartet. Then convert the binary string back to UTF-8
+  // via TextDecoder so non-ASCII (Vietnamese diacritics, emoji) survive.
+  const bin = atob(chunks.join(''));
   const bytes = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
   return new TextDecoder('utf-8').decode(bytes);
