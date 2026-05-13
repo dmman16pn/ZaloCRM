@@ -65,19 +65,22 @@
         </v-menu>
       </nav>
 
-      <!-- Contact marquee — scrolling banner to the left of search -->
+      <!--
+        ATTRIBUTION BANNER — Required by Apache License 2.0 NOTICE clause §4(d).
+        Source data is obfuscated in src/composables/use-attribution.ts; see that
+        file + the NOTICE file at the repository root before modifying.
+        Removing this element is a license violation unless you hold a commercial
+        license from the maintainer (locnt@locnguyendata.com).
+      -->
       <a
         class="contact-marquee"
-        href="https://locnguyendata.com"
+        :href="attribution.href"
         target="_blank"
         rel="noopener"
-        title="Dịch vụ tư vấn, custom thêm tính năng, triển khai ZaloCRM cho doanh nghiệp"
+        :title="attribution.text"
       >
         <span class="marquee-track">
-          🛠 Dịch vụ tư vấn, custom thêm tính năng, triển khai ZaloCRM cho doanh nghiệp — Website: locnguyendata.com — Phone/Zalo: 0945031039
-          &nbsp;•&nbsp;
-          🛠 Dịch vụ tư vấn, custom thêm tính năng, triển khai ZaloCRM cho doanh nghiệp — Website: locnguyendata.com — Phone/Zalo: 0945031039
-          &nbsp;•&nbsp;
+          {{ attribution.text }}&nbsp;•&nbsp;{{ attribution.text }}&nbsp;•&nbsp;
         </span>
       </a>
 
@@ -127,6 +130,10 @@ import { useRouter } from 'vue-router';
 import NotificationBell from '@/components/NotificationBell.vue';
 import GlobalSearch from '@/components/GlobalSearch.vue';
 import ToastContainer from '@/components/ui/ToastContainer.vue';
+// Apache 2.0 §4(d) attribution — see src/composables/use-attribution.ts + NOTICE
+import { useAttribution } from '@/composables/use-attribution';
+
+const attribution = useAttribution();
 
 const theme = useTheme();
 const route = useRoute();
