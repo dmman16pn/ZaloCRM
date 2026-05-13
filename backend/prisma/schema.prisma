@@ -720,8 +720,11 @@ model Friend {
   contact     Contact      @relation(fields: [contactId], references: [id], onDelete: Cascade)
   zaloAccount ZaloAccount  @relation(fields: [zaloAccountId], references: [id], onDelete: Cascade)
 
-  @@unique([zaloAccountId, contactId])
+  // KHÔNG unique theo (zaloAccountId, contactId) vì 1 Contact (KH Cha) có thể có
+  // nhiều Friend per cùng zaloAccount khi merge từ các Zalo identity khác nhau
+  // của cùng person. Identity thật được enforce qua (zaloAccountId, zaloUidInNick).
   @@unique([zaloAccountId, zaloUidInNick])
+  @@index([zaloAccountId, contactId])
   @@index([orgId, contactId])
   @@index([zaloAccountId, relationshipKind])              // /friends tab filtering
   @@index([zaloAccountId, friendshipStatus])

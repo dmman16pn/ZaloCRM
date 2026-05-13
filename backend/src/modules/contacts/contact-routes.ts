@@ -10,6 +10,7 @@ import { logger } from '../../shared/utils/logger.js';
 import { mergeContacts } from './merge-service.js';
 import { runContactIntelligence } from './contact-intelligence.js';
 import { backfillGlobalId, backfillOrphanFriends } from './backfill-global-id.js';
+import { backfillMissingFriends } from './backfill-missing-friends.js';
 import { migrateStatusTable } from './status-migration.js';
 import { computeAggregateDisplay, AGGREGATE_INCLUDE } from './contact-aggregate-display.js';
 import { runAutomationRules } from '../automation/automation-service.js';
@@ -684,6 +685,17 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
     } catch (err) {
       logger.error('[contacts] migrate-status-table error:', err);
       return reply.status(500).send({ error: 'Migration failed', detail: String(err) });
+    }
+  });
+
+  // ── POST /api/v1/contacts/backfill-missing-friends — tạo Friend row thiếu cho conversations ──
+  app.post('/api/v1/contacts/backfill-missing-friends', async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const result = await backfillMissingFriends();
+      return reply.send(result);
+    } catch (err) {
+      logger.error('[contacts] Backfill missing friends error:', err);
+      return reply.status(500).send({ error: 'Backfill failed', detail: String(err) });
     }
   });
 

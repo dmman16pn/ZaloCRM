@@ -243,9 +243,9 @@ export async function chatRoutes(app: FastifyInstance) {
     if (!conversation) return reply.status(404).send({ error: 'Not found' });
 
     let friendship: { relationshipKind: string; friendshipStatus: string; becameFriendAt: Date | null; firstMessageAt: Date | null } | null = null;
-    if (conversation.threadType === 'user' && conversation.contactId) {
+    if (conversation.threadType === 'user' && conversation.contactId && conversation.externalThreadId) {
       const f = await prisma.friend.findUnique({
-        where: { zaloAccountId_contactId: { zaloAccountId: conversation.zaloAccountId, contactId: conversation.contactId } },
+        where: { zaloAccountId_zaloUidInNick: { zaloAccountId: conversation.zaloAccountId, zaloUidInNick: conversation.externalThreadId } },
         select: { relationshipKind: true, friendshipStatus: true, becameFriendAt: true, firstMessageAt: true },
       });
       friendship = f;

@@ -180,21 +180,24 @@ export async function applyFriendAggregate(args: AggregateMessageInput): Promise
   try {
     const conv = await prisma.conversation.findUnique({
       where: { id: args.conversationId },
-      select: { contactId: true, zaloAccountId: true, threadType: true, orgId: true },
+      select: { contactId: true, zaloAccountId: true, threadType: true, orgId: true, externalThreadId: true },
     });
     if (!conv?.contactId) return;
     if (conv.threadType === 'group') return;
+    if (!conv.externalThreadId) return;
 
     const { message } = args;
     const sentAt = message.sentAt;
     const isInbound = message.senderType === 'contact';
 
     await prisma.$transaction(async (tx) => {
+      // Friend identity = (zaloAccountId, zaloUidInNick) — externalThreadId của conversation
+      // chính là zaloUidInNick (UID per-account của khách qua nick này).
       const existing = await tx.friend.findUnique({
         where: {
-          zaloAccountId_contactId: {
+          zaloAccountId_zaloUidInNick: {
             zaloAccountId: conv.zaloAccountId,
-            contactId: conv.contactId!,
+            zaloUidInNick: conv.externalThreadId!,
           },
         },
       });
@@ -208,7 +211,7 @@ export async function applyFriendAggregate(args: AggregateMessageInput): Promise
             orgId: conv.orgId,
             contactId: conv.contactId!,
             zaloAccountId: conv.zaloAccountId,
-            zaloUidInNick: '',  // unknown until friendship established
+            zaloUidInNick: conv.externalThreadId!,
             friendshipStatus: 'none',
             hasConversation: true,
             relationshipKind: 'chatting_stranger',
