@@ -1025,7 +1025,10 @@ watch(() => props.editingMessage?.id, async (id) => {
 .ch-name {
   font-weight: 600; font-size: 16px;
   color: var(--smax-text);
-  min-width: 0; flex-shrink: 1; max-width: 320px;
+  /* min-width: 0 + flex-shrink để ellipsis hoạt động khi thread narrow.
+     max-width: 100% theo flex parent, không cố định 320px (HD thread ~360px
+     trừ avatar+actions, max-width 320 sẽ đè actions). */
+  min-width: 0; flex-shrink: 1;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .ch-sep {
