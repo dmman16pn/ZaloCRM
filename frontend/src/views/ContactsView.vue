@@ -1233,8 +1233,9 @@ onMounted(() => {
   font-size: 12.5px;
   min-width: 1500px;
 }
-/* Sticky header: pin thead khi scroll xuống. Tính từ top-nav (52px) trong DefaultLayout. */
-.smax-table thead th {
+/* Sticky header: pin thead Cha khi scroll. CHỈ direct descendant > > > —
+   tránh leak sticky xuống .child-table thead (nested inside expanded row → đè lên nhau). */
+.smax-table > thead > tr > th {
   background: var(--smax-grey-50);
   border-bottom: 1px solid var(--smax-grey-200);
   padding: 9px 11px;
@@ -1248,6 +1249,10 @@ onMounted(() => {
   position: sticky;
   top: var(--smax-topnav-h, 52px);
   z-index: 5;
+}
+/* Child table thead = static (chỉ scroll cùng row, không pin) */
+.child-table thead th {
+  position: static;
 }
 .smax-table tbody tr.master-row {
   border-bottom: 1px solid var(--smax-grey-100);
