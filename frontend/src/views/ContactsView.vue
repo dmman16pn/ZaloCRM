@@ -1221,10 +1221,16 @@ onMounted(() => {
 }
 
 /* ════════ Table ════════ */
+/* overflow: visible — KHÔNG tạo scroll container. Lý do: sticky thead bound to
+   nearest scroll ancestor. overflow-x: auto auto-promote overflow-y → scroll
+   container; sticky pin vào TOP CỦA scroll-wrap (không phải viewport). Khi page
+   scroll, cả wrap di chuyển → thead theo. Để sticky pin viewport, wrap phải
+   overflow: visible. Trade-off: nếu viewport hẹp hơn min-width table (1500px),
+   page-level H scroll thay vì internal H scroll. Acceptable cho desktop CRM. */
 .scroll-wrap {
   background: var(--smax-bg);
   border-radius: 7px;
-  overflow-x: auto;
+  overflow: visible;
   box-shadow: 0 1px 3px rgba(0,0,0,0.05);
 }
 .smax-table {
