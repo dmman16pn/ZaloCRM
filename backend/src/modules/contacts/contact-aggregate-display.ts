@@ -66,15 +66,24 @@ export function computeAggregateDisplay<T extends ContactWithChildren>(contact: 
   };
 }
 
-/** Standard include shape cho Prisma query để feed computeAggregateDisplay. */
+/** Standard include shape cho Prisma query để feed computeAggregateDisplay.
+ *  Children select đủ trường cho UI: display info + status + score + Zalo IDs. */
 export const AGGREGATE_INCLUDE = {
   statusRef: { select: { id: true, name: true, order: true, color: true, isTerminal: true } },
   children: {
     where: { mergedInto: null },
     select: {
       id: true,
+      fullName: true,
+      crmName: true,
+      avatarUrl: true,
+      phone: true,
+      zaloUid: true,
+      zaloGlobalId: true,
+      zaloUsername: true,
       leadScore: true,
       hasZalo: true,
+      parentContactId: true,
       statusRef: { select: { id: true, name: true, order: true, color: true, isTerminal: true } },
     },
   },

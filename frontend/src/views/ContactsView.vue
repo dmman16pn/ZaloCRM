@@ -213,8 +213,61 @@
             <tr v-if="expandedId === contact.id" class="child-wrap">
               <td colspan="17">
                 <div class="child-table-wrap">
-                  <div v-if="friendshipLoading[contact.id]" class="child-empty">Đang tải nick chăm…</div>
-                  <table v-else-if="childRows(contact).length" class="child-table">
+                  <div v-if="friendshipLoading[contact.id]" class="child-empty">Đang tải…</div>
+                  <template v-else>
+                    <!-- Section 1: KH Con (hiện khi cha có con) -->
+                    <div v-if="childrenOf(contact).length > 0" class="children-section">
+                      <div class="section-header">
+                        👶 KH Con ({{ childrenOf(contact).length }}) — gom cùng người thật
+                      </div>
+                      <table class="child-table">
+                        <thead>
+                          <tr>
+                            <th>Avatar</th>
+                            <th>Tên KH Con</th>
+                            <th>Zalo UID</th>
+                            <th>Trạng thái KH</th>
+                            <th>Score</th>
+                            <th>Có Zalo</th>
+                            <th>Action</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr v-for="kid in childrenOf(contact)" :key="kid.id">
+                            <td><Avatar :src="kid.avatarUrl" :name="kid.fullName || '?'" :size="26" :gradient-seed="kid.id" /></td>
+                            <td><strong>{{ kid.fullName || '—' }}</strong></td>
+                            <td><span class="uid">{{ kid.zaloUid || '—' }}</span></td>
+                            <td>
+                              <span
+                                v-if="kid.statusRef"
+                                class="chip"
+                                :style="{ background: chipBg(kid.statusRef.color), color: chipFg(kid.statusRef.color) }"
+                              >{{ kid.statusRef.name }}</span>
+                              <span v-else class="empty">—</span>
+                            </td>
+                            <td><span :class="['chip', scoreChipClass(kid.leadScore)]">{{ kid.leadScore ?? 0 }}</span></td>
+                            <td>
+                              <span v-if="kid.hasZalo === true" class="chip chip-success">✓</span>
+                              <span v-else-if="kid.hasZalo === false" class="chip chip-grey">✗</span>
+                              <span v-else class="empty">—</span>
+                            </td>
+                            <td>
+                              <div class="action-cell">
+                                <button class="row-action-btn" :title="'Tách KH con này'" @click="onUnlinkChild(kid)">✂</button>
+                                <button class="row-action-btn" :title="'Mở KH Con'" @click="openDetail(kid)">→</button>
+                              </div>
+                            </td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+
+                    <!-- Section 2: Nick CRM chăm trực tiếp -->
+                    <div v-if="childRows(contact).length > 0" class="section-header friends-header">
+                      💬 Nick CRM chăm trực tiếp ({{ childRows(contact).length }})
+                    </div>
+                  </template>
+                  <table v-if="!friendshipLoading[contact.id] && childRows(contact).length" class="child-table">
                     <thead>
                       <tr>
                         <th>Nick Zalo (Sale)</th>
@@ -300,8 +353,8 @@
                       </tr>
                     </tbody>
                   </table>
-                  <div v-else class="child-empty">
-                    KH này chưa có nick nào chăm.
+                  <div v-if="!friendshipLoading[contact.id] && !childRows(contact).length && !childrenOf(contact).length" class="child-empty">
+                    KH này chưa có nick nào chăm, chưa có KH con nào.
                   </div>
                 </div>
               </td>
@@ -404,16 +457,40 @@ function toggleExpand(id: string) {
   }
 }
 
+// Cache children contact metadata (per parent) — populated từ /contacts/:id detail.
+const childrenCache = ref<Record<string, Contact[]>>({});
+
 async function fetchFriendships(contact: Contact) {
   friendshipLoading.value[contact.id] = true;
   try {
-    const res = await api.get<{ friendships: ApiFriendship[] }>(`/contacts/${contact.id}/friendships`);
-    friendshipCache.value[contact.id] = (res.data.friendships || []).map(f => mapFriendshipToChildRow(f, contact));
+    // GET /contacts/:id giờ trả include friends + children + parent (PR 2c).
+    const res = await api.get<Contact & { friends?: ApiFriendship[]; children?: Contact[] }>(`/contacts/${contact.id}`);
+    friendshipCache.value[contact.id] = (res.data.friends || []).map(f => mapFriendshipToChildRow(f, contact));
+    childrenCache.value[contact.id] = res.data.children || [];
   } catch (err) {
-    console.error('[friendships] fetch error:', err);
+    console.error('[contact-detail] fetch error:', err);
     friendshipCache.value[contact.id] = [];
+    childrenCache.value[contact.id] = [];
   } finally {
     friendshipLoading.value[contact.id] = false;
+  }
+}
+
+function childrenOf(contact: Contact): Contact[] {
+  return childrenCache.value[contact.id] || [];
+}
+
+async function onUnlinkChild(kid: Contact) {
+  if (!confirm(`Tách "${kid.fullName || 'KH'}" khỏi KH Cha hiện tại?`)) return;
+  try {
+    await api.post(`/contacts/${kid.id}/unlink-parent`);
+    toast.success('Đã tách');
+    // Invalidate cache + refetch list
+    Object.keys(childrenCache.value).forEach(k => delete childrenCache.value[k]);
+    Object.keys(friendshipCache.value).forEach(k => delete friendshipCache.value[k]);
+    fetchContacts();
+  } catch (err) {
+    toast.error('Tách thất bại');
   }
 }
 
@@ -691,6 +768,9 @@ onMounted(() => {
 .toggle-inline { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--smax-grey-700); cursor: pointer; padding: 6px 10px; border-radius: 6px; }
 .toggle-inline:hover { background: rgba(0,0,0,0.04); }
 .toggle-inline input { cursor: pointer; }
+.section-header { padding: 8px 12px; font-size: 12px; font-weight: 600; color: var(--smax-grey-700); background: rgba(0,0,0,0.025); border-bottom: 1px solid var(--smax-grey-200); }
+.friends-header { margin-top: 8px; }
+.children-section { margin-bottom: 4px; }
 .btn {
   padding: 7px 13px;
   border: 1px solid var(--smax-primary);

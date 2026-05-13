@@ -185,37 +185,87 @@
 
       <!-- ══════ TAB 2: QUAN HỆ (per-nick) ══════ -->
       <div v-show="activeTab === 'relations'" class="tab-pane">
-        <!-- Per-nick state -->
-        <section v-if="props.contact" class="ip-section pernick-state">
+        <!-- Parent block: hiện khi contact là Con -->
+        <section v-if="relations.parent" class="ip-section">
           <div class="ip-section-title">
-            <span class="accent" style="background: var(--smax-warning)" />
-            🤝 Trạng thái nick × KH
-            <span class="scope-tag pernick">per-nick</span>
+            <span class="accent" style="background: var(--smax-primary)" />
+            🔗 KH Cha của khách này
+            <span class="scope-tag global">link mềm</span>
           </div>
-          <div class="kv-list">
-            <div class="kv-row">
-              <span class="k">Nick:</span>
-              <span class="v">{{ activeNickName || '—' }}</span>
+          <div class="parent-card">
+            <Avatar :src="relations.parent.avatarUrl" :name="relations.parent.fullName || '?'" :size="40" :gradient-seed="relations.parent.id" />
+            <div class="parent-info">
+              <div class="parent-name">{{ relations.parent.fullName || '—' }}</div>
+              <div class="parent-meta">
+                <span v-if="relations.parent.phone">📞 {{ relations.parent.phone }}</span>
+                <span v-if="relations.parent.statusRef" class="chip" :style="{ background: chipBg(relations.parent.statusRef.color), color: chipFg(relations.parent.statusRef.color) }">{{ relations.parent.statusRef.name }}</span>
+                <span class="chip chip-grey">{{ relations.parent.leadScore ?? 0 }}đ</span>
+              </div>
             </div>
-            <div class="kv-row">
-              <span class="k">Sale:</span>
-              <span class="v">{{ activeSaleName || '—' }}</span>
-            </div>
-            <div class="kv-row">
-              <span class="k">Trạng thái KB:</span>
-              <span class="status-pill pill-success">✓ Đã KB</span>
-              <span class="muted">(MOCK — chờ <code>friend.relationshipKind</code>)</span>
-            </div>
-            <div class="kv-row">
-              <span class="k">Tin (in/out):</span>
-              <strong>{{ props.contact.totalInbound ?? 0 }} / {{ props.contact.totalOutbound ?? 0 }}</strong>
-            </div>
-            <div v-if="props.contact.lastInteractionAt" class="kv-row">
-              <span class="k">Tương tác cuối:</span>
-              <span class="v">{{ relativeTime(props.contact.lastInteractionAt) }}</span>
+            <button class="btn-sm" @click="onUnlinkSelf">✂ Tách</button>
+          </div>
+        </section>
+
+        <!-- Children block: hiện khi contact là Cha -->
+        <section v-if="relations.children.length" class="ip-section">
+          <div class="ip-section-title">
+            <span class="accent" style="background: var(--smax-success)" />
+            👶 KH Con ({{ relations.children.length }})
+            <span class="scope-tag global">Cha của nhiều con</span>
+          </div>
+          <div class="children-list">
+            <div v-for="kid in relations.children" :key="kid.id" class="children-row">
+              <Avatar :src="kid.avatarUrl" :name="kid.fullName || '?'" :size="32" :gradient-seed="kid.id" />
+              <div class="children-info">
+                <div class="children-name">{{ kid.fullName || '—' }}</div>
+                <div class="children-meta">
+                  <span class="uid">{{ kid.zaloUid || '—' }}</span>
+                  <span v-if="kid.statusRef" class="chip" :style="{ background: chipBg(kid.statusRef.color), color: chipFg(kid.statusRef.color) }">{{ kid.statusRef.name }}</span>
+                  <span class="chip chip-grey">{{ kid.leadScore ?? 0 }}đ</span>
+                </div>
+              </div>
             </div>
           </div>
         </section>
+
+        <!-- Friends (nick CRM chăm) — real data từ /contacts/:id -->
+        <section v-if="relations.friends.length" class="ip-section">
+          <div class="ip-section-title">
+            <span class="accent" style="background: var(--smax-info)" />
+            💬 Nick CRM đang chăm ({{ relations.friends.length }})
+            <span class="scope-tag global">per-nick</span>
+          </div>
+          <div class="friends-list">
+            <div v-for="f in relations.friends" :key="f.id" class="friend-row">
+              <Avatar :name="f.zaloAccount.displayName || 'Nick'" :size="28" :gradient-seed="f.id" platform="zalo" />
+              <div class="friend-info">
+                <div class="friend-head">
+                  <span class="friend-name">{{ f.zaloAccount.displayName || 'Nick' }}</span>
+                  <span :class="['status-pill', friendKindClass(f.relationshipKind)]">{{ friendKindLabel(f.relationshipKind) }}</span>
+                </div>
+                <div class="friend-meta">
+                  <span v-if="f.zaloAccount.owner">Sale: {{ f.zaloAccount.owner.fullName }}</span>
+                  <span class="uid">UID:{{ f.zaloUidInNick }}</span>
+                </div>
+                <div class="friend-meta">
+                  <span>📥 {{ f.totalInbound }}</span>
+                  <span>📤 {{ f.totalOutbound }}</span>
+                  <span v-if="f.becameFriendAt">KB: {{ relativeTime(f.becameFriendAt) }}</span>
+                  <span v-if="f.lastInboundAt">Last: {{ relativeTime(f.lastInboundAt) }}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Empty state -->
+        <div v-if="!relations.parent && !relations.children.length && !relations.friends.length" class="tab-empty">
+          <p>KH này chưa có quan hệ nào:</p>
+          <ul>
+            <li>Chưa được gắn vào KH Cha</li>
+            <li>Chưa có nick CRM nào kết bạn</li>
+          </ul>
+        </div>
 
         <!-- Label Zalo native (per-nick) -->
         <section class="ip-section">
@@ -250,31 +300,6 @@
           />
         </section>
 
-        <!-- 3 nick khác cũng chăm -->
-        <section v-if="otherNicks.length" class="ip-section">
-          <div class="ip-section-title">
-            <span class="accent" style="background: var(--smax-info)" />
-            ⚠ {{ otherNicks.length }} nick khác cũng chăm
-            <span class="scope-tag global">cấp KH</span>
-          </div>
-          <div class="nick-rows">
-            <div v-for="n in otherNicks" :key="n.id" class="nick-row">
-              <Avatar :name="n.name" :size="26" :gradient-seed="n.id" platform="zalo" />
-              <div class="ni-name">{{ n.name }}</div>
-              <span :class="['status-pill', n.pillClass]">{{ n.pillLabel }}</span>
-            </div>
-          </div>
-        </section>
-
-        <!-- Empty state khi tất cả backend chưa wire -->
-        <div v-if="!otherNicks.length && !zaloLabels.length && !perPairTags.length" class="tab-empty">
-          <p>Phần lớn dữ liệu per-nick chờ backend bổ sung:</p>
-          <ul>
-            <li>Label Zalo native (sync SDK)</li>
-            <li>Tag per-pair (<code>Friend.crmTagsPerNick</code>)</li>
-            <li>Aggregate nick khác (<code>GET /contacts/:id/friendships</code>)</li>
-          </ul>
-        </div>
       </div>
 
       <!-- ══════ TAB 3: HOẠT ĐỘNG (AI + Automation + Lịch hẹn) ══════ -->
@@ -353,6 +378,7 @@ import AutomationCardList, { type AutomationCard } from './AutomationCardList.vu
 import TagChipList from '@/components/ui/TagChipList.vue';
 import Avatar from '@/components/ui/Avatar.vue';
 import { useToast } from '@/composables/use-toast';
+import { api } from '@/api';
 
 const props = defineProps<{
   contactId: string | null;
@@ -382,6 +408,73 @@ const {
 
 // ════════ Tab state (persist sang tab khác KH khác) ════════
 const activeTab = ref<'profile' | 'relations' | 'activity'>('profile');
+
+// ════════ Relations data (parent/children/friends) — fetch khi đổi contact ═══
+interface RelationsState {
+  parent: Contact | null;
+  children: Contact[];
+  friends: Array<{
+    id: string;
+    zaloUidInNick: string;
+    relationshipKind: string;
+    totalInbound: number;
+    totalOutbound: number;
+    becameFriendAt: string | null;
+    lastInboundAt: string | null;
+    zaloAccount: { id: string; displayName: string | null; owner: { id: string; fullName: string } | null };
+  }>;
+}
+const relations = ref<RelationsState>({ parent: null, children: [], friends: [] });
+
+async function fetchRelations(contactId: string) {
+  try {
+    const res = await api.get<Contact & RelationsState>(`/contacts/${contactId}`);
+    relations.value = {
+      parent: res.data.parent || null,
+      children: res.data.children || [],
+      friends: res.data.friends || [],
+    };
+  } catch (err) {
+    console.error('[ChatContactPanel] fetchRelations error:', err);
+    relations.value = { parent: null, children: [], friends: [] };
+  }
+}
+
+async function onUnlinkSelf() {
+  if (!props.contactId) return;
+  if (!confirm('Tách KH này khỏi KH Cha?')) return;
+  try {
+    await api.post(`/contacts/${props.contactId}/unlink-parent`);
+    toast.success('Đã tách');
+    await fetchRelations(props.contactId);
+    emit('saved');
+  } catch (err) {
+    toast.error('Tách thất bại');
+  }
+}
+
+function chipBg(hex: string | null | undefined): string {
+  if (!hex) return 'rgba(90,100,120,0.10)';
+  const m = hex.match(/^#([0-9a-f]{6})$/i);
+  if (!m) return 'rgba(90,100,120,0.10)';
+  const n = parseInt(m[1], 16);
+  return `rgba(${(n>>16)&255},${(n>>8)&255},${n&255},0.15)`;
+}
+function chipFg(hex: string | null | undefined): string { return hex || 'var(--smax-grey-700)'; }
+
+function friendKindLabel(k: string): string {
+  if (k === 'friend') return '✓ Đã KB';
+  if (k === 'pending_friend') return '… Pending';
+  if (k === 'chatting_stranger') return '👥 Lạ';
+  if (k === 'ghost') return '🚫 Ngắt';
+  return k;
+}
+function friendKindClass(k: string): string {
+  if (k === 'friend') return 'pill-success';
+  if (k === 'pending_friend') return 'pill-warning';
+  if (k === 'chatting_stranger') return 'pill-info';
+  return 'pill-grey';
+}
 
 // ════════ Care status (status field — cycle through preset) ════════
 const CARE_STATUSES_LOCAL = [
@@ -452,11 +545,6 @@ const automationCards = computed<AutomationCard[]>(() => {
 function onAutomationAction(_id: string, _kind: string) { /* TODO wire to API */ }
 function onAttachAutomation() { toast.warning('Gắn automation: chờ backend schema delta'); }
 
-// ════════ Per-nick state ════════
-// MOCK: cần backend expose zaloAccount + sale + relationshipKind cho cặp đang xem
-const activeNickName = computed(() => null as string | null);
-const activeSaleName = computed(() => null as string | null);
-
 // MOCK: zaloLabels (per-pair native labels) chưa expose qua API
 const zaloLabels = ref<string[]>([]);
 
@@ -513,11 +601,13 @@ watch(() => props.contact?.notes, (n) => {
   }
 }, { immediate: true });
 
-// Khi đổi sang contact mới, reset về tab Hồ sơ + collapse note
-watch(() => props.contactId, () => {
+// Khi đổi sang contact mới, reset về tab Hồ sơ + collapse note + refetch relations
+watch(() => props.contactId, (id) => {
   activeTab.value = 'profile';
   noteExpanded.value = false;
-});
+  if (id) void fetchRelations(id);
+  else relations.value = { parent: null, children: [], friends: [] };
+}, { immediate: true });
 
 function relativeTime(dateStr: string) {
   const diff = Date.now() - new Date(dateStr).getTime();
@@ -652,6 +742,21 @@ function relativeTime(dateStr: string) {
   max-width: 250px;
 }
 .tab-empty li { margin: 4px 0; }
+.parent-card { display: flex; align-items: center; gap: 10px; padding: 10px; border: 1px solid var(--smax-grey-200); border-radius: 8px; background: rgba(0,242,255,0.04); }
+.parent-info { flex: 1; min-width: 0; }
+.parent-name { font-weight: 600; font-size: 13px; }
+.parent-meta { display: flex; gap: 8px; align-items: center; font-size: 11px; flex-wrap: wrap; margin-top: 4px; }
+.children-list, .friends-list { display: flex; flex-direction: column; gap: 8px; }
+.children-row, .friend-row { display: flex; align-items: flex-start; gap: 10px; padding: 8px; border: 1px solid var(--smax-grey-200); border-radius: 6px; }
+.children-info, .friend-info { flex: 1; min-width: 0; }
+.children-name { font-weight: 500; font-size: 12.5px; }
+.children-meta, .friend-meta { display: flex; gap: 8px; font-size: 11px; color: var(--smax-grey-600); margin-top: 3px; flex-wrap: wrap; align-items: center; }
+.friend-head { display: flex; gap: 8px; align-items: center; }
+.friend-name { font-weight: 500; font-size: 12.5px; }
+.btn-sm { padding: 4px 8px; font-size: 11px; border: 1px solid var(--smax-grey-300); border-radius: 4px; background: var(--smax-bg); cursor: pointer; }
+.btn-sm:hover { background: rgba(0,0,0,0.05); }
+.uid { font-family: monospace; font-size: 10.5px; color: var(--smax-grey-600); }
+.chip-grey { background: rgba(90,100,120,0.10); color: var(--smax-grey-700); padding: 1px 7px; border-radius: 9px; font-size: 10.5px; }
 .tab-empty code {
   background: var(--smax-grey-100);
   padding: 0 4px; border-radius: 3px;

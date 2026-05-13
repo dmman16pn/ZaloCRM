@@ -157,7 +157,7 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
     }
   });
 
-  // ── GET /api/v1/contacts/:id — detail with appointments + conversation count
+  // ── GET /api/v1/contacts/:id — detail + parent + children + friends + appointments ──
   app.get('/api/v1/contacts/:id', async (request: FastifyRequest, reply: FastifyReply) => {
     try {
       const user = request.user!;
@@ -168,12 +168,35 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
         include: {
           assignedUser: { select: { id: true, fullName: true, email: true } },
           appointments: { orderBy: { appointmentDate: 'desc' }, take: 10 },
-          _count: { select: { conversations: true } },
+          _count: { select: { conversations: true, children: true } },
+          ...AGGREGATE_INCLUDE,
+          // Parent (if this contact is a child)
+          parent: {
+            select: {
+              id: true, fullName: true, crmName: true, avatarUrl: true, phone: true,
+              zaloUid: true, leadScore: true, hasZalo: true,
+              statusRef: { select: { id: true, name: true, order: true, color: true, isTerminal: true } },
+            },
+          },
+          // Friends (per CRM nick chăm). Include zaloAccount + owner user for display.
+          friends: {
+            include: {
+              zaloAccount: {
+                select: {
+                  id: true, displayName: true, phone: true, zaloUid: true, avatarUrl: true,
+                  owner: { select: { id: true, fullName: true } },
+                },
+              },
+            },
+            orderBy: { lastInboundAt: { sort: 'desc', nulls: 'last' } },
+          },
         },
       });
 
       if (!contact) return reply.status(404).send({ error: 'Contact not found' });
-      return contact;
+
+      const display = computeAggregateDisplay(contact);
+      return { ...contact, ...display };
     } catch (err) {
       logger.error('[contacts] Detail error:', err);
       return reply.status(500).send({ error: 'Failed to fetch contact' });
