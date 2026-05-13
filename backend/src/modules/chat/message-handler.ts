@@ -7,6 +7,8 @@ import { logger } from '../../shared/utils/logger.js';
 import { randomUUID } from 'node:crypto';
 import { emitWebhook } from '../api/webhook-service.js';
 import { runAutomationRules } from '../automation/automation-service.js';
+import { applyContactAggregateFromMessage, applyContactInteraction, applyFriendAggregate } from '../contacts/contact-aggregate.js';
+import { syncReminderFromMessage } from '../contacts/reminder-sync.js';
 
 export interface IncomingMessage {
   accountId: string;
@@ -19,7 +21,14 @@ export interface IncomingMessage {
   isSelf: boolean;
   threadId: string;         // For user: contact UID. For group: group ID
   threadType: 'user' | 'group'; // user or group conversation
+  recipientName?: string;   // For SELF user-thread msg: name of thread peer (resolved via getUserInfo)
+  // Zalo toàn cục identifiers cho dedup (independent of viewer account).
+  // Cho non-self: thuộc SENDER. Cho self: thuộc RECIPIENT (thread peer).
+  contactGlobalId?: string;
+  contactUsername?: string;
   groupName?: string;       // group name if group message
+  groupAvatarUrl?: string;  // group avatar URL from Zalo (via getGroupInfo.avt)
+  groupMembersCount?: number; // total members in group
   attachments?: any[];
   quote?: unknown;
   albumKey?: string | null;
@@ -89,7 +98,7 @@ export async function handleIncomingMessage(
       };
       if (isAttachment) {
         dupeWhere.contentType = msg.contentType;
-        dupeWhere.zaloMsgId = null; // only match self-rows that haven't been linked yet
+        dupeWhere.zaloMsgId = null;
       } else {
         dupeWhere.content = msg.content || '';
       }
@@ -99,7 +108,6 @@ export async function handleIncomingMessage(
         select: { id: true, zaloMsgId: true },
       });
       if (recentDupe) {
-        // If the existing record has no zaloMsgId, backfill it for future dedup
         if (!recentDupe.zaloMsgId && msg.msgId) {
           await prisma.message.update({
             where: { id: recentDupe.id },
@@ -141,6 +149,31 @@ export async function handleIncomingMessage(
     }
 
     await updateConversationAfterMessage(conversation.id, sentAt, msg.isSelf);
+
+    // Update Contact aggregate fields (last*, total*) — fire-and-forget,
+    // best-effort. Skipped for group threads inside the helper.
+    const aggregateInput = {
+      conversationId: conversation.id,
+      message: {
+        id: message.id,
+        content: message.content,
+        contentType: message.contentType,
+        sentAt: message.sentAt,
+        senderType: (msg.isSelf ? 'self' : 'contact') as 'self' | 'contact',
+      },
+    };
+    void applyContactAggregateFromMessage(aggregateInput);
+    void applyFriendAggregate(aggregateInput);
+
+    // Auto-sync Zalo reminder → Appointment (fire-and-forget, dedup theo externalRef)
+    void syncReminderFromMessage({
+      orgId: account.orgId,
+      contactId,
+      messageId: message.id,
+      content: message.content,
+      contentType: message.contentType,
+      senderUid: msg.senderUid,
+    });
 
     // Track first outbound contact date — set once when agent sends first message
     if (msg.isSelf && contactId) {
@@ -248,33 +281,68 @@ async function upsertContact(msg: IncomingMessage, orgId: string): Promise<strin
     return groupContact.id;
   }
 
-  // For self messages on user threads, the contact is the thread recipient (threadId = contact UID)
+  // For self messages on user threads, the contact is the thread recipient (threadId = contact UID).
+  // recipientName được listener resolve qua getUserInfo(threadId) — đảm bảo contact mới có tên thật
+  // thay vì 'Unknown' khi anh chủ động chat với người lạ.
   const contactUid = msg.isSelf ? msg.threadId : msg.senderUid;
-  const contactName = msg.isSelf ? '' : msg.senderName; // self msgs don't carry recipient name
+  const contactName = msg.isSelf ? (msg.recipientName || '') : msg.senderName;
+  const globalId = msg.contactGlobalId || '';
+  const username = msg.contactUsername || '';
 
-  let contact = await prisma.contact.findFirst({
-    where: { zaloUid: contactUid, orgId },
-    select: { id: true, fullName: true },
-  });
+  // Lookup chain (theo policy hard-match anh chốt: globalId / username / phone / uid):
+  //  1. By zaloGlobalId — silver bullet, identical across viewer accounts
+  //  2. By zaloUsername — Zalo handle (t_xxx) cũng toàn cục
+  //  3. By zaloUid (per-account) — fallback khi global identifiers chưa resolve
+  //  4. Create new contact
+  let contact: { id: string; fullName: string | null; zaloGlobalId: string | null; zaloUid: string | null } | null = null;
+  if (globalId) {
+    contact = await prisma.contact.findFirst({
+      where: { orgId, zaloGlobalId: globalId },
+      select: { id: true, fullName: true, zaloGlobalId: true, zaloUid: true },
+    });
+  }
+  if (!contact && username) {
+    contact = await prisma.contact.findFirst({
+      where: { orgId, zaloUsername: username },
+      select: { id: true, fullName: true, zaloGlobalId: true, zaloUid: true },
+    });
+  }
+  if (!contact) {
+    contact = await prisma.contact.findFirst({
+      where: { orgId, zaloUid: contactUid },
+      select: { id: true, fullName: true, zaloGlobalId: true, zaloUid: true },
+    });
+  }
 
   if (!contact) {
-    contact = await prisma.contact.create({
+    const created = await prisma.contact.create({
       data: {
         id: randomUUID(),
         orgId,
         zaloUid: contactUid,
+        zaloGlobalId: globalId || null,
+        zaloUsername: username || null,
         fullName: contactName || 'Unknown',
       },
-      select: { id: true, fullName: true },
+      select: { id: true, fullName: true, zaloGlobalId: true, zaloUid: true },
     });
-    // Emit webhook for new contact created
+    contact = created;
     emitWebhook(orgId, 'contact.created', { contactId: contact.id, fullName: contact.fullName });
-  } else if (contactName && contact.fullName !== contactName && contact.fullName === 'Unknown') {
-    // Update name only if currently "Unknown" — don't overwrite user-edited names
-    await prisma.contact.update({
-      where: { id: contact.id },
-      data: { fullName: contactName },
-    });
+  } else {
+    // Backfill globalId/username nếu vừa resolve được, hoặc cập nhật fullName từ Unknown.
+    const patch: { zaloGlobalId?: string; zaloUsername?: string; fullName?: string; zaloUid?: string } = {};
+    if (globalId && contact.zaloGlobalId !== globalId) patch.zaloGlobalId = globalId;
+    if (username) patch.zaloUsername = username;
+    // Nếu contact match qua globalId nhưng zaloUid khác (đang được nhìn từ account khác) —
+    // KHÔNG ghi đè zaloUid (mỗi account thấy 1 UID; conversation bind theo externalThreadId riêng).
+    // Chỉ set zaloUid khi đang null.
+    if (!contact.zaloUid && contactUid) patch.zaloUid = contactUid;
+    if (contactName && contact.fullName !== contactName && contact.fullName === 'Unknown') {
+      patch.fullName = contactName;
+    }
+    if (Object.keys(patch).length > 0) {
+      await prisma.contact.update({ where: { id: contact.id }, data: patch });
+    }
   }
 
   return contact.id;
@@ -290,10 +358,24 @@ async function findOrCreateConversation(
 
   const existing = await prisma.conversation.findFirst({
     where: { zaloAccountId: msg.accountId, externalThreadId },
-    select: { id: true },
+    select: { id: true, groupName: true, groupAvatarUrl: true, groupMembersCount: true },
   });
 
-  if (existing) return existing;
+  if (existing) {
+    // Update group metadata if changed (sync mới hơn so với DB)
+    if (msg.threadType === 'group') {
+      const updates: { groupName?: string; groupAvatarUrl?: string; groupMembersCount?: number } = {};
+      if (msg.groupName && msg.groupName !== existing.groupName) updates.groupName = msg.groupName;
+      if (msg.groupAvatarUrl && msg.groupAvatarUrl !== existing.groupAvatarUrl) updates.groupAvatarUrl = msg.groupAvatarUrl;
+      if (msg.groupMembersCount != null && msg.groupMembersCount !== existing.groupMembersCount) {
+        updates.groupMembersCount = msg.groupMembersCount;
+      }
+      if (Object.keys(updates).length) {
+        await prisma.conversation.update({ where: { id: existing.id }, data: updates });
+      }
+    }
+    return { id: existing.id };
+  }
 
   return prisma.conversation.create({
     data: {
@@ -303,6 +385,9 @@ async function findOrCreateConversation(
       contactId: msg.threadType === 'user' ? contactId : contactId,
       threadType: msg.threadType,
       externalThreadId,
+      groupName: msg.threadType === 'group' ? msg.groupName : null,
+      groupAvatarUrl: msg.threadType === 'group' ? msg.groupAvatarUrl : null,
+      groupMembersCount: msg.threadType === 'group' ? msg.groupMembersCount : null,
       lastMessageAt: new Date(msg.timestamp),
       unreadCount: msg.isSelf ? 0 : 1,
       isReplied: msg.isSelf,
@@ -331,10 +416,26 @@ async function updateConversationAfterMessage(
 // Soft-delete a message by its Zalo message ID
 export async function handleMessageUndo(accountId: string, zaloMsgId: string): Promise<void> {
   try {
+    const recalledAt = new Date();
     await prisma.message.updateMany({
       where: { zaloMsgId: String(zaloMsgId) },
-      data: { isDeleted: true, deletedAt: new Date() },
+      data: { isDeleted: true, deletedAt: recalledAt },
     });
+
+    // Update lastInteraction* on the affected contact(s)
+    const affected = await prisma.message.findMany({
+      where: { zaloMsgId: String(zaloMsgId) },
+      select: { id: true, conversationId: true },
+    });
+    for (const m of affected) {
+      void applyContactInteraction({
+        conversationId: m.conversationId,
+        type: 'message_recalled',
+        occurredAt: recalledAt,
+        payload: { messageId: m.id, zaloMsgId: String(zaloMsgId) },
+      });
+    }
+
     logger.info(`[message-handler] Undo message ${zaloMsgId} for account ${accountId}`);
   } catch (err) {
     logger.error('[message-handler] handleMessageUndo error:', err);

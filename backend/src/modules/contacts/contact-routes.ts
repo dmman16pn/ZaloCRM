@@ -9,6 +9,7 @@ import { authMiddleware } from '../auth/auth-middleware.js';
 import { logger } from '../../shared/utils/logger.js';
 import { mergeContacts } from './merge-service.js';
 import { runContactIntelligence } from './contact-intelligence.js';
+import { backfillGlobalId, backfillOrphanFriends } from './backfill-global-id.js';
 import { runAutomationRules } from '../automation/automation-service.js';
 
 type QueryParams = Record<string, string>;
@@ -59,7 +60,26 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
         prisma.contact.count({ where }),
       ]);
 
-      return { contacts, total, page: pageNum, limit: limitNum };
+      // Aggregate Friend rows theo relationshipKind cho từng contact trong page.
+      // Hiển thị 4 chip nick chăm (friend / pending_friend / chatting_stranger / ghost).
+      const contactIds = contacts.map((c) => c.id);
+      const friendCounts = contactIds.length === 0 ? [] : await prisma.friend.groupBy({
+        by: ['contactId', 'relationshipKind'],
+        where: { contactId: { in: contactIds } },
+        _count: { _all: true },
+      });
+      const nicksByKindMap = new Map<string, Record<string, number>>();
+      for (const row of friendCounts) {
+        const map = nicksByKindMap.get(row.contactId) || {};
+        map[row.relationshipKind] = row._count._all;
+        nicksByKindMap.set(row.contactId, map);
+      }
+      const contactsWithNicks = contacts.map((c) => ({
+        ...c,
+        nicksByKind: nicksByKindMap.get(c.id) || {},
+      }));
+
+      return { contacts: contactsWithNicks, total, page: pageNum, limit: limitNum };
     } catch (err) {
       logger.error('[contacts] List error:', err);
       return reply.status(500).send({ error: 'Failed to fetch contacts' });
@@ -379,6 +399,65 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
     } catch (err) {
       logger.error('[contacts] Recompute trigger error:', err);
       return reply.status(500).send({ error: 'Failed to start recompute' });
+    }
+  });
+
+  // ── GET /api/v1/contacts/:id/friendships — list Friend rows (per CRM nick chăm KH) ─
+  app.get('/api/v1/contacts/:id/friendships', async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const user = request.user!;
+      const { id } = request.params as { id: string };
+      const contact = await prisma.contact.findFirst({
+        where: { id, orgId: user.orgId },
+        select: { id: true },
+      });
+      if (!contact) return reply.status(404).send({ error: 'Contact not found' });
+
+      const friendships = await prisma.friend.findMany({
+        where: { contactId: id, orgId: user.orgId },
+        include: {
+          zaloAccount: {
+            select: {
+              id: true,
+              displayName: true,
+              phone: true,
+              zaloUid: true,
+              avatarUrl: true,
+              owner: { select: { id: true, fullName: true } },
+            },
+          },
+        },
+        orderBy: { lastInboundAt: { sort: 'desc', nulls: 'last' } },
+      });
+      return { friendships };
+    } catch (err) {
+      logger.error('[contacts] List friendships error:', err);
+      return reply.status(500).send({ error: 'Failed to list friendships' });
+    }
+  });
+
+  // ── POST /api/v1/contacts/backfill-global-id — one-off Zalo globalId backfill ──
+  // Resolve zaloGlobalId + zaloUsername cho contact đã có zaloUid, sau đó auto-merge
+  // những contact có cùng globalId (cross-account dedup). Sync (block) để admin
+  // thấy result ngay, có thể chạy lại idempotent.
+  app.post('/api/v1/contacts/backfill-global-id', async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const result = await backfillGlobalId();
+      return reply.send(result);
+    } catch (err) {
+      logger.error('[contacts] Backfill globalId error:', err);
+      return reply.status(500).send({ error: 'Backfill failed', detail: String(err) });
+    }
+  });
+
+  // ── POST /api/v1/contacts/backfill-orphan-friends — fix Friend rows trỏ vào contact đã merged ──
+  app.post('/api/v1/contacts/backfill-orphan-friends', async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const result = await backfillOrphanFriends();
+      return reply.send(result);
+    } catch (err) {
+      logger.error('[contacts] Backfill orphan friends error:', err);
+      return reply.status(500).send({ error: 'Backfill failed', detail: String(err) });
     }
   });
 }
