@@ -120,32 +120,65 @@
             <button class="dialog-close" @click="closeEditDialog">×</button>
           </div>
           <div class="apt-dialog-body">
-            <div class="apt-form-row">
-              <label>Ngày</label>
-              <input type="date" v-model="editDialog.date" />
-            </div>
-            <div class="apt-form-row">
-              <label>Giờ</label>
-              <input type="time" v-model="editDialog.time" />
-            </div>
-            <div class="apt-form-row">
-              <label>Loại</label>
-              <select v-model="editDialog.type">
-                <option value="call">📞 Gọi điện</option>
-                <option value="message">💬 Nhắn tin</option>
-                <option value="meeting">🤝 Gặp mặt</option>
-                <option value="follow_up">🔁 Theo dõi</option>
-              </select>
-            </div>
-            <div class="apt-form-row">
-              <label>Địa điểm</label>
-              <input type="text" v-model="editDialog.location" placeholder="VP / Showroom / dự án… (tuỳ chọn)" />
-            </div>
+            <!-- Title -->
             <div class="apt-form-row col">
-              <label>Nội dung</label>
-              <textarea v-model="editDialog.summary" rows="2" />
+              <label>Tiêu đề</label>
+              <input type="text" v-model="editDialog.summary" placeholder="Mô tả ngắn việc cần làm" />
+            </div>
+
+            <!-- Date with quick-shortcut chips -->
+            <div class="apt-form-row col">
+              <label>Ngày hẹn</label>
+              <div class="date-row">
+                <input type="date" v-model="editDialog.date" class="date-input" />
+                <div class="quick-chips">
+                  <button v-for="opt in DATE_QUICK" :key="opt.label" class="chip" :class="{ active: editDialog.date === opt.value }" @click="editDialog.date = opt.value">
+                    {{ opt.label }}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Time picker — hour + minute separate, no continuous input -->
+            <div class="apt-form-row col">
+              <label>Giờ hẹn</label>
+              <div class="time-row">
+                <div class="time-picker">
+                  <select v-model="timeHour" class="time-select">
+                    <option v-for="h in HOURS" :key="h" :value="h">{{ h }}h</option>
+                  </select>
+                  <span class="time-colon">:</span>
+                  <select v-model="timeMinute" class="time-select">
+                    <option v-for="m in MINUTES" :key="m" :value="m">{{ m }}</option>
+                  </select>
+                  <button v-if="editDialog.time" class="clear-time" title="Xoá giờ (cả ngày)" @click="clearTime">×</button>
+                </div>
+                <div class="quick-chips">
+                  <button v-for="opt in TIME_QUICK" :key="opt.label" class="chip" :class="{ active: editDialog.time === opt.value }" @click="setQuickTime(opt.value)">
+                    {{ opt.icon }} {{ opt.label }}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Type chip-style selector -->
+            <div class="apt-form-row col">
+              <label>Loại lịch hẹn</label>
+              <div class="type-chips">
+                <button v-for="opt in TYPE_OPTIONS" :key="opt.value" class="type-chip" :class="{ active: editDialog.type === opt.value }" @click="editDialog.type = opt.value">
+                  <span class="type-icon">{{ opt.icon }}</span>
+                  <span>{{ opt.label }}</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- Location -->
+            <div class="apt-form-row col">
+              <label>Địa điểm <span class="optional">(tuỳ chọn)</span></label>
+              <input type="text" v-model="editDialog.location" placeholder="VP / Showroom / dự án…" />
             </div>
           </div>
+
           <div class="apt-dialog-foot">
             <button class="btn-link" @click="closeEditDialog">Huỷ</button>
             <button class="btn-primary" :disabled="!editDialog.date || creatingApt.has(editDialog.noteId)" @click="confirmCreate">
@@ -175,7 +208,10 @@ import { useToast } from '@/composables/use-toast';
 import { api } from '@/api/index';
 import NoteRow from './NoteRow.vue';
 
-const props = defineProps<{ contactId: string | null }>();
+const props = defineProps<{
+  contactId: string | null;
+  contactName?: string | null;  // dùng để inject [Tên KH] vào title appointment
+}>();
 
 const auth = useAuthStore();
 const toast = useToast();
@@ -215,6 +251,72 @@ const editDialog = ref<{
   location: string;
   summary: string;
 }>({ open: false, noteId: '', date: '', time: '', type: 'follow_up', location: '', summary: '' });
+
+// Quick chip options — date relative shortcuts
+function isoDate(offsetDays: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() + offsetDays);
+  return d.toISOString().slice(0, 10);
+}
+const DATE_QUICK = computed(() => [
+  { label: 'Hôm nay', value: isoDate(0) },
+  { label: 'Mai', value: isoDate(1) },
+  { label: 'Kia', value: isoDate(2) },
+  { label: '3 ngày', value: isoDate(3) },
+  { label: '1 tuần', value: isoDate(7) },
+]);
+
+// Time picker — chỉ 06:00 → 23:00, phút step 15 (00 / 15 / 30 / 45)
+const HOURS = Array.from({ length: 18 }, (_, i) => String(i + 6).padStart(2, '0'));
+const MINUTES = ['00', '15', '30', '45'];
+
+const TIME_QUICK = [
+  { icon: '☀️', label: 'Sáng', value: '09:00' },
+  { icon: '🌤', label: 'Trưa', value: '12:00' },
+  { icon: '🌇', label: 'Chiều', value: '14:00' },
+  { icon: '🌆', label: 'Tối', value: '19:00' },
+];
+
+const TYPE_OPTIONS = [
+  { value: 'call', label: 'Gọi điện', icon: '📞' },
+  { value: 'message', label: 'Nhắn tin', icon: '💬' },
+  { value: 'meeting', label: 'Gặp mặt', icon: '🤝' },
+  { value: 'follow_up', label: 'Theo dõi', icon: '🔁' },
+];
+
+// Computed hour/minute split — đồng bộ 2 chiều với editDialog.time (HH:MM)
+const timeHour = computed<string>({
+  get: () => {
+    const t = editDialog.value.time;
+    if (!t) return '09';
+    const h = t.slice(0, 2);
+    return HOURS.includes(h) ? h : '09';
+  },
+  set: (h) => {
+    const m = editDialog.value.time ? editDialog.value.time.slice(3, 5) : '00';
+    const validM = MINUTES.includes(m) ? m : '00';
+    editDialog.value.time = `${h}:${validM}`;
+  },
+});
+const timeMinute = computed<string>({
+  get: () => {
+    const t = editDialog.value.time;
+    if (!t) return '00';
+    const m = t.slice(3, 5);
+    return MINUTES.includes(m) ? m : '00';
+  },
+  set: (m) => {
+    const h = editDialog.value.time ? editDialog.value.time.slice(0, 2) : '09';
+    const validH = HOURS.includes(h) ? h : '09';
+    editDialog.value.time = `${validH}:${m}`;
+  },
+});
+function setQuickTime(val: string) {
+  editDialog.value.time = val;
+}
+function clearTime() {
+  editDialog.value.time = '';
+}
 
 const flyAnim = ref<{ x: number; y: number; dx: number; dy: number } | null>(null);
 
@@ -347,19 +449,25 @@ function formatAiDate(p: ParsedAppointment): string {
   return `${weekday} ${dd}/${mm}${time}`;
 }
 
-/** Mở edit dialog với prefilled từ AI parse — user xác nhận/sửa trước khi tạo lịch */
+/** Mở edit dialog với prefilled từ AI parse — user xác nhận/sửa trước khi tạo lịch.
+ *  Tự động inject [Tên KH] vào cuối summary nếu chưa có. */
 function openEditDialog(note: Note) {
   const p = aiResult.value.get(note.id);
   if (!p) return;
   const today = new Date().toISOString().slice(0, 10);
+  const baseSummary = p.summary || note.body.slice(0, 160);
+  const name = (props.contactName || '').trim();
+  const summaryWithName = name && !baseSummary.includes(`[${name}]`)
+    ? `${baseSummary} [${name}]`
+    : baseSummary;
   editDialog.value = {
     open: true,
     noteId: note.id,
     date: p.date || today,
-    time: p.time || '',
+    time: p.time || '09:00',  // default 09:00 để picker hiển thị, user có thể clear
     type: p.type || 'follow_up',
     location: p.location || '',
-    summary: p.summary || note.body.slice(0, 200),
+    summary: summaryWithName,
   };
 }
 
@@ -644,11 +752,11 @@ defineExpose({ rootCount });
 }
 .apt-dialog {
   background: #fff;
-  border-radius: 12px;
-  min-width: 380px;
-  max-width: 460px;
-  width: 90vw;
-  box-shadow: 0 12px 32px rgba(0,0,0,0.2);
+  border-radius: 14px;
+  min-width: 460px;
+  max-width: 520px;
+  width: 92vw;
+  box-shadow: 0 12px 36px rgba(0,0,0,0.22);
   overflow: hidden;
 }
 .apt-dialog-head {
@@ -686,32 +794,145 @@ defineExpose({ rootCount });
   align-items: stretch;
 }
 .apt-form-row label {
-  width: 80px;
-  flex-shrink: 0;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--smax-grey-700);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--smax-grey-600);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  margin-bottom: 5px;
 }
-.apt-form-row.col label {
-  width: auto;
-  margin-bottom: 4px;
+.apt-form-row .optional {
+  font-weight: 400;
+  text-transform: none;
+  font-size: 11px;
+  color: var(--smax-grey-400);
+  margin-left: 4px;
+  letter-spacing: 0;
 }
-.apt-form-row input,
-.apt-form-row select,
-.apt-form-row textarea {
-  flex: 1;
+.apt-form-row input[type="text"],
+.apt-form-row input[type="date"] {
   border: 1.5px solid var(--smax-grey-200);
-  border-radius: 6px;
-  padding: 6px 9px;
+  border-radius: 7px;
+  padding: 8px 11px;
   font-size: 13px;
   font-family: inherit;
   outline: none;
+  background: #fff;
+  transition: border-color 0.15s, box-shadow 0.15s;
 }
-.apt-form-row input:focus,
-.apt-form-row select:focus,
-.apt-form-row textarea:focus {
+.apt-form-row input:focus { border-color: var(--smax-primary); box-shadow: 0 0 0 3px rgba(33,150,243,0.1); }
+
+/* ── Date row with quick chips ─────────────────────────────────────────── */
+.date-row {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.date-input {
+  font-weight: 600;
+  color: var(--smax-text);
+}
+
+.quick-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.chip {
+  background: var(--smax-grey-100, #f5f6fa);
+  border: 1px solid var(--smax-grey-200);
+  border-radius: 14px;
+  font-size: 11.5px;
+  font-weight: 500;
+  padding: 4px 11px;
+  cursor: pointer;
+  color: var(--smax-grey-700);
+  transition: all 0.12s;
+}
+.chip:hover { background: var(--smax-primary-soft); color: var(--smax-primary); border-color: var(--smax-primary); }
+.chip.active {
+  background: var(--smax-primary);
+  color: #fff;
   border-color: var(--smax-primary);
+  font-weight: 600;
 }
+
+/* ── Time row ──────────────────────────────────────────────────────────── */
+.time-row {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.time-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--smax-grey-50, #f9fafb);
+  border: 1.5px solid var(--smax-grey-200);
+  border-radius: 8px;
+  padding: 4px 6px;
+  width: fit-content;
+}
+.time-select {
+  border: none;
+  outline: none;
+  background: transparent;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--smax-text);
+  font-family: inherit;
+  padding: 4px 6px;
+  cursor: pointer;
+  border-radius: 4px;
+}
+.time-select:hover { background: #fff; }
+.time-colon {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--smax-grey-500);
+  line-height: 1;
+}
+.clear-time {
+  background: transparent;
+  border: none;
+  color: var(--smax-grey-500);
+  font-size: 18px;
+  cursor: pointer;
+  padding: 2px 7px;
+  border-radius: 4px;
+  line-height: 1;
+}
+.clear-time:hover { background: var(--smax-grey-200); color: #c62828; }
+
+/* ── Type chips ────────────────────────────────────────────────────────── */
+.type-chips {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+}
+.type-chip {
+  background: #fff;
+  border: 1.5px solid var(--smax-grey-200);
+  border-radius: 8px;
+  padding: 7px 4px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--smax-grey-700);
+  transition: all 0.12s;
+}
+.type-chip:hover { border-color: var(--smax-primary); color: var(--smax-primary); }
+.type-chip.active {
+  background: var(--smax-primary-soft);
+  border-color: var(--smax-primary);
+  color: var(--smax-primary);
+  font-weight: 600;
+}
+.type-icon { font-size: 17px; }
 .apt-dialog-foot {
   padding: 10px 16px;
   border-top: 1px solid var(--smax-grey-100);

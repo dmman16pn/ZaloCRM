@@ -62,6 +62,7 @@ interface CrmTagDef {
   emoji: string | null;
   description: string | null;
   category: string | null;
+  order: number;
   isActive: boolean;
 }
 
@@ -91,7 +92,20 @@ async function loadTagDefs() {
   }
 }
 
-const tags = computed(() => props.modelValue || []);
+/* Sort tags theo priority order trong CrmTag.order (định nghĩa ở settings).
+ * Tag không match → đẩy xuống cuối theo alphabetical. */
+const tags = computed(() => {
+  const list = props.modelValue || [];
+  return [...list].sort((a, b) => {
+    const da = findDef(a);
+    const db = findDef(b);
+    if (da && db) return da.order - db.order;          // cả 2 có def → sort theo order
+    if (da) return -1;                                  // a có def, b không → a trước
+    if (db) return 1;                                   // b có def, a không → b trước
+    return a.localeCompare(b);                          // cả 2 không def → alphabet
+  });
+});
+
 const adding = ref(false);
 const newTag = ref('');
 const addInput = ref<HTMLInputElement | null>(null);
@@ -182,10 +196,23 @@ onMounted(() => { void loadTagDefs(); });
 
 .tag-pills {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;             /* 1 dòng — không wrap */
   align-items: center;
   gap: 6px;
+  overflow-x: auto;              /* scroll ngang nếu nhiều tag */
+  overflow-y: hidden;
+  padding-bottom: 2px;           /* chừa chỗ scrollbar */
+  scrollbar-width: thin;
 }
+.tag-pills::-webkit-scrollbar { height: 4px; }
+.tag-pills::-webkit-scrollbar-thumb {
+  background: var(--smax-grey-200);
+  border-radius: 2px;
+}
+.tag-pills::-webkit-scrollbar-thumb:hover { background: var(--smax-grey-300); }
+.tag-pills::-webkit-scrollbar-track { background: transparent; }
+.tag-pill { flex-shrink: 0; }   /* giữ kích thước, không co lại khi overflow */
+.tag-add-btn { flex-shrink: 0; }
 
 .tag-pill {
   display: inline-flex;

@@ -2,127 +2,150 @@
   <div class="crmtag-settings">
     <header class="settings-section-header">
       <p class="subtitle">
-        Tag CRM là <strong>thẻ phân loại nội bộ</strong> do tổ chức tự định nghĩa (vd "VIP", "Đầu tư",
-        "Quan tâm BĐS"). Gắn ngay trên thanh nhập chat. Khác với tag Zalo Real (sync từ Zalo client).
+        Tag CRM là <strong>thẻ phân loại nội bộ</strong> do tổ chức định nghĩa (vd "VIP", "Hot lead").
+        <strong>Số thứ tự ưu tiên</strong> quyết định thứ tự hiển thị trên thanh chat — kéo thả hoặc sửa
+        số trực tiếp để thay đổi.
       </p>
     </header>
 
     <!-- Toolbar -->
     <div class="toolbar">
-      <button class="toolbar-btn primary" @click="openCreate">
-        <span>+</span> Thêm tag CRM
-      </button>
+      <button class="toolbar-btn primary" @click="openCreate">+ Thêm tag CRM</button>
       <button class="toolbar-btn" :disabled="recounting" @click="recount">
-        <span v-if="recounting">⟳…</span>
-        <span v-else>⟳ Cập nhật số liệu sử dụng</span>
+        {{ recounting ? '⟳…' : '⟳ Cập nhật số liệu' }}
+      </button>
+      <button v-if="selected.size" class="toolbar-btn danger" @click="bulkDelete">
+        🗑 Xoá {{ selected.size }} tag
       </button>
       <div class="toolbar-spacer"></div>
-      <input v-model="filter" type="text" placeholder="Lọc theo tên / danh mục…" class="filter-input" />
+      <select v-model="filterCategory" class="filter-select">
+        <option value="">Tất cả danh mục</option>
+        <option v-for="c in existingCategories" :key="c" :value="c">{{ c }}</option>
+      </select>
+      <input v-model="filter" type="text" placeholder="Tìm tag…" class="filter-input" />
     </div>
 
     <!-- Stats summary -->
     <div class="stats-row">
-      <div class="stat-card">
-        <div class="stat-num">{{ tags.length }}</div>
-        <div class="stat-label">Tổng tag</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-num">{{ activeCount }}</div>
-        <div class="stat-label">Đang dùng (≥1 KH)</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-num">{{ unusedCount }}</div>
-        <div class="stat-label">Chưa dùng</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-num">{{ categoryCount }}</div>
-        <div class="stat-label">Danh mục</div>
-      </div>
+      <div class="stat-card"><div class="stat-num">{{ tags.length }}</div><div class="stat-label">Tổng tag</div></div>
+      <div class="stat-card"><div class="stat-num">{{ activeCount }}</div><div class="stat-label">Đang dùng</div></div>
+      <div class="stat-card"><div class="stat-num">{{ unusedCount }}</div><div class="stat-label">Chưa dùng</div></div>
+      <div class="stat-card"><div class="stat-num">{{ categoryCount }}</div><div class="stat-label">Danh mục</div></div>
     </div>
 
-    <!-- Loading / Empty -->
     <div v-if="loading && !tags.length" class="loading-state">Đang tải…</div>
-    <div v-else-if="!tags.length" class="empty-state">
-      <p>Chưa có tag CRM nào.</p>
-      <button class="toolbar-btn primary" @click="openCreate">+ Tạo tag đầu tiên</button>
+    <div v-else-if="!filteredTags.length" class="empty-state">
+      <p>{{ tags.length ? 'Không có tag nào khớp bộ lọc.' : 'Chưa có tag CRM nào.' }}</p>
+      <button v-if="!tags.length" class="toolbar-btn primary" @click="openCreate">+ Tạo tag đầu tiên</button>
     </div>
 
-    <!-- Grouped by category -->
-    <div v-else class="tags-grouped">
-      <section v-for="group in groupedTags" :key="group.category" class="tag-group">
-        <h4 class="group-title">
-          {{ group.category }}
-          <span class="group-count">{{ group.tags.length }}</span>
-        </h4>
-        <div class="tag-grid">
-          <div v-for="tag in group.tags" :key="tag.id" class="tag-card" :class="{ inactive: !tag.isActive }">
-            <!-- Preview pill -->
-            <div class="tag-preview-row">
-              <span
-                class="tag-preview"
-                :style="`background:${tag.color}22;color:${tag.color};border-color:${tag.color}`"
-              >
-                <span v-if="tag.emoji">{{ tag.emoji }} </span>{{ tag.name }}
-              </span>
-              <span class="usage-badge" :class="{ zero: !tag.usageCount }">
-                {{ tag.usageCount }} KH
-              </span>
-            </div>
+    <!-- List layout với drag-reorder -->
+    <div v-else class="tag-list">
+      <!-- Bulk header -->
+      <div class="list-header">
+        <label class="check-all">
+          <input type="checkbox" :checked="allSelected" :indeterminate.prop="someSelected" @change="toggleSelectAll" />
+          <span>{{ selected.size }}/{{ filteredTags.length }} chọn</span>
+        </label>
+        <span class="header-priority">⇅ Ưu tiên</span>
+        <span class="header-preview">Preview</span>
+        <span class="header-name">Tên & màu</span>
+        <span class="header-category">Danh mục</span>
+        <span class="header-usage">KH</span>
+        <span class="header-actions">Hành động</span>
+      </div>
 
-            <!-- Editable fields -->
-            <div class="tag-edit-row">
-              <input
-                type="color"
-                :value="tag.color"
-                class="color-picker"
-                title="Đổi màu"
-                @change="patchTag(tag, { color: ($event.target as HTMLInputElement).value })"
-              />
-              <input
-                type="text"
-                :value="tag.emoji || ''"
-                class="emoji-input"
-                maxlength="4"
-                placeholder="emoji"
-                @blur="patchTag(tag, { emoji: ($event.target as HTMLInputElement).value || null })"
-              />
-              <input
-                type="text"
-                :value="tag.name"
-                class="name-input"
-                @blur="onRename(tag, ($event.target as HTMLInputElement).value)"
-              />
-            </div>
+      <div
+        v-for="(tag, idx) in filteredTags"
+        :key="tag.id"
+        class="tag-row"
+        :class="{ inactive: !tag.isActive, selected: selected.has(tag.id), dragging: draggingId === tag.id, 'drag-over': dragOverId === tag.id }"
+        draggable="true"
+        @dragstart="onDragStart(tag.id, $event)"
+        @dragover.prevent="onDragOver(tag.id, $event)"
+        @dragleave="onDragLeave"
+        @drop="onDrop(tag.id, $event)"
+        @dragend="onDragEnd"
+      >
+        <!-- Checkbox -->
+        <label class="row-check">
+          <input type="checkbox" :checked="selected.has(tag.id)" @change="toggleSelect(tag.id)" />
+        </label>
 
-            <div class="tag-meta-row">
-              <input
-                type="text"
-                :value="tag.category || ''"
-                class="category-input"
-                placeholder="Danh mục"
-                @blur="patchTag(tag, { category: ($event.target as HTMLInputElement).value || null })"
-              />
-              <button class="icon-btn danger" title="Xoá tag" @click="confirmDelete(tag)">
-                ✕
-              </button>
-            </div>
-
-            <input
-              v-if="editingDescId === tag.id"
-              :value="tag.description || ''"
-              class="desc-input"
-              placeholder="Mô tả (mục đích sử dụng)..."
-              @blur="onDescBlur(tag, ($event.target as HTMLInputElement).value)"
-              @keydown.enter="($event.target as HTMLInputElement).blur()"
-              ref="descInput"
-            />
-            <div v-else class="desc-preview" @click="editingDescId = tag.id">
-              {{ tag.description || '+ thêm mô tả' }}
-            </div>
-          </div>
+        <!-- Priority handle + number -->
+        <div class="priority-cell">
+          <span class="drag-handle" title="Kéo thả để đổi thứ tự">⋮⋮</span>
+          <input
+            type="number"
+            min="1"
+            :value="idx + 1"
+            class="priority-input"
+            :title="`Ưu tiên #${idx + 1} — sửa số để di chuyển`"
+            @blur="onPriorityChange(tag.id, ($event.target as HTMLInputElement).value)"
+            @keydown.enter="($event.target as HTMLInputElement).blur()"
+          />
         </div>
-      </section>
+
+        <!-- Preview pill -->
+        <div class="preview-cell">
+          <span class="tag-preview" :style="`background:${tag.color}22;color:${tag.color};border-color:${tag.color}`">
+            <span v-if="tag.emoji">{{ tag.emoji }} </span>{{ tag.name }}
+          </span>
+        </div>
+
+        <!-- Name + color edit inline -->
+        <div class="name-cell">
+          <input type="color" :value="tag.color" class="color-picker" title="Đổi màu"
+            @change="patchTag(tag, { color: ($event.target as HTMLInputElement).value })" />
+          <input type="text" :value="tag.emoji || ''" class="emoji-input" maxlength="4" placeholder="🏷"
+            @blur="patchTag(tag, { emoji: ($event.target as HTMLInputElement).value || null })" />
+          <input type="text" :value="tag.name" class="name-input"
+            @blur="onRename(tag, ($event.target as HTMLInputElement).value)" />
+        </div>
+
+        <!-- Category -->
+        <div class="category-cell">
+          <input type="text" :value="tag.category || ''" class="category-input" placeholder="Khác"
+            list="categories-suggest"
+            @blur="patchTag(tag, { category: ($event.target as HTMLInputElement).value || null })" />
+        </div>
+
+        <!-- Usage -->
+        <div class="usage-cell">
+          <span class="usage-badge" :class="{ zero: !tag.usageCount }">{{ tag.usageCount }}</span>
+        </div>
+
+        <!-- Actions: toggle active, clone, delete -->
+        <div class="actions-cell">
+          <button class="icon-btn" :title="tag.isActive ? 'Đang bật' : 'Đã tắt'"
+            @click="patchTag(tag, { isActive: !tag.isActive })">
+            <span v-if="tag.isActive">🟢</span>
+            <span v-else>⚪</span>
+          </button>
+          <button class="icon-btn" title="Clone tag" @click="cloneTag(tag)">⎘</button>
+          <button class="icon-btn" :title="editingDescId === tag.id ? 'Đang sửa mô tả' : 'Sửa mô tả'"
+            @click="editingDescId = editingDescId === tag.id ? null : tag.id">
+            <span>📝</span>
+          </button>
+          <button class="icon-btn danger" title="Xoá tag" @click="confirmDelete(tag)">✕</button>
+        </div>
+
+        <!-- Description row (expandable) -->
+        <div v-if="editingDescId === tag.id || tag.description" class="desc-row">
+          <input v-if="editingDescId === tag.id"
+            :value="tag.description || ''"
+            class="desc-input"
+            placeholder="Mô tả mục đích sử dụng tag này…"
+            @blur="onDescBlur(tag, ($event.target as HTMLInputElement).value)"
+            @keydown.enter="($event.target as HTMLInputElement).blur()" />
+          <span v-else class="desc-text">📝 {{ tag.description }}</span>
+        </div>
+      </div>
     </div>
+
+    <datalist id="categories-suggest">
+      <option v-for="c in existingCategories" :key="c" :value="c" />
+    </datalist>
 
     <!-- Create dialog -->
     <Teleport to="body">
@@ -131,34 +154,25 @@
           <h3>+ Thêm tag CRM mới</h3>
           <div class="dialog-form">
             <label>Tên *</label>
-            <input v-model="newTag.name" type="text" placeholder="VD: VIP, Đầu tư, Hot lead..." />
+            <input v-model="newTag.name" type="text" placeholder="VD: VIP, Hot lead..." />
 
             <label>Danh mục</label>
-            <input v-model="newTag.category" type="text" placeholder="VD: Mức độ, Nguồn, Hành vi" list="categories-suggest" />
-            <datalist id="categories-suggest">
-              <option v-for="c in existingCategories" :key="c" :value="c" />
-            </datalist>
+            <input v-model="newTag.category" type="text" placeholder="VD: Mức độ, Nguồn" list="categories-suggest" />
 
             <label>Màu</label>
             <div class="color-row">
               <input v-model="newTag.color" type="color" />
               <div class="preset-colors">
-                <button
-                  v-for="c in PRESET_COLORS"
-                  :key="c"
-                  class="preset-color"
-                  :style="`background:${c}`"
-                  :class="{ selected: newTag.color === c }"
-                  @click="newTag.color = c"
-                />
+                <button v-for="c in PRESET_COLORS" :key="c" class="preset-color"
+                  :style="`background:${c}`" :class="{ selected: newTag.color === c }" @click="newTag.color = c" />
               </div>
             </div>
 
             <label>Emoji (tuỳ chọn)</label>
-            <input v-model="newTag.emoji" type="text" maxlength="4" placeholder="🔥 / ⭐ / 💎..." />
+            <input v-model="newTag.emoji" type="text" maxlength="4" placeholder="🔥 ⭐ 💎" />
 
             <label>Mô tả</label>
-            <textarea v-model="newTag.description" rows="2" placeholder="Mục đích, khi nào nên gắn..." />
+            <textarea v-model="newTag.description" rows="2" placeholder="Khi nào nên gắn tag này?" />
           </div>
           <div class="dialog-actions">
             <button class="btn-link" @click="createDialog = false">Huỷ</button>
@@ -170,21 +184,36 @@
       </div>
     </Teleport>
 
-    <!-- Delete confirm dialog -->
+    <!-- Delete confirm -->
     <Teleport to="body">
       <div v-if="deleteTarget" class="dialog-backdrop" @click.self="deleteTarget = null">
         <div class="dialog">
           <h3>Xoá tag "{{ deleteTarget.name }}"?</h3>
-          <p class="warn-text">
-            Tag này đang gắn cho <strong>{{ deleteTarget.usageCount }}</strong> KH.
-          </p>
+          <p class="warn-text">Tag này đang gắn cho <strong>{{ deleteTarget.usageCount }}</strong> KH.</p>
           <label class="check-row">
             <input type="checkbox" v-model="removeFromContacts" />
-            <span>Đồng thời gỡ tag khỏi {{ deleteTarget.usageCount }} KH ({{ removeFromContacts ? 'CÓ' : 'KHÔNG' }})</span>
+            <span>Gỡ tag khỏi {{ deleteTarget.usageCount }} KH ({{ removeFromContacts ? 'CÓ' : 'KHÔNG' }})</span>
           </label>
           <div class="dialog-actions">
             <button class="btn-link" @click="deleteTarget = null">Huỷ</button>
-            <button class="btn-primary danger" @click="submitDelete">Xoá tag</button>
+            <button class="btn-primary danger" @click="submitDelete">Xoá</button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- Bulk delete confirm -->
+    <Teleport to="body">
+      <div v-if="showBulkDelete" class="dialog-backdrop" @click.self="showBulkDelete = false">
+        <div class="dialog">
+          <h3>Xoá {{ selected.size }} tag đã chọn?</h3>
+          <label class="check-row">
+            <input type="checkbox" v-model="removeFromContacts" />
+            <span>Đồng thời gỡ các tag này khỏi mọi KH</span>
+          </label>
+          <div class="dialog-actions">
+            <button class="btn-link" @click="showBulkDelete = false">Huỷ</button>
+            <button class="btn-primary danger" @click="submitBulkDelete">Xoá {{ selected.size }} tag</button>
           </div>
         </div>
       </div>
@@ -221,6 +250,7 @@ const tags = ref<CrmTag[]>([]);
 const loading = ref(false);
 const recounting = ref(false);
 const filter = ref('');
+const filterCategory = ref('');
 const editingDescId = ref<string | null>(null);
 
 const createDialog = ref(false);
@@ -229,37 +259,133 @@ const newTag = ref({ name: '', color: '#1E88E5', emoji: '', category: '', descri
 
 const deleteTarget = ref<CrmTag | null>(null);
 const removeFromContacts = ref(true);
+const showBulkDelete = ref(false);
 
-const filteredTags = computed(() => {
-  if (!filter.value.trim()) return tags.value;
-  const q = filter.value.toLowerCase();
-  return tags.value.filter(t =>
-    t.name.toLowerCase().includes(q) ||
-    (t.category || '').toLowerCase().includes(q) ||
-    (t.description || '').toLowerCase().includes(q),
-  );
-});
+const selected = ref(new Set<string>());
 
-const groupedTags = computed(() => {
-  const groups = new Map<string, CrmTag[]>();
-  for (const t of filteredTags.value) {
-    const cat = t.category || 'Chưa phân loại';
-    if (!groups.has(cat)) groups.set(cat, []);
-    groups.get(cat)!.push(t);
+// ── Drag-and-drop reorder ───────────────────────────────────────────────
+const draggingId = ref<string | null>(null);
+const dragOverId = ref<string | null>(null);
+
+function onDragStart(id: string, e: DragEvent) {
+  draggingId.value = id;
+  if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
+}
+function onDragOver(id: string, e: DragEvent) {
+  if (id !== draggingId.value) dragOverId.value = id;
+  if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+}
+function onDragLeave() { dragOverId.value = null; }
+function onDragEnd() {
+  draggingId.value = null;
+  dragOverId.value = null;
+}
+async function onDrop(targetId: string, _e: DragEvent) {
+  const src = draggingId.value;
+  if (!src || src === targetId) {
+    onDragEnd();
+    return;
   }
-  return [...groups.entries()].map(([category, list]) => ({ category, tags: list }));
+  const fromIdx = tags.value.findIndex(t => t.id === src);
+  const toIdx = tags.value.findIndex(t => t.id === targetId);
+  if (fromIdx < 0 || toIdx < 0) {
+    onDragEnd();
+    return;
+  }
+  // Reorder optimistic
+  const arr = [...tags.value];
+  const [moved] = arr.splice(fromIdx, 1);
+  arr.splice(toIdx, 0, moved);
+  tags.value = arr.map((t, i) => ({ ...t, order: i }));
+  onDragEnd();
+  // Persist
+  try {
+    await api.post('/crm-tags/reorder', { ids: arr.map(t => t.id) });
+  } catch (err: any) {
+    toast.error(err.response?.data?.error || 'Không lưu được thứ tự');
+    void fetchTags();
+  }
+}
+
+async function onPriorityChange(tagId: string, val: string) {
+  const newPos = parseInt(val) - 1;
+  if (Number.isNaN(newPos) || newPos < 0) return;
+  const fromIdx = tags.value.findIndex(t => t.id === tagId);
+  if (fromIdx < 0 || fromIdx === newPos) return;
+  const arr = [...tags.value];
+  const [moved] = arr.splice(fromIdx, 1);
+  arr.splice(Math.min(newPos, arr.length), 0, moved);
+  tags.value = arr.map((t, i) => ({ ...t, order: i }));
+  try {
+    await api.post('/crm-tags/reorder', { ids: arr.map(t => t.id) });
+  } catch {
+    void fetchTags();
+  }
+}
+
+// ── Filter ──────────────────────────────────────────────────────────────
+const filteredTags = computed(() => {
+  let list = tags.value;
+  if (filterCategory.value) list = list.filter(t => (t.category || '') === filterCategory.value);
+  if (filter.value.trim()) {
+    const q = filter.value.toLowerCase();
+    list = list.filter(t =>
+      t.name.toLowerCase().includes(q) ||
+      (t.description || '').toLowerCase().includes(q),
+    );
+  }
+  return list;
 });
 
 const existingCategories = computed(() => {
   const s = new Set<string>();
   for (const t of tags.value) if (t.category) s.add(t.category);
-  return [...s];
+  return [...s].sort();
 });
-
 const activeCount = computed(() => tags.value.filter(t => t.usageCount > 0).length);
 const unusedCount = computed(() => tags.value.filter(t => t.usageCount === 0).length);
 const categoryCount = computed(() => existingCategories.value.length);
 
+// ── Bulk select ─────────────────────────────────────────────────────────
+const allSelected = computed(() => filteredTags.value.length > 0 && filteredTags.value.every(t => selected.value.has(t.id)));
+const someSelected = computed(() => filteredTags.value.some(t => selected.value.has(t.id)) && !allSelected.value);
+
+function toggleSelect(id: string) {
+  if (selected.value.has(id)) selected.value.delete(id);
+  else selected.value.add(id);
+  selected.value = new Set(selected.value);
+}
+function toggleSelectAll() {
+  if (allSelected.value) {
+    selected.value.clear();
+  } else {
+    for (const t of filteredTags.value) selected.value.add(t.id);
+  }
+  selected.value = new Set(selected.value);
+}
+
+function bulkDelete() {
+  showBulkDelete.value = true;
+  removeFromContacts.value = true;
+}
+
+async function submitBulkDelete() {
+  const ids = [...selected.value];
+  try {
+    await Promise.all(ids.map(id =>
+      api.delete(`/crm-tags/${id}`, { data: { removeFromContacts: removeFromContacts.value } }),
+    ));
+    tags.value = tags.value.filter(t => !selected.value.has(t.id));
+    toast.success(`✓ Đã xoá ${ids.length} tag`);
+    selected.value.clear();
+    selected.value = new Set();
+    showBulkDelete.value = false;
+  } catch {
+    toast.error('Xoá hàng loạt thất bại');
+  }
+}
+
+// ── Single CRUD ─────────────────────────────────────────────────────────
 async function fetchTags(recount = false) {
   loading.value = true;
   try {
@@ -300,7 +426,7 @@ async function submitCreate() {
       description: newTag.value.description || undefined,
     });
     tags.value = [...tags.value, data.tag];
-    toast.success('✓ Đã tạo tag CRM');
+    toast.success('✓ Đã tạo tag');
     createDialog.value = false;
   } catch (err: any) {
     toast.error(err.response?.data?.error || 'Tạo tag thất bại');
@@ -310,7 +436,6 @@ async function submitCreate() {
 }
 
 async function patchTag(tag: CrmTag, body: Partial<CrmTag>) {
-  // Optimistic
   const snapshot = { ...tag };
   Object.assign(tag, body);
   try {
@@ -327,12 +452,27 @@ function onRename(tag: CrmTag, newName: string) {
   if (!t || t === tag.name) return;
   patchTag(tag, { name: t });
 }
-
 function onDescBlur(tag: CrmTag, value: string) {
   editingDescId.value = null;
   const v = value.trim();
   if (v === (tag.description || '')) return;
   patchTag(tag, { description: v || null });
+}
+
+async function cloneTag(tag: CrmTag) {
+  try {
+    const { data } = await api.post('/crm-tags', {
+      name: `${tag.name} (copy)`,
+      color: tag.color,
+      emoji: tag.emoji,
+      category: tag.category,
+      description: tag.description,
+    });
+    tags.value = [...tags.value, data.tag];
+    toast.success('✓ Đã clone tag');
+  } catch (err: any) {
+    toast.error(err.response?.data?.error || 'Clone thất bại');
+  }
 }
 
 function confirmDelete(tag: CrmTag) {
@@ -347,7 +487,7 @@ async function submitDelete() {
       data: { removeFromContacts: removeFromContacts.value },
     });
     tags.value = tags.value.filter(t => t.id !== deleteTarget.value!.id);
-    toast.success('✓ Đã xoá tag');
+    toast.success('✓ Đã xoá');
     deleteTarget.value = null;
   } catch (err: any) {
     toast.error(err.response?.data?.error || 'Xoá thất bại');
@@ -358,16 +498,17 @@ onMounted(() => { void fetchTags(); });
 </script>
 
 <style scoped>
-.crmtag-settings { max-width: 1200px; }
+.crmtag-settings { max-width: 1280px; }
 .settings-section-header { margin-bottom: 16px; }
 .subtitle { font-size: 13px; color: var(--smax-grey-600); line-height: 1.5; margin: 0; }
+.subtitle strong { color: var(--smax-text); }
 
 /* ── Toolbar ──────────────────────────────────────────────────────────── */
 .toolbar {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-bottom: 16px;
+  margin-bottom: 14px;
   flex-wrap: wrap;
 }
 .toolbar-spacer { flex: 1; }
@@ -380,108 +521,125 @@ onMounted(() => { void fetchTags(); });
   font-size: 12.5px;
   font-weight: 600;
   cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
   transition: background 0.12s;
 }
 .toolbar-btn:hover:not(:disabled) { background: var(--smax-primary-soft); color: var(--smax-primary); }
 .toolbar-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-.toolbar-btn.primary {
-  background: var(--smax-primary);
-  color: #fff;
-  border-color: var(--smax-primary);
-}
+.toolbar-btn.primary { background: var(--smax-primary); color: #fff; border-color: var(--smax-primary); }
 .toolbar-btn.primary:hover { background: #1e4cc7; color: #fff; }
-.filter-input {
+.toolbar-btn.danger {
+  background: #ffebee; color: #c62828; border-color: #ef9a9a;
+}
+.toolbar-btn.danger:hover { background: #ffcdd2; color: #b71c1c; }
+
+.filter-select, .filter-input {
   border: 1px solid var(--smax-grey-200);
   border-radius: 7px;
-  padding: 7px 11px;
+  padding: 6px 11px;
   font-size: 13px;
   font-family: inherit;
   outline: none;
-  min-width: 220px;
 }
-.filter-input:focus { border-color: var(--smax-primary); }
+.filter-select { min-width: 160px; }
+.filter-input { min-width: 200px; }
+.filter-select:focus, .filter-input:focus { border-color: var(--smax-primary); }
 
 /* ── Stats ────────────────────────────────────────────────────────────── */
 .stats-row {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   gap: 12px;
-  margin-bottom: 20px;
+  margin-bottom: 18px;
 }
 .stat-card {
   background: #fff;
   border: 1px solid var(--smax-grey-200);
   border-radius: 10px;
-  padding: 12px 16px;
+  padding: 11px 16px;
 }
-.stat-num {
-  font-size: 26px;
-  font-weight: 700;
-  color: var(--smax-primary);
-  line-height: 1.1;
-}
+.stat-num { font-size: 24px; font-weight: 700; color: var(--smax-primary); line-height: 1.1; }
 .stat-label {
-  font-size: 11px;
-  color: var(--smax-grey-600);
-  text-transform: uppercase;
-  letter-spacing: 0.4px;
-  margin-top: 2px;
+  font-size: 11px; color: var(--smax-grey-600);
+  text-transform: uppercase; letter-spacing: 0.4px; margin-top: 2px;
 }
 
-/* ── Groups + Grid ────────────────────────────────────────────────────── */
-.tag-group { margin-bottom: 20px; }
-.group-title {
-  font-size: 13px;
-  font-weight: 700;
-  color: var(--smax-grey-700);
-  text-transform: uppercase;
-  letter-spacing: 0.4px;
-  margin: 0 0 10px;
-  padding-bottom: 5px;
-  border-bottom: 2px solid var(--smax-grey-100);
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.group-count {
-  background: var(--smax-grey-100);
-  color: var(--smax-grey-700);
-  padding: 1px 8px;
-  border-radius: 9px;
-  font-size: 11px;
-  font-weight: 600;
-}
-
-.tag-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 10px;
-}
-.tag-card {
+/* ── List ─────────────────────────────────────────────────────────────── */
+.tag-list {
   background: #fff;
   border: 1px solid var(--smax-grey-200);
   border-radius: 10px;
-  padding: 10px 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  transition: border-color 0.15s, box-shadow 0.15s;
+  overflow: hidden;
 }
-.tag-card:hover {
-  border-color: var(--smax-primary);
-  box-shadow: 0 2px 8px rgba(33,150,243,0.1);
-}
-.tag-card.inactive { opacity: 0.5; }
 
-.tag-preview-row {
-  display: flex;
-  justify-content: space-between;
+.list-header {
+  display: grid;
+  grid-template-columns: 32px 90px 160px 1fr 160px 50px 160px;
+  gap: 10px;
+  padding: 8px 14px;
+  background: var(--smax-grey-50, #f9fafb);
+  border-bottom: 1px solid var(--smax-grey-200);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--smax-grey-600);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
   align-items: center;
-  gap: 8px;
 }
+.check-all { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.check-all input { cursor: pointer; }
+
+.tag-row {
+  display: grid;
+  grid-template-columns: 32px 90px 160px 1fr 160px 50px 160px;
+  gap: 10px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--smax-grey-100);
+  align-items: center;
+  transition: background 0.12s, border-color 0.12s;
+  position: relative;
+}
+.tag-row:hover { background: var(--smax-grey-50, #f9fafb); }
+.tag-row.selected { background: var(--smax-primary-soft); }
+.tag-row.inactive { opacity: 0.55; }
+.tag-row.dragging { opacity: 0.4; }
+.tag-row.drag-over::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 2px;
+  background: var(--smax-primary);
+}
+.tag-row:last-child { border-bottom: none; }
+
+.row-check { display: flex; align-items: center; cursor: pointer; }
+.row-check input { cursor: pointer; }
+
+/* Priority cell */
+.priority-cell { display: flex; align-items: center; gap: 6px; }
+.drag-handle {
+  cursor: grab;
+  color: var(--smax-grey-400);
+  font-weight: 700;
+  user-select: none;
+  font-size: 14px;
+}
+.drag-handle:active { cursor: grabbing; }
+.priority-input {
+  width: 50px;
+  text-align: center;
+  border: 1px solid var(--smax-grey-200);
+  border-radius: 6px;
+  padding: 3px 6px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--smax-primary);
+  font-family: inherit;
+  outline: none;
+}
+.priority-input:focus { border-color: var(--smax-primary); background: var(--smax-primary-soft); }
+
+/* Preview */
+.preview-cell { display: flex; align-items: center; }
 .tag-preview {
   padding: 3px 11px;
   border-radius: 12px;
@@ -490,24 +648,9 @@ onMounted(() => { void fetchTags(); });
   border: 1.5px solid;
   display: inline-block;
 }
-.usage-badge {
-  background: rgba(0, 200, 83, 0.12);
-  color: #00897b;
-  padding: 2px 9px;
-  border-radius: 10px;
-  font-size: 11px;
-  font-weight: 700;
-}
-.usage-badge.zero {
-  background: var(--smax-grey-100);
-  color: var(--smax-grey-500);
-}
 
-.tag-edit-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
+/* Name cell */
+.name-cell { display: flex; align-items: center; gap: 6px; }
 .color-picker {
   width: 32px;
   height: 26px;
@@ -515,6 +658,7 @@ onMounted(() => { void fetchTags(); });
   border-radius: 5px;
   padding: 0;
   cursor: pointer;
+  flex-shrink: 0;
 }
 .emoji-input, .name-input, .category-input {
   border: 1px solid transparent;
@@ -530,40 +674,48 @@ onMounted(() => { void fetchTags(); });
   border-color: var(--smax-primary);
   background: var(--smax-primary-soft);
 }
-.emoji-input { width: 50px; text-align: center; }
-.name-input { flex: 1; font-weight: 600; }
-.category-input { flex: 1; font-size: 12px; color: var(--smax-grey-600); }
+.emoji-input { width: 40px; text-align: center; flex-shrink: 0; }
+.name-input { flex: 1; font-weight: 600; min-width: 0; }
 
-.tag-meta-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
+/* Category */
+.category-cell { display: flex; align-items: center; }
+.category-input { width: 100%; font-size: 12px; color: var(--smax-grey-600); }
+
+/* Usage */
+.usage-cell { display: flex; align-items: center; justify-content: center; }
+.usage-badge {
+  background: rgba(0, 200, 83, 0.12);
+  color: #00897b;
+  padding: 2px 9px;
+  border-radius: 10px;
+  font-size: 11.5px;
+  font-weight: 700;
+  min-width: 24px;
+  text-align: center;
 }
+.usage-badge.zero { background: var(--smax-grey-100); color: var(--smax-grey-500); }
+
+/* Actions */
+.actions-cell { display: flex; align-items: center; gap: 2px; }
 .icon-btn {
   background: transparent;
   border: 1px solid transparent;
-  width: 28px;
+  width: 30px;
   height: 28px;
   border-radius: 5px;
   cursor: pointer;
   font-size: 14px;
   color: var(--smax-grey-500);
 }
-.icon-btn:hover { background: var(--smax-grey-100); }
+.icon-btn:hover { background: var(--smax-grey-200); color: var(--smax-grey-700); }
 .icon-btn.danger:hover { background: #ffebee; color: #c62828; border-color: #ef9a9a; }
 
-.desc-preview {
-  font-size: 12px;
-  color: var(--smax-grey-500);
-  cursor: pointer;
-  padding: 4px 7px;
-  border-radius: 5px;
-  font-style: italic;
-  min-height: 22px;
-}
-.desc-preview:hover {
-  background: var(--smax-grey-50);
-  color: var(--smax-grey-700);
+/* Description expand row */
+.desc-row {
+  grid-column: 1 / -1;
+  margin-top: 4px;
+  padding: 4px 0;
+  border-top: 1px dashed var(--smax-grey-100);
 }
 .desc-input {
   width: 100%;
@@ -575,11 +727,19 @@ onMounted(() => { void fetchTags(); });
   outline: none;
   background: var(--smax-primary-soft);
 }
+.desc-text {
+  font-size: 12px;
+  color: var(--smax-grey-600);
+  font-style: italic;
+}
 
 .loading-state, .empty-state {
   padding: 40px;
   text-align: center;
   color: var(--smax-grey-500);
+  background: #fff;
+  border: 1px solid var(--smax-grey-200);
+  border-radius: 10px;
 }
 
 /* ── Dialog ───────────────────────────────────────────────────────────── */
@@ -600,18 +760,10 @@ onMounted(() => { void fetchTags(); });
   padding: 20px 24px;
   box-shadow: 0 12px 32px rgba(0,0,0,0.2);
 }
-.dialog h3 {
-  margin: 0 0 14px;
-  font-size: 16px;
-}
-.dialog-form {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
+.dialog h3 { margin: 0 0 14px; font-size: 16px; }
+.dialog-form { display: flex; flex-direction: column; gap: 4px; }
 .dialog-form label {
-  font-size: 11px;
-  font-weight: 700;
+  font-size: 11px; font-weight: 700;
   color: var(--smax-grey-600);
   text-transform: uppercase;
   letter-spacing: 0.4px;
@@ -629,32 +781,18 @@ onMounted(() => { void fetchTags(); });
 .dialog-form input[type="text"]:focus,
 .dialog-form textarea:focus { border-color: var(--smax-primary); }
 
-.color-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
+.color-row { display: flex; align-items: center; gap: 10px; }
 .color-row input[type="color"] {
-  width: 44px;
-  height: 32px;
+  width: 44px; height: 32px;
   border: 1px solid var(--smax-grey-200);
-  border-radius: 6px;
-  padding: 0;
-  cursor: pointer;
+  border-radius: 6px; padding: 0; cursor: pointer;
 }
-.preset-colors {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  flex: 1;
-}
+.preset-colors { display: flex; flex-wrap: wrap; gap: 4px; flex: 1; }
 .preset-color {
-  width: 22px;
-  height: 22px;
+  width: 22px; height: 22px;
   border-radius: 50%;
   border: 2px solid transparent;
-  cursor: pointer;
-  padding: 0;
+  cursor: pointer; padding: 0;
 }
 .preset-color:hover { transform: scale(1.15); }
 .preset-color.selected {
@@ -680,8 +818,7 @@ onMounted(() => { void fetchTags(); });
 }
 .btn-primary {
   background: var(--smax-primary);
-  color: #fff;
-  border: none;
+  color: #fff; border: none;
   border-radius: 6px;
   padding: 7px 16px;
   font-size: 13px;
@@ -691,17 +828,10 @@ onMounted(() => { void fetchTags(); });
 .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
 .btn-primary.danger { background: #c62828; }
 
-.warn-text {
-  color: var(--smax-grey-700);
-  font-size: 13px;
-  margin: 8px 0;
-}
+.warn-text { color: var(--smax-grey-700); font-size: 13px; margin: 8px 0; }
 .check-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  color: var(--smax-grey-700);
+  display: flex; align-items: center; gap: 8px;
+  font-size: 13px; color: var(--smax-grey-700);
   padding: 8px 10px;
   background: var(--smax-grey-50);
   border-radius: 6px;

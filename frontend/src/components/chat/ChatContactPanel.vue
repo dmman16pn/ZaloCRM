@@ -160,7 +160,11 @@
 
         <!-- ──── CRM Notes thread (Facebook-style, AI appointment suggest) ──── -->
         <section class="ip-section ip-notes-section">
-          <NotesSection :contact-id="props.contactId" @appointment-created="onAppointmentCreated" />
+          <NotesSection
+            :contact-id="props.contactId"
+            :contact-name="headerFullName"
+            @appointment-created="onAppointmentCreated"
+          />
         </section>
       </div>
 
