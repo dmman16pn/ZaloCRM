@@ -185,7 +185,9 @@ export async function notesRoutes(app: FastifyInstance): Promise<void> {
       if (!note) return reply.status(404).send({ error: 'Note not found' });
 
       const parsed = await parseAppointmentFromText({ orgId: user.orgId, text: note.body });
-      if (!parsed) return { parsed: null, reason: 'Không phát hiện ý định hẹn rõ ràng trong ghi chú này' };
+      if (!parsed || !parsed.hasIntent) {
+        return { parsed: null, reason: 'Không phát hiện ý định hẹn rõ ràng trong ghi chú này' };
+      }
       return { parsed };
     } catch (err) {
       logger.error('[notes] AI parse error:', err);

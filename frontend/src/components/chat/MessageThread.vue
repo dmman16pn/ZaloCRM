@@ -54,9 +54,14 @@
                 </button>
               </template>
               <div class="zlbl-dropdown">
-                <div class="zlbl-head">Thẻ Zalo Real</div>
+                <div class="zlbl-head">
+                  <span>Thẻ Zalo Real</span>
+                  <button class="zlbl-sync-now" :disabled="syncingLabels" @click="onSyncLabels">
+                    {{ syncingLabels ? '⟳…' : '⟳ Sync' }}
+                  </button>
+                </div>
                 <div v-if="!zaloLabels.length" class="zlbl-empty-state">
-                  Chưa có thẻ Zalo nào. Sync từ Zalo client để cập nhật.
+                  Chưa có thẻ Zalo. Nhấn Sync để pull từ Zalo client.
                 </div>
                 <div v-else class="zlbl-list">
                   <span
@@ -65,10 +70,13 @@
                     class="zlbl-chip"
                     :style="label.color ? `background:${label.color}22;color:${label.color};border-color:${label.color}` : ''"
                   >
-                    {{ label.name || '—' }}
+                    <span v-if="(label as any).emoji">{{ (label as any).emoji }} </span>{{ label.name || '—' }}
                   </span>
                 </div>
-                <div class="zlbl-foot">Quản lý trong app Zalo</div>
+                <div class="zlbl-foot">
+                  <span class="zlbl-foot-hint">Đồng bộ 2 chiều · auto 60s</span>
+                  <button class="zlbl-settings-link" @click="goToLabelsSettings">⚙ Cài đặt</button>
+                </div>
               </div>
             </v-menu>
           </div>
@@ -518,11 +526,31 @@ const genderChipClass = computed(() => {
 // còn aggregate tổng across nicks chỉ dùng tooltip để sale biết bối cảnh.
 const msgInCount = computed(() => props.conversation?.friendship?.totalInbound ?? 0);
 
-// Zalo Real labels từ Friend per-pair (read-only — managed in Zalo client)
+// Zalo Real labels từ Friend per-pair (sync 2-way với Zalo client)
 const zaloLabels = computed<Array<{ id?: string; name?: string; color?: string }>>(() => {
   const arr = props.conversation?.friendship?.zaloLabels;
   return Array.isArray(arr) ? arr : [];
 });
+const syncingLabels = ref(false);
+async function onSyncLabels() {
+  const accId = props.conversation?.zaloAccount?.id;
+  if (!accId) return;
+  syncingLabels.value = true;
+  try {
+    const { api: apiClient } = await import('@/api/index');
+    const { data } = await apiClient.post(`/zalo-accounts/${accId}/labels/sync`);
+    toast.success(`✓ Sync ${data.labels.length} tag · ${data.friendsUpdated} KH`);
+    // Conversation parent should re-fetch to pick up updated zaloLabels — emit hint
+    window.dispatchEvent(new CustomEvent('zalo-labels-synced', { detail: { accountId: accId } }));
+  } catch (err: any) {
+    toast.error(err.response?.data?.error || 'Sync thất bại');
+  } finally {
+    syncingLabels.value = false;
+  }
+}
+function goToLabelsSettings() {
+  window.location.assign('/settings/zalo-labels');
+}
 
 // CRM tags pulled from contact — local mirror to avoid stale prop after PATCH.
 const contactTags = ref<string[]>([]);
@@ -1444,7 +1472,24 @@ watch(() => props.editingMessage?.id, async (id) => {
   text-transform: uppercase;
   color: var(--smax-grey-600);
   margin-bottom: 5px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
 }
+.zlbl-sync-now {
+  background: var(--smax-primary-soft);
+  color: var(--smax-primary);
+  border: none;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 8px;
+  cursor: pointer;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.zlbl-sync-now:hover:not(:disabled) { filter: brightness(0.95); }
+.zlbl-sync-now:disabled { opacity: 0.5; cursor: not-allowed; }
 .zlbl-empty-state {
   font-size: 12px;
   color: var(--smax-grey-500);
@@ -1471,7 +1516,25 @@ watch(() => props.editingMessage?.id, async (id) => {
   color: var(--smax-grey-400);
   margin-top: 4px;
   border-top: 1px dashed var(--smax-grey-100);
-  padding-top: 4px;
-  text-align: right;
+  padding-top: 6px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.zlbl-foot-hint { color: var(--smax-grey-500); }
+.zlbl-settings-link {
+  background: var(--smax-grey-100);
+  border: none;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--smax-grey-700);
+  padding: 3px 9px;
+  border-radius: 6px;
+  cursor: pointer;
+  text-decoration: none;
+}
+.zlbl-settings-link:hover {
+  background: var(--smax-primary-soft);
+  color: var(--smax-primary);
 }
 </style>

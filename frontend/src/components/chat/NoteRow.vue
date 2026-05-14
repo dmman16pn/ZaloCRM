@@ -63,8 +63,9 @@
         <button
           v-if="!isReply && !note.suggestedAppointmentId"
           class="action-btn ai"
-          title="AI phân tích thời gian → đề xuất lịch hẹn"
-          @click="$emit('ai-parse', note.id)"
+          :disabled="aiDisabled"
+          :title="aiDisabled ? 'AI đã phân tích — không có ý định hẹn' : 'AI phân tích thời gian/địa điểm → đề xuất lịch hẹn'"
+          @click="!aiDisabled && $emit('ai-parse', note.id)"
         >
           🤖 AI lịch hẹn
         </button>
@@ -83,6 +84,7 @@ const props = defineProps<{
   note: Note;
   currentUserId: string;
   isReply?: boolean;
+  aiDisabled?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -284,26 +286,37 @@ function commitEdit() {
 }
 
 /* ── Actions row ─────────────────────────────────────────────────────── */
+/* Actions collapse to zero height by default — note bubbles sit sát nhau (chỉ 4px gap).
+ * Hover trên note-row → actions expand → các note bên dưới TỤT XUỐNG theo (no overlay).
+ * Cả root + reply đều áp dụng. Touch device không hover → luôn hiện. */
 .note-actions {
   display: flex;
   align-items: center;
   gap: 4px;
-  margin-top: 3px;
   padding-left: 4px;
   font-size: 11px;
   position: relative;
+  max-height: 0;
+  margin-top: 0;
+  overflow: visible; /* visible để emoji-picker absolute không bị cắt */
   opacity: 0;
-  transition: opacity 0.18s;
-  min-height: 22px; /* reserve space so layout doesn't jump */
+  pointer-events: none;
+  transition: max-height 0.18s ease, opacity 0.15s, margin-top 0.18s;
 }
-/* Reveal actions chỉ khi hover vào note row hoặc khi popover emoji đang mở */
 .note-row:hover .note-actions,
 .note-row:focus-within .note-actions {
+  max-height: 26px;
+  margin-top: 3px;
   opacity: 1;
+  pointer-events: auto;
 }
-/* Trên touch device (không hover) → luôn hiện để không kẹt UX */
 @media (hover: none) {
-  .note-actions { opacity: 1; }
+  .note-actions {
+    max-height: 26px;
+    margin-top: 3px;
+    opacity: 1;
+    pointer-events: auto;
+  }
 }
 .action-btn {
   background: none;
@@ -320,6 +333,11 @@ function commitEdit() {
 .action-btn.small { font-size: 10px; }
 .action-btn.danger:hover { color: #c62828; background: rgba(255,82,82,0.08); }
 .action-btn.ai { color: #f57c00; }
+.action-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  text-decoration: line-through;
+}
 
 .emoji-picker {
   position: absolute;

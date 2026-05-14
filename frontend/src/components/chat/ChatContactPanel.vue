@@ -51,11 +51,12 @@
       </button>
       <button
         class="ip-tab"
-        :class="{ active: activeTab === 'activity' }"
+        :class="{ active: activeTab === 'activity', 'badge-bump': badgeBump }"
+        data-fly-target="activity-tab"
         @click="activeTab = 'activity'"
       >
         <span class="ic">⚡</span> Hoạt động
-        <span v-if="activityBadgeCount" class="tab-badge">{{ activityBadgeCount }}</span>
+        <span v-if="activityBadgeCount || pendingAptBump" class="tab-badge">{{ (activityBadgeCount ?? 0) + pendingAptBump }}</span>
       </button>
     </nav>
 
@@ -159,7 +160,7 @@
 
         <!-- ──── CRM Notes thread (Facebook-style, AI appointment suggest) ──── -->
         <section class="ip-section ip-notes-section">
-          <NotesSection :contact-id="props.contactId" />
+          <NotesSection :contact-id="props.contactId" @appointment-created="onAppointmentCreated" />
         </section>
       </div>
 
@@ -403,6 +404,20 @@ watch(activeTab, (tab) => {
 });
 
 onBeforeUnmount(() => clearCollapseTimer());
+
+// Animation: khi NotesSection emit 'appointment-created' (fly anim đã xong) → +1 badge với bump effect.
+// pendingAptBump giữ count cho tới khi reloadAppointments() refresh data thực từ backend.
+const pendingAptBump = ref(0);
+const badgeBump = ref(false);
+function onAppointmentCreated() {
+  pendingAptBump.value++;
+  badgeBump.value = true;
+  setTimeout(() => { badgeBump.value = false; }, 600);
+  // Refresh real data từ backend rồi reset bump (tránh double count)
+  reloadAppointments().then(() => {
+    setTimeout(() => { pendingAptBump.value = 0; }, 300);
+  });
+}
 
 // ════════ Relations data (friends per nick = KH Con) — fetch khi đổi contact ═══
 interface FriendItem {
@@ -708,6 +723,17 @@ function relativeTime(dateStr: string) {
   min-width: 16px;
   line-height: 14px;
   text-align: center;
+  transition: transform 0.18s ease;
+}
+/* Bump effect — khi NotesSection báo created → scale + glow để feedback +1 */
+.ip-tab.badge-bump .tab-badge {
+  animation: badgeBump 0.6s ease;
+}
+@keyframes badgeBump {
+  0%   { transform: scale(1); background: var(--smax-primary); }
+  30%  { transform: scale(1.5); background: #f57c00; box-shadow: 0 0 0 6px rgba(245, 124, 0, 0.25); }
+  60%  { transform: scale(1.1); background: #f57c00; }
+  100% { transform: scale(1); background: var(--smax-primary); box-shadow: none; }
 }
 
 /* ════════ Tab content (scroll) ════════ */

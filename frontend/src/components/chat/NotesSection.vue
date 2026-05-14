@@ -42,11 +42,12 @@
     </div>
 
     <div v-else class="notes-list">
-      <article v-for="note in notes" :key="note.id" class="note-card">
+      <article v-for="note in notes" :key="note.id" class="note-card" :data-note-id="note.id">
         <!-- Root note -->
         <NoteRow
           :note="note"
           :current-user-id="currentUserId"
+          :ai-disabled="aiDisabled.has(note.id)"
           @react="onReact"
           @reply="openReply(note.id)"
           @edit="onEdit"
@@ -55,23 +56,25 @@
         />
 
         <!-- AI parse result banner -->
-        <div v-if="aiResult.get(note.id)" class="ai-suggestion-banner">
-          <template v-if="aiResult.get(note.id)?.date">
+        <div v-if="aiResult.get(note.id) || aiNoIntent.has(note.id)" class="ai-suggestion-banner" :class="{ muted: aiNoIntent.has(note.id) }">
+          <template v-if="aiResult.get(note.id)">
             <span class="ai-icon">🤖</span>
             <span class="ai-text">
-              Đề xuất:
-              <strong>{{ formatAiDate(aiResult.get(note.id)!) }}</strong>
+              <strong v-if="aiResult.get(note.id)?.date">{{ formatAiDate(aiResult.get(note.id)!) }}</strong>
+              <span v-else class="needs-input">cần điền thời gian</span>
               · {{ aiResult.get(note.id)?.summary }}
+              <span v-if="aiResult.get(note.id)?.missingFields?.length" class="missing-hint">
+                ⚠ thiếu: {{ aiResult.get(note.id)?.missingFields.join(', ') }}
+              </span>
             </span>
-            <button class="ai-create-btn" :disabled="creatingApt.has(note.id)" @click="createFromAi(note)">
-              {{ creatingApt.has(note.id) ? '…' : 'Tạo lịch' }}
+            <button class="ai-create-btn" @click="openEditDialog(note)">
+              ✏ Sửa & Tạo
             </button>
             <button class="ai-dismiss" title="Bỏ qua" @click="aiResult.delete(note.id)">×</button>
           </template>
           <template v-else>
             <span class="ai-icon">🤖</span>
             <span class="ai-text muted">Không phát hiện thời gian rõ ràng trong ghi chú này.</span>
-            <button class="ai-dismiss" @click="aiResult.delete(note.id)">×</button>
           </template>
         </div>
 
@@ -107,6 +110,60 @@
         </div>
       </article>
     </div>
+
+    <!-- Edit appointment dialog before save -->
+    <Teleport to="body">
+      <div v-if="editDialog.open" class="apt-dialog-backdrop" @click.self="closeEditDialog">
+        <div class="apt-dialog">
+          <div class="apt-dialog-head">
+            <span>🤖 Xác nhận tạo lịch hẹn</span>
+            <button class="dialog-close" @click="closeEditDialog">×</button>
+          </div>
+          <div class="apt-dialog-body">
+            <div class="apt-form-row">
+              <label>Ngày</label>
+              <input type="date" v-model="editDialog.date" />
+            </div>
+            <div class="apt-form-row">
+              <label>Giờ</label>
+              <input type="time" v-model="editDialog.time" />
+            </div>
+            <div class="apt-form-row">
+              <label>Loại</label>
+              <select v-model="editDialog.type">
+                <option value="call">📞 Gọi điện</option>
+                <option value="message">💬 Nhắn tin</option>
+                <option value="meeting">🤝 Gặp mặt</option>
+                <option value="follow_up">🔁 Theo dõi</option>
+              </select>
+            </div>
+            <div class="apt-form-row">
+              <label>Địa điểm</label>
+              <input type="text" v-model="editDialog.location" placeholder="VP / Showroom / dự án… (tuỳ chọn)" />
+            </div>
+            <div class="apt-form-row col">
+              <label>Nội dung</label>
+              <textarea v-model="editDialog.summary" rows="2" />
+            </div>
+          </div>
+          <div class="apt-dialog-foot">
+            <button class="btn-link" @click="closeEditDialog">Huỷ</button>
+            <button class="btn-primary" :disabled="!editDialog.date || creatingApt.has(editDialog.noteId)" @click="confirmCreate">
+              {{ creatingApt.has(editDialog.noteId) ? 'Đang tạo…' : '📅 Lên lịch' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- Flying calendar emoji animation (note → activity tab badge) -->
+    <Teleport to="body">
+      <div
+        v-if="flyAnim"
+        class="fly-calendar"
+        :style="{ left: flyAnim.x + 'px', top: flyAnim.y + 'px', '--tx': flyAnim.dx + 'px', '--ty': flyAnim.dy + 'px' }"
+      >📅</div>
+    </Teleport>
   </section>
 </template>
 
@@ -145,7 +202,26 @@ const replyDraft = ref('');
 const replyInput = ref<HTMLTextAreaElement | null>(null);
 
 const aiResult = ref(new Map<string, ParsedAppointment>());
+const aiNoIntent = ref(new Set<string>());   // notes where AI didn't detect intent → show banner, hide in 5s
+const aiDisabled = ref(new Set<string>());   // notes where AI parsed and got no intent → disable button forever this session
 const creatingApt = ref(new Set<string>());
+
+const editDialog = ref<{
+  open: boolean;
+  noteId: string;
+  date: string;
+  time: string;
+  type: string;
+  location: string;
+  summary: string;
+}>({ open: false, noteId: '', date: '', time: '', type: 'follow_up', location: '', summary: '' });
+
+const flyAnim = ref<{ x: number; y: number; dx: number; dy: number } | null>(null);
+
+const emit = defineEmits<{
+  'appointment-created': [];
+  'animate-target-rect': [];
+}>();
 
 watch(() => props.contactId, (id) => {
   rootDraft.value = '';
@@ -243,10 +319,22 @@ async function onDelete(noteId: string) {
 }
 
 async function onAiParse(noteId: string) {
+  if (aiDisabled.value.has(noteId)) return;
   toast.push('🤖 AI đang phân tích…');
   const parsed = await aiParse(noteId);
-  if (parsed) aiResult.value.set(noteId, parsed);
-  else aiResult.value.set(noteId, { date: null, time: null, type: null, summary: '', confidence: 0 });
+  if (parsed && parsed.hasIntent) {
+    aiResult.value.set(noteId, parsed);
+    aiNoIntent.value.delete(noteId);
+  } else {
+    // Không phát hiện → disable AI button cho note này + show banner 5s rồi auto-hide
+    aiDisabled.value.add(noteId);
+    aiNoIntent.value.add(noteId);
+    setTimeout(() => {
+      aiNoIntent.value.delete(noteId);
+      // Force reactivity refresh
+      aiNoIntent.value = new Set(aiNoIntent.value);
+    }, 5000);
+  }
 }
 
 function formatAiDate(p: ParsedAppointment): string {
@@ -259,33 +347,84 @@ function formatAiDate(p: ParsedAppointment): string {
   return `${weekday} ${dd}/${mm}${time}`;
 }
 
-async function createFromAi(note: Note) {
+/** Mở edit dialog với prefilled từ AI parse — user xác nhận/sửa trước khi tạo lịch */
+function openEditDialog(note: Note) {
   const p = aiResult.value.get(note.id);
-  if (!p || !p.date || !props.contactId) return;
-  creatingApt.value.add(note.id);
+  if (!p) return;
+  const today = new Date().toISOString().slice(0, 10);
+  editDialog.value = {
+    open: true,
+    noteId: note.id,
+    date: p.date || today,
+    time: p.time || '',
+    type: p.type || 'follow_up',
+    location: p.location || '',
+    summary: p.summary || note.body.slice(0, 200),
+  };
+}
+
+function closeEditDialog() {
+  editDialog.value.open = false;
+}
+
+async function confirmCreate() {
+  const d = editDialog.value;
+  if (!d.date || !d.noteId || !props.contactId) return;
+  creatingApt.value.add(d.noteId);
   try {
-    const isoDate = p.time
-      ? new Date(`${p.date}T${p.time}:00`).toISOString()
-      : new Date(`${p.date}T09:00:00`).toISOString();
+    const time = d.time || '09:00';
+    const isoDate = new Date(`${d.date}T${time}:00`).toISOString();
+    const summary = d.location ? `${d.summary} (📍 ${d.location})` : d.summary;
     const { data } = await api.post('/appointments', {
       contactId: props.contactId,
       appointmentDate: isoDate,
-      appointmentTime: p.time || null,
-      type: p.type || 'follow_up',
-      notes: p.summary || note.body.slice(0, 200),
+      appointmentTime: d.time || null,
+      type: d.type || 'follow_up',
+      notes: summary,
     });
     const aptId = data.id || data.appointment?.id;
     if (aptId) {
-      await linkAppointment(note.id, aptId);
-      toast.success('✓ Đã tạo lịch hẹn từ ghi chú');
-      aiResult.value.delete(note.id);
+      await linkAppointment(d.noteId, aptId);
+      // Trigger fly-to-tab animation từ vị trí note → activity tab badge
+      triggerFlyAnimation(d.noteId);
+      toast.success('📅 Đã tạo lịch hẹn');
+      aiResult.value.delete(d.noteId);
+      closeEditDialog();
     }
   } catch (err) {
     console.error(err);
     toast.error('Không tạo được lịch hẹn');
   } finally {
-    creatingApt.value.delete(note.id);
+    creatingApt.value.delete(d.noteId);
   }
+}
+
+/** Animation cuốn lịch bay từ note → tab Hoạt động badge. Sau ~750ms emit
+ * 'appointment-created' để parent (ChatContactPanel) tăng badge count +1. */
+function triggerFlyAnimation(noteId: string) {
+  // Source: note card position
+  const noteEl = document.querySelector(`[data-note-id="${noteId}"]`) as HTMLElement | null;
+  const targetEl = document.querySelector('[data-fly-target="activity-tab"]') as HTMLElement | null;
+  if (!noteEl || !targetEl) {
+    // Fallback: emit immediately
+    emit('appointment-created');
+    return;
+  }
+  const src = noteEl.getBoundingClientRect();
+  const tgt = targetEl.getBoundingClientRect();
+  const startX = src.right - 24;
+  const startY = src.top + 8;
+  flyAnim.value = {
+    x: startX,
+    y: startY,
+    dx: tgt.left + tgt.width / 2 - startX,
+    dy: tgt.top + tgt.height / 2 - startY,
+  };
+  // Khi animation đến đích (750ms) → emit để badge +1 + clear
+  setTimeout(() => {
+    flyAnim.value = null;
+    emit('appointment-created');
+  }, 750);
 }
 
 defineExpose({ rootCount });
@@ -403,7 +542,7 @@ defineExpose({ rootCount });
 .notes-list {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 4px;          /* sát nhau — actions ẩn collapse, hover sẽ push các note dưới xuống */
   max-height: 420px;
   overflow-y: auto;
   padding-right: 4px;
@@ -422,7 +561,7 @@ defineExpose({ rootCount });
   border-left: 2px solid var(--smax-grey-100);
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 3px;          /* reply cũng sát nhau */
   margin-top: 2px;
 }
 
@@ -471,5 +610,160 @@ defineExpose({ rootCount });
   line-height: 1;
   cursor: pointer;
   padding: 0 4px;
+}
+.ai-suggestion-banner.muted {
+  background: var(--smax-grey-50, #f9fafb);
+  border-color: var(--smax-grey-200);
+  animation: fadeOutBanner 5s ease forwards;
+}
+@keyframes fadeOutBanner {
+  0%, 80% { opacity: 1; transform: translateY(0); }
+  100% { opacity: 0; transform: translateY(-4px); }
+}
+.needs-input {
+  color: #f57c00;
+  font-style: italic;
+  font-weight: 500;
+}
+.missing-hint {
+  color: #c43a00;
+  font-size: 11px;
+  margin-left: 6px;
+  font-weight: 500;
+}
+
+/* ── Edit appointment dialog ───────────────────────────────────────────── */
+.apt-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.5);
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.apt-dialog {
+  background: #fff;
+  border-radius: 12px;
+  min-width: 380px;
+  max-width: 460px;
+  width: 90vw;
+  box-shadow: 0 12px 32px rgba(0,0,0,0.2);
+  overflow: hidden;
+}
+.apt-dialog-head {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--smax-grey-200);
+  font-weight: 700;
+  font-size: 14px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: linear-gradient(90deg, #fff3e0, #fffde7);
+  color: #6d4c00;
+}
+.dialog-close {
+  background: none;
+  border: none;
+  font-size: 20px;
+  cursor: pointer;
+  color: var(--smax-grey-600);
+  line-height: 1;
+}
+.apt-dialog-body {
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.apt-form-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.apt-form-row.col {
+  flex-direction: column;
+  align-items: stretch;
+}
+.apt-form-row label {
+  width: 80px;
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--smax-grey-700);
+}
+.apt-form-row.col label {
+  width: auto;
+  margin-bottom: 4px;
+}
+.apt-form-row input,
+.apt-form-row select,
+.apt-form-row textarea {
+  flex: 1;
+  border: 1.5px solid var(--smax-grey-200);
+  border-radius: 6px;
+  padding: 6px 9px;
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+}
+.apt-form-row input:focus,
+.apt-form-row select:focus,
+.apt-form-row textarea:focus {
+  border-color: var(--smax-primary);
+}
+.apt-dialog-foot {
+  padding: 10px 16px;
+  border-top: 1px solid var(--smax-grey-100);
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  background: var(--smax-grey-50);
+}
+.apt-dialog-foot .btn-primary {
+  background: var(--smax-primary);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.apt-dialog-foot .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+.apt-dialog-foot .btn-link {
+  background: none;
+  border: none;
+  color: var(--smax-grey-600);
+  cursor: pointer;
+  padding: 6px 10px;
+}
+
+/* ── Fly-to-tab calendar animation ─────────────────────────────────────── */
+.fly-calendar {
+  position: fixed;
+  font-size: 28px;
+  z-index: 10000;
+  pointer-events: none;
+  animation: flyCal 750ms cubic-bezier(0.22, 0.61, 0.36, 1) forwards;
+  filter: drop-shadow(0 2px 6px rgba(0,0,0,0.18));
+}
+@keyframes flyCal {
+  0% {
+    transform: translate(0, 0) scale(1) rotate(0deg);
+    opacity: 1;
+  }
+  35% {
+    transform: translate(calc(var(--tx) * 0.35), calc(var(--ty) * 0.2 - 30px)) scale(1.3) rotate(180deg);
+    opacity: 1;
+  }
+  70% {
+    transform: translate(calc(var(--tx) * 0.75), calc(var(--ty) * 0.7 - 18px)) scale(1.1) rotate(540deg);
+    opacity: 0.95;
+  }
+  100% {
+    transform: translate(var(--tx), var(--ty)) scale(0.3) rotate(720deg);
+    opacity: 0;
+  }
 }
 </style>

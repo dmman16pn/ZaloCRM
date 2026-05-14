@@ -69,6 +69,12 @@ const routes = [
     meta: { requiresAuth: true },
   },
   {
+    path: '/settings/zalo-labels',
+    name: 'ZaloLabelsSettings',
+    component: () => import('@/views/ZaloLabelsSettingsView.vue'),
+    meta: { requiresAuth: true },
+  },
+  {
     path: '/api-settings',
     name: 'ApiSettings',
     component: () => import('@/views/ApiSettingsView.vue'),

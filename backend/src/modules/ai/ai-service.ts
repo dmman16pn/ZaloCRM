@@ -217,7 +217,10 @@ export type ParsedAppointment = {
   date: string | null;       // YYYY-MM-DD
   time: string | null;       // HH:MM (24h)
   type: string | null;       // 'call' | 'message' | 'meeting' | 'follow_up' | null
+  location: string | null;   // địa điểm gặp (nếu detect)
   summary: string;           // tiêu đề ngắn cho lịch hẹn
+  hasIntent: boolean;        // true nếu phát hiện ý định lập lịch (kể cả thông tin chưa đủ)
+  missingFields: string[];   // ['date','time','location'] — field nào AI thiếu, FE prompt user điền
   confidence: number;        // 0..1
 };
 
@@ -234,14 +237,26 @@ export async function parseAppointmentFromText(input: { orgId: string; text: str
   const system = [
     'You parse a Vietnamese CRM note into an appointment proposal. Return STRICT JSON ONLY, no prose.',
     'Output schema:',
-    '{ "date": "YYYY-MM-DD"|null, "time": "HH:MM"|null, "type": "call"|"message"|"meeting"|"follow_up"|null, "summary": string, "confidence": number_0_to_1 }',
-    'Rules:',
-    `- Hôm nay là ${today} (${weekday}). Tính ngày tuyệt đối cho "thứ X" (sang tuần tới nếu thứ đã qua), "N ngày nữa", "tuần sau", "tháng sau", "mai", "kia".`,
-    '- "gọi"/"call" → type=call. "nhắn tin"/"message" → type=message. "gặp"/"meeting" → type=meeting. Mặc định → follow_up.',
-    '- Nếu không có giờ rõ ràng, time=null. Nếu nói "sáng"=09:00, "chiều"=14:00, "tối"=19:00.',
-    '- summary: 1 câu ngắn ≤80 ký tự mô tả việc cần làm (vd: "Gọi lại khách hỏi báo giá").',
-    '- Nếu KHÔNG có ý định hẹn rõ ràng (chỉ là note thông thường), trả {"date":null,"time":null,"type":null,"summary":"","confidence":0}.',
-    '- Confidence > 0.5 chỉ khi date hoặc time được suy luận chắc chắn.',
+    '{ "date": "YYYY-MM-DD"|null, "time": "HH:MM"|null, "type": "call"|"message"|"meeting"|"follow_up"|null, "location": string|null, "summary": string, "hasIntent": boolean, "missingFields": string[], "confidence": number_0_to_1 }',
+    '',
+    'PHÁT HIỆN Ý ĐỊNH RỘNG (hasIntent=true):',
+    '- BẤT KỲ từ khoá thời gian: "thứ X", "ngày N", "DD/MM", "mai", "kia", "tuần sau", "tháng sau", "N ngày nữa", "sáng/chiều/tối", "lúc HH giờ", "trước/sau Tết", "đầu/giữa/cuối tháng", "đầu/cuối tuần"',
+    '- HOẶC từ khoá hành động hẹn: "gọi lại", "nhắn lại", "gặp", "ghé", "đến", "chốt", "ký", "xem nhà", "qua văn phòng", "tới chỗ"',
+    '- HOẶC từ khoá địa điểm: "tại [địa điểm]", "ở [địa điểm]", "[tên building/đường/quận]", "VP", "showroom", "căn hộ", "dự án [name]"',
+    '- HOẶC từ khoá quan tâm cần theo dõi: "follow up", "theo dõi", "check lại", "phải gọi"',
+    '→ Có 1 trong các nhóm trên → hasIntent=true. Trả các field detect được, field nào không có → null + thêm vào missingFields.',
+    '',
+    `Hôm nay là ${today} (${weekday}). Tính ngày tuyệt đối cho "thứ X" (sang tuần tới nếu thứ đã qua), "N ngày nữa", "mai"=ngày mai, "kia"=ngày kia.`,
+    '"sáng"=09:00, "chiều"=14:00, "tối"=19:00. "trưa"=12:00.',
+    'type rules: "gọi"/"call"→call, "nhắn"→message, "gặp"/"ghé"/"đến"/"xem nhà"→meeting, fallback→follow_up.',
+    'location: trích nguyên văn cụm địa điểm nếu có. KHÔNG có → null + thêm "location" vào missingFields.',
+    'summary: 1 câu ≤120 ký tự mô tả việc cần làm.',
+    '',
+    'missingFields: liệt kê field thiếu trong ["date","time","location"] để FE prompt user điền tiếp.',
+    'confidence: > 0.7 khi date+time+intent rõ, 0.4-0.7 khi 1-2 field có, < 0.4 khi mơ hồ.',
+    '',
+    'CHỈ trả hasIntent=false khi note hoàn toàn KHÔNG liên quan hẹn (vd "khách thích nhà 3pn", "đã gửi báo giá").',
+    'Khi hasIntent=false → tất cả field null/empty array, confidence=0.',
   ].join('\n');
 
   const userPrompt = `<note>\n${escapeXmlBoundary(input.text)}\n</note>\nReturn JSON only.`;
@@ -249,24 +264,41 @@ export async function parseAppointmentFromText(input: { orgId: string; text: str
 
   // Strip code fences if model wrapped JSON in ```json ... ```
   const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim();
-  let parsed: Partial<ParsedAppointment>;
+  let parsed: Partial<ParsedAppointment> & { hasIntent?: boolean; missingFields?: string[]; location?: string | null };
   try {
-    parsed = JSON.parse(cleaned) as Partial<ParsedAppointment>;
+    parsed = JSON.parse(cleaned) as typeof parsed;
   } catch {
     return null;
   }
-  const confidence = Number.isFinite(parsed.confidence) ? Math.max(0, Math.min(1, parsed.confidence as number)) : 0;
-  if (confidence < 0.3 && !parsed.date) return null;
 
+  const hasIntent = !!parsed.hasIntent;
+  if (!hasIntent) {
+    return {
+      date: null, time: null, type: null, location: null,
+      summary: '', hasIntent: false, missingFields: [], confidence: 0,
+    };
+  }
+
+  const confidence = Number.isFinite(parsed.confidence) ? Math.max(0, Math.min(1, parsed.confidence as number)) : 0.4;
   const validType = parsed.type && ['call', 'message', 'meeting', 'follow_up'].includes(parsed.type) ? parsed.type : null;
   const dateOk = parsed.date && /^\d{4}-\d{2}-\d{2}$/.test(parsed.date);
   const timeOk = parsed.time && /^\d{2}:\d{2}$/.test(parsed.time);
+  const location = parsed.location ? String(parsed.location).slice(0, 200) : null;
+
+  const missing: string[] = Array.isArray(parsed.missingFields) ? parsed.missingFields.filter((f: string) => ['date', 'time', 'location'].includes(f)) : [];
+  // Sanity: đảm bảo missing đúng với data
+  if (!dateOk && !missing.includes('date')) missing.push('date');
+  if (!timeOk && !missing.includes('time')) missing.push('time');
+  if (!location && !missing.includes('location')) missing.push('location');
 
   return {
     date: dateOk ? parsed.date! : null,
     time: timeOk ? parsed.time! : null,
     type: validType,
+    location,
     summary: (parsed.summary || '').slice(0, 200),
+    hasIntent: true,
+    missingFields: missing,
     confidence,
   };
 }

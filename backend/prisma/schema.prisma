@@ -36,6 +36,7 @@ model Organization {
   statuses            Status[]
   parentCandidates    ParentCandidate[]
   notes               Note[]
+  zaloLabels          ZaloLabel[]
 
   @@map("organizations")
 }
@@ -104,6 +105,7 @@ model ZaloAccount {
   dailyStats         DailyMessageStat[]
   friendshipAttempts FriendshipAttempt[]
   friends            Friend[]
+  zaloLabelsList     ZaloLabel[]
 
   @@map("zalo_accounts")
 }
@@ -412,6 +414,33 @@ model Note {
   @@index([orgId, contactId, createdAt])
   @@index([parentNoteId])
   @@map("notes")
+}
+
+// Zalo native labels — synced từ Zalo SDK getLabels() per nick.
+// 1 label = (zaloAccountId, zaloLabelId). conversations[] là list externalThreadId
+// được assign label đó. Update qua SDK updateLabels({labelData, version}).
+// Settings page hiển thị bảng + cho phép edit color/text → write back qua SDK.
+model ZaloLabel {
+  id            String   @id @default(uuid())
+  orgId         String   @map("org_id")
+  zaloAccountId String   @map("zalo_account_id")
+  zaloLabelId   Int      @map("zalo_label_id")     // numeric ID từ Zalo
+  textKey       String   @map("text_key")          // SDK textKey field
+  text          String                              // tên label hiển thị
+  color         String                              // hex from SDK
+  emoji         String?                             // unicode emoji
+  offset        Int      @default(0)                // sort order trong Zalo client
+  version       Int      @default(0)                // server-version của bulk
+  conversations Json     @default("[]")             // string[] externalThreadId
+  createTime    BigInt?  @map("create_time")        // SDK epoch
+  syncedAt      DateTime @default(now()) @map("synced_at")
+
+  org         Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  zaloAccount ZaloAccount  @relation(fields: [zaloAccountId], references: [id], onDelete: Cascade)
+
+  @@unique([zaloAccountId, zaloLabelId])
+  @@index([orgId, zaloAccountId])
+  @@map("zalo_labels")
 }
 
 // Emoji reaction trên 1 note. 1 user có thể reaction nhiều emoji khác nhau, không trùng cùng 1 emoji.

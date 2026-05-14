@@ -39,7 +39,10 @@ export interface ParsedAppointment {
   date: string | null;
   time: string | null;
   type: 'call' | 'message' | 'meeting' | 'follow_up' | null;
+  location: string | null;
   summary: string;
+  hasIntent: boolean;
+  missingFields: string[];   // 'date' | 'time' | 'location'
   confidence: number;
 }
 
