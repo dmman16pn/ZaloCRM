@@ -5,6 +5,8 @@
       <div class="cl-search-row">
         <input
           class="cl-search"
+          name="conv-list-search"
+          autocomplete="off"
           :value="search"
           placeholder="Tìm theo tên, SĐT, nội dung tin nhắn…"
           @input="onSearchInput"

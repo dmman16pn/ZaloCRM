@@ -38,6 +38,8 @@
           <input
             ref="searchInput"
             v-model="search"
+            name="tag-crm-search"
+            autocomplete="off"
             placeholder="Tìm tag…"
             @keydown.enter.prevent="onEnterSearch"
             @keydown.escape="dropdownOpen = false"

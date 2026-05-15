@@ -24,6 +24,8 @@
       <input
         v-model="filters.search"
         class="toolbar-search"
+        name="contacts-search"
+        autocomplete="off"
         placeholder="🔍 Tìm tên / SĐT / UID / @username / globalId…"
         @input="debouncedFetch"
       />

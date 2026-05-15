@@ -55,6 +55,8 @@
       <textarea
         v-model="rootDraft"
         class="note-input"
+        name="note-root-draft"
+        autocomplete="off"
         placeholder="Nhập ghi chú..."
         rows="1"
         @keydown="onComposerKeydown"
@@ -138,6 +140,8 @@
               ref="replyInput"
               v-model="replyDraft"
               class="note-input"
+              name="note-reply-draft"
+              autocomplete="off"
               placeholder="Trả lời..."
               rows="1"
               @keydown="onReplyKeydown"
