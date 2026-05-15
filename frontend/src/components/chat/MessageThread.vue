@@ -839,9 +839,29 @@ const inputPlaceholder = computed(() => {
   return 'Gõ tin nhắn… ("/" template, "@" mention, "#" tag)';
 });
 
-function onCareStatusChange(value: string) {
-  emit('care-status-changed', value);
-  toast.success(`Đã đổi care status → ${value}`);
+/* Care status change: persist qua API + update local conversation.contact.status NGAY.
+ * Trước đây chỉ emit lên ChatView (parent KHÔNG handle) → status không bao giờ lưu. */
+async function onCareStatusChange(value: string) {
+  const contactId = props.conversation?.contact?.id;
+  if (!contactId) return;
+  // Optimistic update
+  const prev = props.conversation?.contact?.status;
+  if (props.conversation?.contact) {
+    (props.conversation.contact as { status?: string | null }).status = value;
+  }
+  try {
+    const { api: apiClient } = await import('@/api/index');
+    await apiClient.patch(`/contacts/${contactId}`, { status: value });
+    toast.success(`Đã đổi trạng thái → ${value}`);
+    emit('care-status-changed', value);
+  } catch (err) {
+    // Rollback
+    if (props.conversation?.contact) {
+      (props.conversation.contact as { status?: string | null }).status = prev as string | null;
+    }
+    toast.error('Lưu trạng thái thất bại');
+    console.error(err);
+  }
 }
 
 async function fireWebhook() {
@@ -1470,12 +1490,16 @@ watch(() => props.editingMessage?.id, async (id) => {
   text-align: right;
 }
 
-/* ════════ Input area ════════ */
+/* ════════ Input area ════════
+ * Fixed-height layout — không auto-resize theo content. Tránh nhảy layout khi
+ * switch conversation hoặc khi user nhập nhiều dòng (editor scroll bên trong). */
 .input-area {
   background: var(--smax-bg);
   border-top: 1px solid var(--smax-grey-200);
   padding: 7px 13px 9px;
   flex-shrink: 0;
+  flex-grow: 0;
+  /* Reserved space: toolbar 32 + editor 84 + outer toolbar 38 + reply bar (when present) ~30 + padding */
 }
 .input-toolbar-top {
   display: flex; align-items: center; gap: 1px;

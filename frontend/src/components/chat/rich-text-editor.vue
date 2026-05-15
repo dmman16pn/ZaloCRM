@@ -178,33 +178,33 @@ onBeforeUnmount(() => { editor.value?.destroy(); });
   box-shadow: 0 0 0 3px rgba(33, 150, 243, 0.10);
 }
 
-/* ── Toolbar collapsible — ẩn default, slide in khi focus hoặc đang gõ ── */
+/* ── Toolbar luôn hiển thị (KHÔNG collapsible) — tránh layout nhảy khi focus / switch conv.
+ * Toolbar reserved fixed height ngay từ đầu để input area stable. ── */
 .editor-toolbar {
-  max-height: 0;
+  max-height: 32px;
+  height: 32px;
+  opacity: 0.85;
+  padding: 3px 4px;
+  border-bottom: 1px solid var(--smax-grey-100, #f5f6fa);
   overflow: hidden;
-  opacity: 0;
-  padding: 0 4px;
-  border-bottom: 1px solid transparent;
-  transition: max-height 0.18s ease, opacity 0.15s, padding 0.15s, border-color 0.15s;
+  transition: opacity 0.15s;
 }
 .rich-text-editor:focus-within .editor-toolbar,
-.rich-text-editor.focused .editor-toolbar,
-.rich-text-editor.has-content .editor-toolbar {
-  max-height: 40px;
+.rich-text-editor.focused .editor-toolbar {
   opacity: 1;
-  padding: 4px;
-  border-bottom-color: var(--smax-grey-100, #f5f6fa);
 }
 
+/* Lock fixed height cho editor content — không auto-grow, không max-height behavior tạo
+ * cảm giác "nhảy" khi nhập nhiều dòng. Scroll bên trong nếu vượt. */
 .editor-content :deep(.tiptap-input) {
   padding: 9px 13px;
-  min-height: 42px;
-  max-height: 140px;
+  height: 84px;          /* FIXED — không min/max */
   overflow-y: auto;
   outline: none;
   font-size: 14px;
   line-height: 1.5;
   color: var(--smax-text, #212121);
+  box-sizing: border-box;
 }
 .editor-content :deep(.tiptap-input p) {
   margin: 0;
