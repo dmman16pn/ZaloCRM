@@ -858,15 +858,17 @@ async function onCareStatusChange(value: string) {
   }
   try {
     const { api: apiClient } = await import('@/api/index');
-    await apiClient.patch(`/contacts/${contactId}`, { status: value });
+    // Backend dùng PUT /contacts/:id (full update), KHÔNG có PATCH.
+    await apiClient.put(`/contacts/${contactId}`, { status: value });
     toast.success(`Đã đổi trạng thái → ${value}`);
     emit('care-status-changed', value);
-  } catch (err) {
+  } catch (err: any) {
     // Rollback
     if (props.conversation?.contact) {
       (props.conversation.contact as { status?: string | null }).status = prev as string | null;
     }
-    toast.error('Lưu trạng thái thất bại');
+    const msg = err?.response?.data?.error || `Lưu trạng thái thất bại (${err?.response?.status || 'network'})`;
+    toast.error(msg);
     console.error(err);
   }
 }

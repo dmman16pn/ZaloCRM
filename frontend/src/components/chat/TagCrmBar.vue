@@ -228,9 +228,11 @@ async function persist(next: string[]) {
   if (!props.contactId) return;
   emit('update:modelValue', next); // optimistic
   try {
-    await api.patch(`/contacts/${props.contactId}`, { tags: next });
-  } catch {
-    toast.error('Lưu tag thất bại');
+    // Backend dùng PUT /contacts/:id/tags (endpoint chuyên cho tags), KHÔNG phải PATCH.
+    await api.put(`/contacts/${props.contactId}/tags`, { tags: next });
+  } catch (err: any) {
+    const msg = err?.response?.data?.error || `Lưu tag thất bại (${err?.response?.status || 'network'})`;
+    toast.error(msg);
   }
 }
 
