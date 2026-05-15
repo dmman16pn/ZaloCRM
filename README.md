@@ -327,9 +327,7 @@ By using ZaloCRM, you acknowledge that you understand and accept these terms and
 
 ### Yêu cầu attribution (NOTICE)
 
-Theo Apache 2.0 Section 4(d), khi phân phối lại (kể cả phiên bản chỉnh sửa hoặc deploy SaaS), bạn **bắt buộc** giữ file [NOTICE](NOTICE) và banner attribution chạy trên thanh top-nav. Banner này cấu thành "in-display attribution" theo điều khoản license.
-
-**Để xoá / thay đổi banner**, cần có **commercial license** riêng từ maintainer. Liên hệ: [locnt@locnguyendata.com](mailto:locnt@locnguyendata.com).
+Theo Apache 2.0 Section 4(d), khi phân phối lại (kể cả phiên bản chỉnh sửa hoặc deploy SaaS), bạn **bắt buộc** giữ file [NOTICE](NOTICE).
 
 ---
 
