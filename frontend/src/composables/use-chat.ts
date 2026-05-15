@@ -392,6 +392,27 @@ export function useChat() {
     await sendMessageTo(selectedConvId.value, content, replyMessageId);
   }
 
+  /** Insert message vào messages.value đúng vị trí sort theo sentAt ASC.
+   *  Binary search O(log N) — không re-sort toàn array. Dùng cho socket arrivals
+   *  và sendMessageTo (msg vừa POST cũng có thể đến trễ hơn 1 msg từ socket khác). */
+  function insertMessageSorted(msg: Message) {
+    const arr = messages.value;
+    const t = new Date(msg.sentAt).getTime();
+    // Fast path: append-to-end (msg mới nhất, thường case)
+    if (arr.length === 0 || new Date(arr[arr.length - 1].sentAt).getTime() <= t) {
+      arr.push(msg);
+      return;
+    }
+    // Binary search vị trí đầu tiên có sentAt > t
+    let lo = 0, hi = arr.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1;
+      if (new Date(arr[mid].sentAt).getTime() <= t) lo = mid + 1;
+      else hi = mid;
+    }
+    arr.splice(lo, 0, msg);
+  }
+
   async function sendMessageTo(conversationId: string, content: string, replyMessageId?: string | null) {
     if (!content.trim()) return;
     sendingMsg.value = true;
@@ -400,7 +421,7 @@ export function useChat() {
       const res = await api.post(`/conversations/${conversationId}/messages`, payload);
       if (conversationId === selectedConvId.value) {
         if (!messages.value.find(m => m.id === res.data.id)) {
-          messages.value.push(res.data);
+          insertMessageSorted(res.data);
         }
       }
     } catch (err) {
@@ -417,7 +438,13 @@ export function useChat() {
     socket.on('chat:message', (data: { message: Message; conversationId: string }) => {
       if (data.conversationId === selectedConvId.value) {
         if (!messages.value.find(m => m.id === data.message.id)) {
-          messages.value.push(normalizeMessage(data.message as RawMessage));
+          // INSERT theo sortedBy sentAt thay vì push cuối array. Lý do: socket có
+          // thể giao messages KHÔNG theo chronological order (vd old_messages backfill
+          // delivers reverse, hoặc 2 msg cùng giây tới khác thứ tự server vs client).
+          // Nếu push cuối thì msg cũ tới muộn → hiển thị sai vị trí (user báo
+          // case "Đúng rồi bác" sent at 15:14:14 nhưng hiển thị SAU "ố toẹt vời"
+          // sent at 15:14:23 vì old_messages giao ngược).
+          insertMessageSorted(normalizeMessage(data.message as RawMessage));
         }
       }
       // Optimistic update conversation list — tránh fetch full HTTP mỗi message
