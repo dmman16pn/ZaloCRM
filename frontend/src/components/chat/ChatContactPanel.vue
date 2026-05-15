@@ -158,9 +158,9 @@
 
         <!-- Tag CRM section moved to MessageThread chat input bar (Smax-style) -->
 
-        <!-- ──── CRM Notes thread (Facebook-style, AI appointment suggest) ──── -->
+        <!-- ──── Customer Timeline (Notes + Activity unified) ──── -->
         <section class="ip-section ip-notes-section">
-          <NotesSection
+          <CustomerTimelineSection
             :contact-id="props.contactId"
             :contact-name="headerFullName"
             @appointment-created="onAppointmentCreated"
@@ -339,7 +339,7 @@ import CareStatusBadge from '@/components/ui/CareStatusBadge.vue';
 import type { CareStatusValue } from '@/constants/care-status';
 import { useToast } from '@/composables/use-toast';
 import { api } from '@/api';
-import NotesSection from './NotesSection.vue';
+import CustomerTimelineSection from './CustomerTimelineSection.vue';
 
 const props = defineProps<{
   contactId: string | null;

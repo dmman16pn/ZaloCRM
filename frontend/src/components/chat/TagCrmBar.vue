@@ -3,16 +3,25 @@
     <!-- Label prefix -->
     <span class="bar-label">🏷</span>
 
-    <!-- Assigned pills (sort theo priority order từ CrmTag.order) -->
+    <!-- Assigned pills — Zalo-managed FIRST (theo managedBy), sau đó CrmTag.order -->
     <span
       v-for="tag in sortedTags"
       :key="tag"
       class="tag-pill"
+      :class="{ 'zalo-managed': isZaloManaged(tag) }"
       :style="tagStyle(tag) || `border-color: ${defaultHue}; color: ${defaultHue}`"
-      :title="findDef(tag)?.description || 'Click × để xoá'"
+      :title="isZaloManaged(tag)
+        ? `Tag Zalo Real — đổi/gỡ trên app Zalo, hệ thống tự cập nhật. ${findDef(tag)?.description || ''}`
+        : (findDef(tag)?.description || 'Click × để xoá')"
     >
-      <span v-if="findDef(tag)?.emoji">{{ findDef(tag)?.emoji }} </span>{{ tag }}
-      <button class="tag-x" title="Xoá tag" @click="removeTag(tag)">×</button>
+      <span v-if="isZaloManaged(tag)" class="tag-lock" title="Read-only — sync từ Zalo">🔒</span>
+      <span v-else-if="findDef(tag)?.emoji">{{ findDef(tag)?.emoji }} </span>{{ tag }}
+      <button
+        v-if="!isZaloManaged(tag)"
+        class="tag-x"
+        title="Xoá tag"
+        @click="removeTag(tag)"
+      >×</button>
     </span>
 
     <!-- "+ Thêm tag" dropdown — xổ lên (location top) chứa list system tags + settings link -->
@@ -94,6 +103,7 @@ interface CrmTagDef {
   category: string | null;
   order: number;
   isActive: boolean;
+  managedBy?: string | null;   // 'zalo_sync' | null — Zalo-managed read-only
 }
 
 const props = defineProps<{
@@ -128,18 +138,26 @@ async function loadTagDefs() {
 
 const tags = computed(() => props.modelValue || []);
 
-// Sort theo priority CrmTag.order
+// Sort: Zalo-managed tags FIRST, sau đó theo priority CrmTag.order, cuối là alphabetical
 const sortedTags = computed(() => {
   const list = tags.value;
   return [...list].sort((a, b) => {
     const da = findDef(a);
     const db = findDef(b);
+    // Zalo-managed luôn đứng trước
+    const aZalo = da?.managedBy === 'zalo_sync' ? 0 : 1;
+    const bZalo = db?.managedBy === 'zalo_sync' ? 0 : 1;
+    if (aZalo !== bZalo) return aZalo - bZalo;
     if (da && db) return da.order - db.order;
     if (da) return -1;
     if (db) return 1;
     return a.localeCompare(b);
   });
 });
+
+function isZaloManaged(name: string): boolean {
+  return findDef(name)?.managedBy === 'zalo_sync';
+}
 
 function findDef(name: string): CrmTagDef | null {
   return tagDefs.value.find(d => d.name === name) || null;
@@ -276,7 +294,7 @@ onMounted(() => { void loadTagDefs(); });
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  padding: 3px 5px 3px 10px;
+  padding: 3px 10px;
   border-radius: 12px;
   font-size: 12px;
   font-weight: 500;
@@ -287,6 +305,15 @@ onMounted(() => { void loadTagDefs(); });
   transition: filter 0.12s;
 }
 .tag-pill:hover { filter: brightness(0.96); }
+.tag-pill.zalo-managed {
+  padding: 3px 10px;          /* không có nút X → padding đều 2 bên */
+  cursor: help;
+}
+.tag-lock {
+  font-size: 10px;
+  margin-right: 1px;
+  opacity: 0.7;
+}
 .tag-x {
   background: none;
   border: none;
