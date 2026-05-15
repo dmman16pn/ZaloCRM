@@ -319,4 +319,3 @@ Cần tư vấn, custom thêm tính năng, hoặc triển khai ZaloCRM cho doanh
 
 - 🌐 [https://locnguyendata.com](https://locnguyendata.com)
 - 📧 [locnt@locnguyendata.com](mailto:locnt@locnguyendata.com)
-- 📱 Zalo: 0945031039

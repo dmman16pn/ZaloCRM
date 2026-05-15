@@ -104,6 +104,49 @@ openssl rand -hex 32
 openssl rand -hex 32
 ```
 
+## Nâng cấp từ v3.0 lên v3.1
+
+> ⚠️ **Backup database trước khi nâng cấp.** Schema v3.1 thêm các bảng mới: `statuses`, `zalo_labels`, `notes`, `crm_tags` và một số field FK trên `contacts`, `friends`, `zalo_accounts`.
+
+```bash
+# 1. Backup database
+docker exec zalo-crm-db pg_dump -U crmuser zalocrm > backup-v3.0-$(date +%Y%m%d-%H%M).sql
+
+# 2. Pull code v3.1
+cd /path/to/ZaloCRM
+git fetch origin
+git checkout main
+git pull origin main
+
+# 3. Rebuild + restart (Dockerfile entrypoint tự `prisma db push --accept-data-loss`)
+docker compose up -d --build app
+
+# 4. Verify
+curl http://localhost:3080/                                                          # HTTP 200
+docker exec zalo-crm-db psql -U crmuser -d zalocrm -c "\dt statuses zalo_labels notes crm_tags"
+docker logs zalo-crm-app --tail 30 | grep -E "listener|backfill"
+```
+
+### Tính năng mới v3.1
+| Tính năng | Mô tả |
+|-----------|-------|
+| **CrmTag system** | Quản lý tag riêng cho CRM, Settings tabs, optimistic UI |
+| **Notes thread** | Ghi chú CRM-style trong tab Hồ Sơ, AI suggest lịch hẹn |
+| **Zalo Labels 2-way sync** | Native dropdown, on-demand mode (5s cooldown) |
+| **DM history backfill** | Endpoint `/sync-history` + UI button — port openzca CLI `db sync` |
+| **AI parse fallback** | Rule-based khi Gemini quota 429 |
+| **Phone normalization** | `phoneNormalized` canonical, resolve-by-keys |
+| **DuplicateReviewDialog** | 3-column compare UX, filter, dismiss |
+| **Banner attribution** | Move từ topnav xuống Dashboard, 25% width right-aligned |
+
+### Rollback về v3.0
+```bash
+docker compose down
+git checkout v3.0
+docker exec zalo-crm-db psql -U crmuser -d zalocrm < backup-v3.0-<datetime>.sql
+docker compose up -d --build
+```
+
 ## Nâng cấp từ v2.1 lên v3.0
 
 > ⚠️ **Backup database trước khi nâng cấp.** Schema v3.0 thêm bảng `friends`, `friendship_attempts` và nhiều field aggregate.
@@ -235,7 +278,6 @@ Bạn cần triển khai ZaloCRM cho doanh nghiệp, custom thêm tính năng ri
 
 - 🌐 **Website:** [https://locnguyendata.com](https://locnguyendata.com)
 - 📧 **Email:** [locnt@locnguyendata.com](mailto:locnt@locnguyendata.com)
-- 📱 **Điện thoại / Zalo:** [0945031039](tel:0945031039)
 - 💬 **Telegram:** [Tham gia group](https://t.me/+KKJ3SJSx6PA3NDE1)
 
 ### Dịch vụ cung cấp
