@@ -121,6 +121,11 @@ class ZaloAccountPool {
       this.backfillOrphanedConversations(accountId, api).catch((err) => {
         logger.warn(`[zalo:${accountId}] Backfill orphaned conversations failed:`, err);
       });
+
+      // Fire-and-forget: pull Zalo labels lần đầu để Friend.zaloLabels + crmTagsPerNick
+      // có data ngay sau khi connect — tránh phải bấm "Đồng bộ ngay" thủ công.
+      // Dynamic import để tránh circular: zalo-labels-routes → zalo-pool → ...
+      this.autoSyncLabelsOnConnect(accountId);
     } catch (err) {
       const instance = this.instances.get(accountId);
       if (instance) instance.status = 'disconnected';
@@ -173,12 +178,36 @@ class ZaloAccountPool {
       this.backfillOrphanedConversations(accountId, api).catch((err) => {
         logger.warn(`[zalo:${accountId}] Backfill orphaned conversations failed:`, err);
       });
+
+      // Fire-and-forget: pull Zalo labels sau reconnect — bắt kịp thay đổi label
+      // mà user thực hiện trên Zalo Real lúc CRM offline.
+      this.autoSyncLabelsOnConnect(accountId);
     } catch (err) {
       const instance = this.instances.get(accountId);
       if (instance) instance.status = 'disconnected';
       await this.updateAccountDB(accountId, 'qr_pending', null);
       this.io?.emit('zalo:reconnect-failed', { accountId, error: String(err) });
     }
+  }
+
+  /** Pull Zalo labels for this account, fire-and-forget. Loads orgId from DB
+   *  vì instance trong RAM không có. Có thể trỳ lỗi nếu account vừa kết nối
+   *  chưa kịp ổn định — không throw, chỉ log. */
+  private autoSyncLabelsOnConnect(accountId: string): void {
+    void (async () => {
+      try {
+        const account = await prisma.zaloAccount.findUnique({
+          where: { id: accountId },
+          select: { orgId: true },
+        });
+        if (!account) return;
+        const { syncLabelsForAccount } = await import('./zalo-labels-routes.js');
+        const result = await syncLabelsForAccount(accountId, account.orgId);
+        logger.info(`[zalo:${accountId}] Auto-sync labels on connect: ${result.labels.length} labels, ${result.friendsUpdated} friends updated`);
+      } catch (err) {
+        logger.warn(`[zalo:${accountId}] Auto-sync labels on connect failed:`, err);
+      }
+    })();
   }
 
   // Delegate listener setup to zalo-listener-factory
