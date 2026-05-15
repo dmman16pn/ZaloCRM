@@ -52,12 +52,13 @@
     </div>
 
     <!-- ════════ Conv items ════════ -->
-    <div class="conv-scroll">
+    <div ref="scrollContainer" class="conv-scroll">
       <div v-if="loading" class="loading">Đang tải…</div>
 
       <div
         v-for="conv in conversations"
         :key="conv.id"
+        :ref="(el) => registerRow(conv.id, el as HTMLElement | null)"
         class="conv-item"
         :class="{
           active: conv.id === selectedId,
@@ -180,7 +181,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, watch, onMounted, computed } from 'vue';
+import { ref, reactive, watch, onMounted, computed, nextTick } from 'vue';
 import type { Conversation, AiSentiment } from '@/composables/use-chat';
 import { api } from '@/api/index';
 import AiSentimentBadge from '@/components/ai/ai-sentiment-badge.vue';
@@ -366,6 +367,52 @@ watch(activeTab, () => {
 onMounted(async () => {
   // Load CrmTag defs (color + managedBy) cho TagIcon render — share cache toàn app
   await Promise.all([fetchCounts(), fetchAvailableTags(), loadTagDefs()]);
+});
+
+/* ── Auto-scroll selected row vào viewport ──────────────────────────────────
+ * Khi user nav từ ContactsView/GroupsView (router.push /chat/:convId) HOẶC khi
+ * BE đẩy conv lên đầu list (do new message), row đang được select phải scroll
+ * lên top viewport — sale không phải tự kéo tìm. Cũng cover case row mới
+ * append (first-time chat ensure-conversation).
+ * Ref map: convId → row HTMLElement (registerRow gọi mỗi lần Vue mount row). */
+const scrollContainer = ref<HTMLElement | null>(null);
+const rowRefs = new Map<string, HTMLElement>();
+
+function registerRow(id: string, el: HTMLElement | null) {
+  if (el) rowRefs.set(id, el);
+  else rowRefs.delete(id);
+}
+
+function scrollSelectedIntoView() {
+  if (!props.selectedId) return;
+  const row = rowRefs.get(props.selectedId);
+  const container = scrollContainer.value;
+  if (!row || !container) return;
+  const rowRect = row.getBoundingClientRect();
+  const ctnRect = container.getBoundingClientRect();
+  // Chỉ scroll nếu row nằm ngoài viewport (tránh giật khi đã visible)
+  if (rowRect.top < ctnRect.top || rowRect.bottom > ctnRect.bottom) {
+    row.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+}
+
+// Watch selectedId — scroll khi thay đổi (nav từ extern hoặc click trong list)
+watch(() => props.selectedId, async () => {
+  await nextTick();           // đợi row render xong (đặc biệt khi conv mới append)
+  scrollSelectedIntoView();
+}, { immediate: true });
+
+// Watch vị trí của selected conv trong list — nếu BE refresh + reorder (do user
+// vừa send message → conv đó lên top), index sẽ đổi từ N→0 → scroll lại lên top.
+// Watch derived index thay vì watch full array để hiệu suất tốt + chỉ fire khi
+// thật sự cần. Cũng cover case list mới fetch (length đổi).
+const selectedIndex = computed(() => {
+  if (!props.selectedId) return -1;
+  return props.conversations.findIndex(c => c.id === props.selectedId);
+});
+watch(selectedIndex, async () => {
+  await nextTick();
+  scrollSelectedIntoView();
 });
 
 // ── Utility functions ───────────────────────────────────────────────────────

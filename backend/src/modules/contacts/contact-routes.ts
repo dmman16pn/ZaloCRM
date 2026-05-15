@@ -852,6 +852,56 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
     }
   });
 
+  // ── POST /api/v1/zalo-accounts/:accountId/groups/:groupId/ensure-conversation ─
+  //    Tạo (hoặc lấy) Conversation cho 1 nhóm Zalo. Use case: sale click nút "Mở
+  //    chat" từ danh sách group trong tab Nhóm → cần convId để nav /chat/:convId.
+  //    Idempotent — gọi nhiều lần vẫn trả cùng convId.
+  app.post('/api/v1/zalo-accounts/:accountId/groups/:groupId/ensure-conversation', async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const user = request.user!;
+      const { accountId, groupId } = request.params as { accountId: string; groupId: string };
+
+      // Verify account thuộc org user (security)
+      const account = await prisma.zaloAccount.findFirst({
+        where: { id: accountId, orgId: user.orgId },
+        select: { id: true },
+      });
+      if (!account) return reply.status(404).send({ error: 'Zalo account not found' });
+      if (!groupId) return reply.status(400).send({ error: 'groupId required' });
+
+      // Find existing — group conv uniqueness: (zaloAccountId, externalThreadId, threadType='group')
+      const existing = await prisma.conversation.findFirst({
+        where: {
+          zaloAccountId: accountId,
+          externalThreadId: groupId,
+          threadType: 'group',
+        },
+        select: { id: true },
+      });
+      if (existing) return reply.send({ conversationId: existing.id, created: false });
+
+      // Group conv chưa có → tạo. Note: contactId nullable (group conv không bind 1
+      // contact cụ thể, listener sẽ tạo group-contact khi có msg đầu).
+      const created = await prisma.conversation.create({
+        data: {
+          orgId: user.orgId,
+          zaloAccountId: accountId,
+          contactId: null,
+          threadType: 'group',
+          externalThreadId: groupId,
+          lastMessageAt: new Date(),
+          unreadCount: 0,
+          isReplied: false,
+        },
+        select: { id: true },
+      });
+      return reply.send({ conversationId: created.id, created: true });
+    } catch (err) {
+      logger.error('[groups] ensure-conversation error:', err);
+      return reply.status(500).send({ error: 'Ensure conversation failed', detail: String(err) });
+    }
+  });
+
   // ── POST /api/v1/contacts/resolve-by-keys — server exhaustive lookup ────────
   // Tìm Contact theo thứ tự độ tin cậy: globalId > username > zaloUid > phone.
   // Dùng cho NewMessageDialog sau Zalo lookup: tra đúng Contact đã có trong CRM
