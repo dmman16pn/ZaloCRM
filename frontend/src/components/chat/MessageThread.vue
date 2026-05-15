@@ -646,8 +646,10 @@ watch(() => props.conversation?.id, (newId, oldId) => {
   }
 }, { immediate: true });
 
-/* Optimistic UI: update assignedTo flags + currentLabel NGAY (không disable mờ chờ).
- * API call chạy background. Nếu fail → rollback to snapshot + toast error. */
+/* Optimistic UI FULL: update cả allLabels (dropdown ✓) + friendship.crmTagsPerNick
+ * (tag bar cột 3 + ConversationList cột 2) NGAY khi click.
+ * Tránh "show tag cũ vài giây rồi mới sang tag mới" — full snap immediately.
+ * API call background; rollback nếu fail. */
 async function onPickLabel(label: AccountLabelView) {
   const accId = props.conversation?.zaloAccount?.id;
   const threadId = props.conversation?.externalThreadId;
@@ -656,27 +658,41 @@ async function onPickLabel(label: AccountLabelView) {
   // Toggle: nếu đang active → unassign (null), ngược lại assign labelId
   const labelId = currentLabel.value?.id === label.id ? null : label.id;
 
-  // Snapshot trước khi mutate để rollback nếu fail
-  const snapshot = allLabels.value.map(l => ({ ...l }));
+  // ── Snapshots cho rollback nếu fail ─────────────────────────────────
+  const snapshotAllLabels = allLabels.value.map(l => ({ ...l }));
+  const friendship = props.conversation?.friendship as { crmTagsPerNick?: string[] } | null | undefined;
+  const oldCrmTags = Array.isArray(friendship?.crmTagsPerNick)
+    ? [...(friendship!.crmTagsPerNick as string[])]
+    : [];
 
-  // Optimistic mutation: clear assignedTo trên mọi label rồi set flag trên label được chọn.
+  // ── Optimistic 1: allLabels assignedTo flag (dropdown ✓ animation) ──
   allLabels.value = allLabels.value.map(l => ({
     ...l,
     assignedTo: labelId !== null && l.id === labelId,
   }));
 
+  // ── Optimistic 2: friendship.crmTagsPerNick — strip ALL "🔵 X" cũ +
+  // add "🔵 newLabel" nếu assign. Đây là field tag bar cột 3 + cột 2 read.
+  // Vue reactive mutation: friendship là proxy của conversation prop. ──
+  if (friendship) {
+    const stripped = oldCrmTags.filter(t => !t.startsWith('🔵 '));
+    const newTags = labelId !== null ? [...stripped, `🔵 ${label.text}`] : stripped;
+    friendship.crmTagsPerNick = newTags;
+  }
+
   toast.success(labelId ? `✓ Đã gắn "${label.text}"` : `✓ Đã bỏ tag`);
 
-  // API call background — không await, không disable UI
+  // API call background — UI đã update sẵn
   try {
     const { api: apiClient } = await import('@/api/index');
     await apiClient.post(`/zalo-accounts/${accId}/labels/assign-thread`, { threadId, labelId });
-    // Reconcile với BE (BE đã re-sync nên trả về authoritative state)
+    // Reconcile với BE — fetch fresh + dispatch event để các surface khác re-fetch
     void fetchAllLabels(accId, threadId);
     window.dispatchEvent(new CustomEvent('zalo-labels-synced', { detail: { accountId: accId } }));
   } catch (err: any) {
-    // Rollback optimistic mutation
-    allLabels.value = snapshot;
+    // Rollback BOTH optimistic mutations
+    allLabels.value = snapshotAllLabels;
+    if (friendship) friendship.crmTagsPerNick = oldCrmTags;
     toast.error(err.response?.data?.error || 'Không gán được tag — đã hoàn tác');
   }
 }
