@@ -55,7 +55,7 @@
         data-fly-target="activity-tab"
         @click="activeTab = 'activity'"
       >
-        <span class="ic">⚡</span> Hoạt động
+        <span class="ic">📅</span> Lịch hẹn
         <span v-if="activityBadgeCount || pendingAptBump" class="tab-badge">{{ (activityBadgeCount ?? 0) + pendingAptBump }}</span>
       </button>
     </nav>
