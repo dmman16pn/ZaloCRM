@@ -31,19 +31,32 @@ type LabelDataFromSdk = {
   createTime?: number;
 };
 
+function sameStringSet(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  const setB = new Set(b);
+  for (const x of a) if (!setB.has(x)) return false;
+  return true;
+}
+
 /**
  * Pull labels from a Zalo account via SDK, upsert into DB, then recompute Friend.zaloLabels
  * for every friend of that account. Returns { labels, friendsUpdated }.
+ *
+ * Delta mode: pass `affectedUidsOnly` để chỉ rebuild Friend rows tương ứng (1-2 friends
+ * thay vì toàn bộ 5000). Dùng cho assign-thread / friends/:id/zalo-label — nơi chỉ có
+ * 1 friend đổi label. Skip CrmTag upsert + archive vì label definitions không đổi khi
+ * user chỉ gán/gỡ tag. Full sync path (cron / manual button) vẫn rebuild all.
  */
 export async function syncLabelsForAccount(
   accountId: string,
   orgId: string,
-  opts?: { seedLabelData?: LabelDataFromSdk[]; seedVersion?: number },
+  opts?: { seedLabelData?: LabelDataFromSdk[]; seedVersion?: number; affectedUidsOnly?: string[] },
 ): Promise<{
   labels: Array<{ id: number; text: string; color: string; emoji: string | null; assignedCount: number }>;
   friendsUpdated: number;
   version: number;
 }> {
+  const isDelta = Array.isArray(opts?.affectedUidsOnly);
   const api = zaloPool.getApi(accountId);
   if (!api) throw new Error('Zalo account chưa kết nối — không thể đồng bộ label');
   if (typeof api.getLabels !== 'function') throw new Error('SDK không hỗ trợ getLabels()');
@@ -64,38 +77,70 @@ export async function syncLabelsForAccount(
     logger.info(`[zalo-labels] Got ${labelData.length} labels from Zalo (version=${version}) for account ${accountId}`);
   }
 
-  // Upsert all labels from SDK → DB
+  // Upsert all labels from SDK → DB.
+  // Optimization: bulk read first, skip upsert nếu mọi field khớp với seed (delta path
+  // thường chỉ có 1-2 labels thay đổi conversations[]).
   const upserted = await prisma.$transaction(async (tx) => {
-    // Clear old labels not in current set
-    const incomingIds = labelData.map(l => Number(l.id));
-    await tx.zaloLabel.deleteMany({
-      where: { zaloAccountId: accountId, zaloLabelId: { notIn: incomingIds.length ? incomingIds : [-1] } },
+    // Delta mode KHÔNG delete: user assign chỉ thêm/bỏ uid khỏi conversations,
+    // không xoá label. Full sync mới handle label deletion (catches external changes).
+    if (!isDelta) {
+      const incomingIds = labelData.map(l => Number(l.id));
+      await tx.zaloLabel.deleteMany({
+        where: { zaloAccountId: accountId, zaloLabelId: { notIn: incomingIds.length ? incomingIds : [-1] } },
+      });
+    }
+
+    const existing = await tx.zaloLabel.findMany({
+      where: { zaloAccountId: accountId },
     });
+    const byLabelId = new Map(existing.map(l => [l.zaloLabelId, l]));
+
     const rows = [];
     for (const lbl of labelData) {
+      const id = Number(lbl.id);
+      const prev = byLabelId.get(id);
+      const nextConvs = lbl.conversations || [];
+      const nextText = lbl.text || '';
+      const nextTextKey = lbl.textKey || '';
+      const nextColor = lbl.color || '#999999';
+      const nextEmoji = lbl.emoji || null;
+      const nextOffset = lbl.offset ?? 0;
+
+      if (prev
+        && prev.text === nextText
+        && prev.textKey === nextTextKey
+        && prev.color === nextColor
+        && prev.emoji === nextEmoji
+        && prev.offset === nextOffset
+        && sameStringSet(Array.isArray(prev.conversations) ? prev.conversations as string[] : [], nextConvs)
+      ) {
+        rows.push(prev);  // No change — reuse existing row
+        continue;
+      }
+
       const row = await tx.zaloLabel.upsert({
-        where: { zaloAccountId_zaloLabelId: { zaloAccountId: accountId, zaloLabelId: Number(lbl.id) } },
+        where: { zaloAccountId_zaloLabelId: { zaloAccountId: accountId, zaloLabelId: id } },
         create: {
           orgId,
           zaloAccountId: accountId,
-          zaloLabelId: Number(lbl.id),
-          textKey: lbl.textKey || '',
-          text: lbl.text || '',
-          color: lbl.color || '#999999',
-          emoji: lbl.emoji || null,
-          offset: lbl.offset ?? 0,
+          zaloLabelId: id,
+          textKey: nextTextKey,
+          text: nextText,
+          color: nextColor,
+          emoji: nextEmoji,
+          offset: nextOffset,
           version,
-          conversations: lbl.conversations || [],
+          conversations: nextConvs,
           createTime: lbl.createTime ? BigInt(lbl.createTime) : null,
         },
         update: {
-          text: lbl.text || '',
-          textKey: lbl.textKey || '',
-          color: lbl.color || '#999999',
-          emoji: lbl.emoji || null,
-          offset: lbl.offset ?? 0,
+          text: nextText,
+          textKey: nextTextKey,
+          color: nextColor,
+          emoji: nextEmoji,
+          offset: nextOffset,
           version,
-          conversations: lbl.conversations || [],
+          conversations: nextConvs,
           syncedAt: new Date(),
         },
       });
@@ -125,87 +170,97 @@ export async function syncLabelsForAccount(
   // Bulk update friend.zaloLabels + mirror sang CrmTagsPerNick + log diff.
   // Mirror naming: "🔵 {labelText}" prefix. CrmTagGroup auto-tạo per Zalo account.
   // CrmTag.managedBy='zalo_sync' + sourceZaloLabelId để read-only enforcement.
-  const account = await prisma.zaloAccount.findUnique({
-    where: { id: accountId },
-    select: { displayName: true, phone: true },
-  });
-  const groupName = `Zalo - ${account?.displayName || 'Nick'}${account?.phone ? ` (${account.phone})` : ''}`;
-
-  // Upsert CrmTagGroup for this Zalo account (managedBy='zalo_sync')
-  const group = await prisma.crmTagGroup.upsert({
-    where: { zaloAccountId_managedBy: { zaloAccountId: accountId, managedBy: 'zalo_sync' } },
-    create: {
-      orgId,
-      name: groupName,
-      managedBy: 'zalo_sync',
-      zaloAccountId: accountId,
-    },
-    update: { name: groupName }, // rename khi displayName/phone đổi
-  });
-
-  // Upsert CrmTag per label — 3-step để xử lý legacy data từ PR2:
-  //  1. Find theo sourceZaloLabelId (PR3+ rows) → update
-  //  2. Else find theo (orgId, name) (legacy PR2 rows hoặc orphan) → claim + update fields
-  //  3. Else create mới
-  // Tránh upsert(where=sourceZaloLabelId) hit create branch khi legacy có same name
-  // → fail unique constraint (orgId, name).
-  for (const l of upserted) {
-    const tagName = `🔵 ${l.text}`;
-    const baseData = {
-      color: l.color || '#1976D2',
-      emoji: l.emoji || null,
-      groupId: group.id,
-      category: groupName,
-      managedBy: 'zalo_sync',
-      sourceZaloLabelId: l.zaloLabelId,
-      description: `Auto-sync từ Zalo label ID ${l.zaloLabelId}`,
-      archivedAt: null,
-    };
-
-    const bySource = await prisma.crmTag.findUnique({
-      where: { sourceZaloLabelId: l.zaloLabelId },
+  //
+  // Delta mode SKIP toàn bộ CrmTag block: assign không đổi label name/color/emoji,
+  // chỉ đổi conversations[]. CrmTag definitions giữ nguyên. Full sync (cron/manual)
+  // sẽ reconcile CrmTag cho external changes (label tạo/xoá/đổi tên trên Zalo Real).
+  if (!isDelta) {
+    const account = await prisma.zaloAccount.findUnique({
+      where: { id: accountId },
+      select: { displayName: true, phone: true },
     });
-    if (bySource) {
-      await prisma.crmTag.update({
-        where: { id: bySource.id },
-        data: { name: tagName, ...baseData },
+    const groupName = `Zalo - ${account?.displayName || 'Nick'}${account?.phone ? ` (${account.phone})` : ''}`;
+
+    // Upsert CrmTagGroup for this Zalo account (managedBy='zalo_sync')
+    const group = await prisma.crmTagGroup.upsert({
+      where: { zaloAccountId_managedBy: { zaloAccountId: accountId, managedBy: 'zalo_sync' } },
+      create: {
+        orgId,
+        name: groupName,
+        managedBy: 'zalo_sync',
+        zaloAccountId: accountId,
+      },
+      update: { name: groupName }, // rename khi displayName/phone đổi
+    });
+
+    // Upsert CrmTag per label — 3-step để xử lý legacy data từ PR2:
+    //  1. Find theo sourceZaloLabelId (PR3+ rows) → update
+    //  2. Else find theo (orgId, name) (legacy PR2 rows hoặc orphan) → claim + update fields
+    //  3. Else create mới
+    // Tránh upsert(where=sourceZaloLabelId) hit create branch khi legacy có same name
+    // → fail unique constraint (orgId, name).
+    for (const l of upserted) {
+      const tagName = `🔵 ${l.text}`;
+      const baseData = {
+        color: l.color || '#1976D2',
+        emoji: l.emoji || null,
+        groupId: group.id,
+        category: groupName,
+        managedBy: 'zalo_sync',
+        sourceZaloLabelId: l.zaloLabelId,
+        description: `Auto-sync từ Zalo label ID ${l.zaloLabelId}`,
+        archivedAt: null,
+      };
+
+      const bySource = await prisma.crmTag.findUnique({
+        where: { sourceZaloLabelId: l.zaloLabelId },
       });
-      continue;
+      if (bySource) {
+        await prisma.crmTag.update({
+          where: { id: bySource.id },
+          data: { name: tagName, ...baseData },
+        });
+        continue;
+      }
+
+      const byName = await prisma.crmTag.findUnique({
+        where: { orgId_name: { orgId, name: tagName } },
+      });
+      if (byName) {
+        // Claim legacy row (sourceZaloLabelId=null từ PR2) → upgrade managedBy
+        await prisma.crmTag.update({
+          where: { id: byName.id },
+          data: baseData,
+        });
+        continue;
+      }
+
+      await prisma.crmTag.create({
+        data: { orgId, name: tagName, ...baseData },
+      });
     }
 
-    const byName = await prisma.crmTag.findUnique({
-      where: { orgId_name: { orgId, name: tagName } },
-    });
-    if (byName) {
-      // Claim legacy row (sourceZaloLabelId=null từ PR2) → upgrade managedBy
-      await prisma.crmTag.update({
-        where: { id: byName.id },
-        data: baseData,
-      });
-      continue;
-    }
-
-    await prisma.crmTag.create({
-      data: { orgId, name: tagName, ...baseData },
+    // Archive CrmTag tương ứng với label bị xoá (không còn trong upserted set)
+    const currentLabelIds = upserted.map(l => l.zaloLabelId);
+    await prisma.crmTag.updateMany({
+      where: {
+        orgId,
+        managedBy: 'zalo_sync',
+        groupId: group.id,
+        sourceZaloLabelId: { notIn: currentLabelIds.length ? currentLabelIds : [-1] },
+        archivedAt: null,
+      },
+      data: { archivedAt: new Date() },
     });
   }
 
-  // Archive CrmTag tương ứng với label bị xoá (không còn trong upserted set)
-  const currentLabelIds = upserted.map(l => l.zaloLabelId);
-  await prisma.crmTag.updateMany({
-    where: {
-      orgId,
-      managedBy: 'zalo_sync',
-      groupId: group.id,
-      sourceZaloLabelId: { notIn: currentLabelIds.length ? currentLabelIds : [-1] },
-      archivedAt: null,
-    },
-    data: { archivedAt: new Date() },
-  });
-
-  // Bulk update friend.zaloLabels + diff log
+  // Bulk update friend.zaloLabels + diff log.
+  // Delta mode: chỉ touch friend rows có zaloUidInNick trong affectedUidsOnly
+  // (thường 1 friend cho assign-thread). Full mode: rebuild tất cả friends của account.
   const friendsFull = await prisma.friend.findMany({
-    where: { zaloAccountId: accountId },
+    where: isDelta
+      ? { zaloAccountId: accountId, zaloUidInNick: { in: opts!.affectedUidsOnly! } }
+      : { zaloAccountId: accountId },
     select: { id: true, zaloUidInNick: true, contactId: true, zaloLabels: true, crmTagsPerNick: true },
   });
   let friendsUpdated = 0;
@@ -479,13 +534,18 @@ export async function zaloLabelsRoutes(app: FastifyInstance): Promise<void> {
       // ── Critical: dùng response từ updateLabels làm seed cho sync.
       // KHÔNG re-pull getLabels() vì Zalo có eventual consistency (1-3s lag) →
       // getLabels có thể trả state CŨ chưa bao gồm label vừa update → strip tag
-      // mới khỏi Friend.crmTagsPerNick → UI flicker tag mất. ──
+      // mới khỏi Friend.crmTagsPerNick → UI flicker tag mất.
+      //
+      // Delta mode: chỉ rebuild Friend row của threadId vừa đổi (1 friend thay vì
+      // toàn bộ 5000) → assign-thread response < 100ms thay vì 25-50s. Loại bỏ race
+      // window mà fetchConversations có thể đè optimistic UI. ──
       const seedLabelData = Array.isArray(writeRes?.labelData) ? writeRes!.labelData : labelData;
       const seedVersion = writeRes?.version ?? version;
       recentAssignAt.set(account.id, Date.now());  // grace window cho touch sau này
       const result = await syncLabelsForAccount(account.id, account.orgId, {
         seedLabelData: seedLabelData as LabelDataFromSdk[],
         seedVersion,
+        affectedUidsOnly: [threadId],
       });
       return { ok: true, assignedLabelId: newLabelId, ...result };
     } catch (err) {
@@ -544,12 +604,14 @@ export async function zaloLabelsRoutes(app: FastifyInstance): Promise<void> {
       // Push back to Zalo
       const writeRes = await api.updateLabels({ labelData, version }) as { labelData?: LabelDataFromSdk[]; version?: number } | undefined;
 
-      // Re-sync DB dùng seed từ updateLabels response (authoritative, no eventual-consistency lag)
+      // Re-sync DB dùng seed từ updateLabels response (authoritative, no eventual-consistency lag).
+      // Delta mode: chỉ rebuild friend này (cùng lý do với assign-thread).
       const seedLabelData = Array.isArray(writeRes?.labelData) ? writeRes!.labelData : labelData;
       recentAssignAt.set(friend.zaloAccountId, Date.now());
       const result = await syncLabelsForAccount(friend.zaloAccountId, friend.orgId, {
         seedLabelData: seedLabelData as LabelDataFromSdk[],
         seedVersion: writeRes?.version ?? version,
+        affectedUidsOnly: [uid],
       });
       return { ok: true, assignedLabelId: newLabelId, ...result };
     } catch (err) {
