@@ -1,10 +1,16 @@
 <template>
   <section class="timeline-section">
-    <!-- Header: title + count + filter chip + ⚙ settings -->
+    <!-- Header: title + count + today badge + filter chip + ⚙ settings -->
     <div class="tl-header">
       <div class="tl-title">
         📋 Timeline KH
         <span v-if="rootNoteCount" class="tl-count">#{{ rootNoteCount }}</span>
+        <button
+          v-if="todayCount > 0"
+          class="today-badge"
+          :title="`${todayCount} hoạt động hôm nay — click để xem chi tiết`"
+          @click="goToFullPage"
+        >🕐 {{ todayCount }} hôm nay</button>
       </div>
       <div class="tl-controls">
         <div class="filter-chips">
@@ -217,6 +223,13 @@ const timeline = useTimeline(() => props.contactId);
 const { items, loading, loadingMore, hasMore } = timeline;
 const rootNoteCount = computed(() => timeline.rootNoteCount.value);
 
+// Today badge: count items có createdAt = hôm nay
+const todayCount = computed(() => {
+  const now = new Date();
+  const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  return items.value.filter(i => new Date(i.createdAt).getTime() >= startOfDay).length;
+});
+
 // Note composer state — Enter để lưu, Shift+Enter để xuống dòng (mặc định, không cần toggle)
 const rootDraft = ref('');
 
@@ -353,11 +366,23 @@ async function onEdit(noteId: string, newBody: string) {
   }
 }
 async function onDelete(noteId: string) {
-  if (!confirm('Xoá ghi chú này?')) return;
+  // Backup nội dung trước khi xoá để hoàn tác (re-create note với same body + parentId)
+  const targetNote = items.value.find(i => i.type === 'note' && (i.data as Note).id === noteId)?.data as Note | undefined;
   const ok = await remove(noteId);
   if (ok) {
-    toast.success('Đã xoá');
     await timeline.refresh(effectiveCategories.value);
+    // Undo 5s — re-create note với original body + parentId
+    if (targetNote) {
+      toast.undo('Đã xoá ghi chú', async () => {
+        const restored = await create(targetNote.body, targetNote.parentNoteId);
+        if (restored) {
+          toast.success('✓ Đã khôi phục');
+          await timeline.refresh(effectiveCategories.value);
+        } else {
+          toast.error('Khôi phục thất bại');
+        }
+      });
+    }
   }
 }
 
@@ -451,6 +476,20 @@ defineExpose({ rootCount: rootNoteCount });
   font-weight: 600;
   text-transform: none;
 }
+.today-badge {
+  background: linear-gradient(90deg, #fff3e0, #fff8e1);
+  color: #c43a00;
+  border: 1px solid #ffb74d;
+  border-radius: 11px;
+  font-size: 10.5px;
+  font-weight: 700;
+  padding: 1px 9px;
+  cursor: pointer;
+  text-transform: none;
+  letter-spacing: 0;
+  transition: filter 0.12s;
+}
+.today-badge:hover { filter: brightness(0.96); }
 .tl-controls {
   display: flex;
   align-items: center;

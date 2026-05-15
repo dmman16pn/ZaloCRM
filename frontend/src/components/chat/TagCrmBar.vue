@@ -239,7 +239,14 @@ async function onCreateNewTag() {
 }
 
 async function removeTag(tag: string) {
-  await persist(tags.value.filter(t => t !== tag));
+  const newTags = tags.value.filter(t => t !== tag);
+  await persist(newTags);
+  // Undo 5s — restore tag vào đúng vị trí cũ
+  toast.undo(`Đã gỡ tag "${tag}"`, async () => {
+    if (!tags.value.includes(tag)) {
+      await persist([...tags.value, tag]);
+    }
+  });
 }
 
 async function persist(next: string[]) {

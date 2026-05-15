@@ -886,7 +886,18 @@ async function onCareStatusChange(value: string) {
     const { api: apiClient } = await import('@/api/index');
     // Backend dùng PUT /contacts/:id (full update), KHÔNG có PATCH.
     await apiClient.put(`/contacts/${contactId}`, { status: value });
-    toast.success(`Đã đổi trạng thái → ${value}`);
+    // Undo toast 5s — click "Hoàn tác" → revert về status cũ
+    toast.undo(`Đã đổi trạng thái → ${value}`, async () => {
+      try {
+        await apiClient.put(`/contacts/${contactId}`, { status: prev || null });
+        if (props.conversation?.contact) {
+          (props.conversation.contact as { status?: string | null }).status = prev as string | null;
+        }
+        toast.success(`✓ Đã hoàn tác về "${prev || 'không có'}"`);
+      } catch {
+        toast.error('Hoàn tác thất bại');
+      }
+    });
     emit('care-status-changed', value);
   } catch (err: any) {
     // Rollback

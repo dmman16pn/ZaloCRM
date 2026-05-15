@@ -6,8 +6,32 @@
         <strong>{{ actionLabel }}</strong>
         <span v-if="detailsLine" class="act-details" v-html="detailsLine"></span>
       </div>
+
+      <!-- Diff view 2-line cho field text dài (customer_update changes object) -->
+      <div v-if="diffEntries.length" class="diff-block">
+        <div v-for="entry in diffEntries" :key="entry.field" class="diff-entry">
+          <span class="diff-field">{{ fieldLabel(entry.field) }}:</span>
+          <div class="diff-vals">
+            <span v-if="entry.old !== null && entry.old !== ''" class="diff-val old">{{ entry.old }}</span>
+            <span v-else class="diff-val null">— trống —</span>
+            <span class="diff-arrow">→</span>
+            <span v-if="entry.new !== null && entry.new !== ''" class="diff-val new">{{ entry.new }}</span>
+            <span v-else class="diff-val null">— trống —</span>
+          </div>
+        </div>
+      </div>
       <div class="act-meta">
-        <span class="act-actor" :title="actorTooltip">{{ actorLabel }}</span>
+        <v-menu open-on-hover location="bottom start" :open-delay="200" :close-delay="100">
+          <template #activator="{ props: actProps }">
+            <span v-bind="actProps" class="act-actor" :title="actorTooltip">{{ actorLabel }}</span>
+          </template>
+          <MentionPopover
+            :actor-type="item.actorType"
+            :user="item.user"
+            :bot-name="item.botName"
+            :system-source="item.systemSource"
+          />
+        </v-menu>
         <span class="act-sep">·</span>
         <time class="act-time" :title="absTime">{{ relTime }}</time>
       </div>
@@ -19,6 +43,7 @@
 import { computed } from 'vue';
 import type { ActivityLogItem } from '@/composables/use-timeline';
 import { CATEGORY_META, ACTION_META, categoryOf, type ActivityCategory } from '@/constants/activity-types';
+import MentionPopover from './MentionPopover.vue';
 
 const props = defineProps<{ item: ActivityLogItem }>();
 
@@ -90,11 +115,7 @@ const detailsLine = computed(() => {
   if (action === 'appointment_reschedule' && d.oldDate && d.newDate) {
     return `: ${new Date(String(d.oldDate)).toLocaleDateString('vi-VN')} → ${new Date(String(d.newDate)).toLocaleDateString('vi-VN')}`;
   }
-  // Customer update: show count of changed fields
-  if (action === 'customer_update' && d.changes && typeof d.changes === 'object') {
-    const fields = Object.keys(d.changes as Record<string, unknown>);
-    return `: ${fields.length} trường (${fields.slice(0, 3).join(', ')}${fields.length > 3 ? '...' : ''})`;
-  }
+  // Customer update: KHÔNG show inline ở đây — render qua diff-block 2-line bên dưới
   // Friend alias change
   if (action === 'friend_alias_change' && (d.old !== undefined || d.new !== undefined)) {
     return `: "${escape(String(d.old || ''))}" → "${escape(String(d.new || ''))}"`;
@@ -105,6 +126,46 @@ const detailsLine = computed(() => {
 function escape(s: string): string {
   return s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] || c));
 }
+
+/* Diff entries — render block 2-line cho customer_update changes (field text dài).
+ * Format: birthday/date theo locale VN, các field khác giữ raw. */
+const FIELD_LABELS: Record<string, string> = {
+  fullName: 'Tên đầy đủ',
+  crmName: 'Tên gợi nhớ',
+  phone: 'SĐT',
+  email: 'Email',
+  gender: 'Giới tính',
+  birthDate: 'Ngày sinh',
+  addressLine: 'Địa chỉ',
+  occupation: 'Nghề nghiệp',
+  assignedUserId: 'Người phụ trách',
+};
+function fieldLabel(field: string): string {
+  return FIELD_LABELS[field] || field;
+}
+function formatVal(field: string, val: unknown): string {
+  if (val === null || val === undefined) return '';
+  if (field === 'birthDate' && typeof val === 'string') {
+    try {
+      const d = new Date(val);
+      return d.toLocaleDateString('vi-VN');
+    } catch { return String(val); }
+  }
+  if (field === 'gender') {
+    const map: Record<string, string> = { male: 'Nam', female: 'Nữ', other: 'Khác' };
+    return map[String(val)] || String(val);
+  }
+  return String(val);
+}
+const diffEntries = computed<Array<{ field: string; old: string; new: string }>>(() => {
+  if (props.item.action !== 'customer_update') return [];
+  const changes = (props.item.details?.changes || {}) as Record<string, { old: unknown; new: unknown }>;
+  return Object.entries(changes).map(([field, v]) => ({
+    field,
+    old: formatVal(field, v.old),
+    new: formatVal(field, v.new),
+  }));
+});
 </script>
 
 <style scoped>
@@ -154,10 +215,70 @@ function escape(s: string): string {
 .act-sep { color: var(--smax-grey-300); }
 .act-actor {
   font-weight: 500;
-  cursor: help;
+  cursor: pointer;
+  border-radius: 3px;
+  padding: 0 3px;
+  transition: background 0.12s;
+}
+.act-actor:hover {
+  background: var(--smax-primary-soft, #e3f2fd);
+  color: var(--smax-primary, #2962ff);
 }
 
-/* Diff styling */
+/* Diff block 2-line cho customer_update */
+.diff-block {
+  margin-top: 4px;
+  background: var(--smax-grey-50, #fafbfc);
+  border-left: 2px solid var(--smax-grey-200);
+  padding: 4px 8px;
+  border-radius: 0 4px 4px 0;
+}
+.diff-entry {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  font-size: 11.5px;
+  padding: 2px 0;
+}
+.diff-field {
+  font-weight: 600;
+  color: var(--smax-grey-700);
+  flex-shrink: 0;
+  min-width: 80px;
+}
+.diff-vals {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex: 1;
+  flex-wrap: wrap;
+}
+.diff-val {
+  padding: 1px 6px;
+  border-radius: 4px;
+  word-break: break-word;
+}
+.diff-val.old {
+  background: rgba(244, 67, 54, 0.08);
+  color: #c62828;
+  text-decoration: line-through;
+}
+.diff-val.new {
+  background: rgba(0, 200, 83, 0.1);
+  color: #00897b;
+  font-weight: 600;
+}
+.diff-val.null {
+  font-style: italic;
+  color: var(--smax-grey-400);
+}
+.diff-arrow {
+  color: var(--smax-grey-400);
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+/* Diff styling cho inline (act-details — status/score/tag) */
 .act-details :deep(.diff-old) {
   text-decoration: line-through;
   color: var(--smax-grey-500);
