@@ -636,6 +636,19 @@ async function touchAccountSync(accountId: string, threadId?: string | null) {
   }
 }
 
+/* Fire-and-forget: pull fresh profile (gender, phone, birthday, hasZalo, zaloDisplayName,
+ * avatar) từ Zalo SDK khi user click conv. Backend cooldown 5min/conv.
+ * Patch chỉ field còn NULL trong DB — không đè giá trị sale đã chỉnh. */
+async function touchConversationProfile(convId: string) {
+  if (!convId) return;
+  try {
+    const { api: apiClient } = await import('@/api/index');
+    await apiClient.post(`/conversations/${convId}/touch-profile`);
+  } catch {
+    // Silent — touch profile chỉ là background enrichment
+  }
+}
+
 // Watch conversation switch → sync labels (cooldown 5s server-side) + fetch master list cho thread hiện tại
 watch(() => props.conversation?.id, (newId, oldId) => {
   if (!newId || newId === oldId) return;
@@ -644,6 +657,7 @@ watch(() => props.conversation?.id, (newId, oldId) => {
   if (accId) {
     void fetchAllLabels(accId, threadId);  // BE trả assignedTo flag cho thread hiện tại
     void touchAccountSync(accId, threadId);
+    void touchConversationProfile(newId);  // refresh contact profile from SDK
   }
 }, { immediate: true });
 
