@@ -4,9 +4,11 @@
     <div v-if="loading" class="sip-skeleton">
       <div class="sk-line sk-line-big"></div>
       <div class="sk-line sk-line-small"></div>
-      <div class="sk-grid">
-        <div class="sk-cell"></div><div class="sk-cell"></div>
-        <div class="sk-cell"></div><div class="sk-cell"></div>
+      <div class="sk-rows">
+        <div class="sk-row"></div>
+        <div class="sk-row"></div>
+        <div class="sk-row"></div>
+        <div class="sk-row"></div>
       </div>
       <div class="sk-line sk-line-tiny"></div>
       <div class="sk-line sk-line-tiny"></div>
@@ -35,35 +37,31 @@
         Cập nhật {{ relativeTime(data.computedAt) }}
       </div>
 
-      <!-- 2x2 grid 4 chiều -->
-      <div class="sip-grid">
-        <div class="sip-cell eng" :title="`Tương tác: ${Math.round(data.engagement)}/100`">
-          <div class="sip-cell-icon">🗨️</div>
-          <div class="sip-cell-body">
-            <span class="sip-cell-label">Tương tác</span>
-            <span class="sip-cell-val">{{ Math.round(data.engagement) }}<span class="sip-cell-bar" :style="{ '--w': data.engagement + '%' }"></span></span>
-          </div>
+      <!-- 4 chiều — vertical full-width rows (mỗi row icon + label + bar + value) -->
+      <div class="sip-dims">
+        <div class="sip-dim eng" :title="`Tương tác: ${Math.round(data.engagement)}/100`">
+          <span class="sip-dim-icon">🗨️</span>
+          <span class="sip-dim-label">Tương tác</span>
+          <span class="sip-dim-bar"><span :style="{ width: data.engagement + '%' }"></span></span>
+          <span class="sip-dim-val">{{ Math.round(data.engagement) }}</span>
         </div>
-        <div class="sip-cell int" :title="`Ý định: ${Math.round(data.intent)}/100`">
-          <div class="sip-cell-icon">🎯</div>
-          <div class="sip-cell-body">
-            <span class="sip-cell-label">Ý định</span>
-            <span class="sip-cell-val">{{ Math.round(data.intent) }}<span class="sip-cell-bar" :style="{ '--w': data.intent + '%' }"></span></span>
-          </div>
+        <div class="sip-dim int" :title="`Ý định mua: ${Math.round(data.intent)}/100`">
+          <span class="sip-dim-icon">🎯</span>
+          <span class="sip-dim-label">Ý định mua</span>
+          <span class="sip-dim-bar"><span :style="{ width: data.intent + '%' }"></span></span>
+          <span class="sip-dim-val">{{ Math.round(data.intent) }}</span>
         </div>
-        <div class="sip-cell fit" :title="`Phù hợp: ${Math.round(data.fit)}/100`">
-          <div class="sip-cell-icon">🧭</div>
-          <div class="sip-cell-body">
-            <span class="sip-cell-label">Phù hợp</span>
-            <span class="sip-cell-val">{{ Math.round(data.fit) }}<span class="sip-cell-bar" :style="{ '--w': data.fit + '%' }"></span></span>
-          </div>
+        <div class="sip-dim fit" :title="`Phù hợp: ${Math.round(data.fit)}/100`">
+          <span class="sip-dim-icon">🧭</span>
+          <span class="sip-dim-label">Phù hợp</span>
+          <span class="sip-dim-bar"><span :style="{ width: data.fit + '%' }"></span></span>
+          <span class="sip-dim-val">{{ Math.round(data.fit) }}</span>
         </div>
-        <div class="sip-cell vel" :title="`Đà tăng: ${Math.round(data.velocity)}/100`">
-          <div class="sip-cell-icon">⚡</div>
-          <div class="sip-cell-body">
-            <span class="sip-cell-label">Đà tăng</span>
-            <span class="sip-cell-val">{{ Math.round(data.velocity) }}<span class="sip-cell-bar" :style="{ '--w': data.velocity + '%' }"></span></span>
-          </div>
+        <div class="sip-dim vel" :title="`Đà tăng nhiệt: ${Math.round(data.velocity)}/100`">
+          <span class="sip-dim-icon">⚡</span>
+          <span class="sip-dim-label">Đà tăng</span>
+          <span class="sip-dim-bar"><span :style="{ width: data.velocity + '%' }"></span></span>
+          <span class="sip-dim-val">{{ Math.round(data.velocity) }}</span>
         </div>
       </div>
 
@@ -72,11 +70,11 @@
         <div class="sip-signals-head">
           <span class="sip-signals-title">📜 Lịch sử ± gần nhất</span>
           <button
-            v-if="(data.signals?.length ?? 0) > 3"
+            v-if="(data.signals?.length ?? 0) > 10"
             class="sip-signals-expand"
             @click="$emit('view-history')"
           >
-            Xem thêm →
+            Xem toàn bộ ({{ data.signals?.length }}) →
           </button>
         </div>
         <div v-if="recentSignals.length === 0" class="sip-signals-empty">
@@ -138,12 +136,12 @@ async function fetchBreakdown(id: string | null) {
 
 watch(() => props.friendId, fetchBreakdown, { immediate: true });
 
-// 3 signals gần nhất theo appliedAt DESC
+// 10 signals gần nhất theo appliedAt DESC (tab có space rộng, không cần modal cho 90% case)
 const recentSignals = computed(() => {
   const list = data.value?.signals ?? [];
   return [...list]
     .sort((a, b) => new Date(b.appliedAt).getTime() - new Date(a.appliedAt).getTime())
-    .slice(0, 3);
+    .slice(0, 10);
 });
 
 // Trend = tổng delta của signals trong 7 ngày
@@ -227,84 +225,61 @@ function relativeTime(iso: string | null): string {
   margin-top: -2px;
 }
 
-/* 2x2 grid */
-.sip-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 4px;
-}
-.sip-cell {
-  background: var(--smax-grey-50, #f8f9fb);
-  border: 1px solid var(--smax-grey-100, #eef0f4);
-  border-radius: 8px;
-  padding: 5px 6px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 34px;
-  min-width: 0;
-}
-.sip-cell-icon {
-  width: 22px;
-  height: 22px;
-  border-radius: 5px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 12px;
-  flex-shrink: 0;
-}
-.sip-cell.eng .sip-cell-icon { background: #dbeafe; }
-.sip-cell.int .sip-cell-icon { background: #d1fae5; }
-.sip-cell.fit .sip-cell-icon { background: #ede9fe; }
-.sip-cell.vel .sip-cell-icon { background: #fef3c7; }
-.sip-cell-body {
+/* 4 chiều — vertical rows full-width (mỗi row 1 dòng) */
+.sip-dims {
   display: flex;
   flex-direction: column;
-  gap: 1px;
-  min-width: 0;
-  flex: 1;
+  gap: 8px;
+  margin-top: 2px;
 }
-.sip-cell-label {
-  font-size: 9.5px;
-  color: var(--smax-grey-600, #5a6478);
-  text-transform: uppercase;
-  letter-spacing: 0.3px;
+.sip-dim {
+  display: grid;
+  grid-template-columns: 22px 70px 1fr 28px;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 2px;
+  min-height: 26px;
+}
+.sip-dim-icon {
+  font-size: 14px;
+  text-align: center;
+  line-height: 1;
+}
+.sip-dim-label {
+  font-size: 11.5px;
   font-weight: 600;
-  line-height: 1.1;
+  color: var(--smax-grey-700, #3d4456);
+  letter-spacing: 0.1px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.sip-cell-val {
-  font-size: 13px;
-  font-weight: 700;
-  color: var(--smax-grey-900, #1a1f2e);
-  line-height: 1;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-.sip-cell-bar {
-  display: inline-block;
-  width: 26px;
-  height: 3px;
-  background: var(--smax-grey-200, #e1e4eb);
-  border-radius: 2px;
+.sip-dim-bar {
+  height: 6px;
+  background: var(--smax-grey-100, #eef0f4);
+  border-radius: 4px;
   position: relative;
   overflow: hidden;
 }
-.sip-cell-bar::after {
-  content: "";
+.sip-dim-bar > span {
   position: absolute;
   inset: 0;
-  width: var(--w, 0%);
-  border-radius: 2px;
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.3s ease;
 }
-.sip-cell.eng .sip-cell-bar::after { background: #3b82f6; }
-.sip-cell.int .sip-cell-bar::after { background: #10b981; }
-.sip-cell.fit .sip-cell-bar::after { background: #8b5cf6; }
-.sip-cell.vel .sip-cell-bar::after { background: #f59e0b; }
+.sip-dim.eng .sip-dim-bar > span { background: linear-gradient(90deg, #60a5fa, #3b82f6); }
+.sip-dim.int .sip-dim-bar > span { background: linear-gradient(90deg, #34d399, #10b981); }
+.sip-dim.fit .sip-dim-bar > span { background: linear-gradient(90deg, #a78bfa, #8b5cf6); }
+.sip-dim.vel .sip-dim-bar > span { background: linear-gradient(90deg, #fbbf24, #f59e0b); }
+.sip-dim-val {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--smax-grey-900, #1a1f2e);
+  font-family: 'SF Mono', Monaco, monospace;
+  text-align: right;
+  line-height: 1;
+}
 
 /* Signals */
 .sip-signals { margin-top: 2px; }
@@ -385,17 +360,17 @@ function relativeTime(iso: string | null): string {
 .sk-line-big { width: 50%; height: 20px; }
 .sk-line-small { width: 70%; height: 10px; }
 .sk-line-tiny { width: 100%; height: 14px; }
-.sk-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 4px;
+.sk-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
-.sk-cell {
-  height: 34px;
+.sk-row {
+  height: 26px;
   background: linear-gradient(90deg, #eef0f4 0%, #f8f9fb 50%, #eef0f4 100%);
   background-size: 200% 100%;
   animation: skeleton-shimmer 1.4s ease-in-out infinite;
-  border-radius: 8px;
+  border-radius: 6px;
 }
 @keyframes skeleton-shimmer {
   0% { background-position: 200% 0; }

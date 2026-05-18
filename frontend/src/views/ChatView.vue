@@ -302,11 +302,6 @@ watch(searchQuery, () => {
 .smax-chat-grid:not(:has(.smax-info-col)) {
   grid-template-columns: 290px 380px 1fr;
 }
-/* Khi info-panel bật score (split 2 cột thật) → cột 4 nở rộng từ 350→520px,
- * cột msg co lại tương ứng. Giữ filter-rail + conv-list không đổi. */
-.smax-chat-grid:has(.smax-info-col.score-expanded) {
-  grid-template-columns: 290px 380px 1fr 520px;
-}
 /* Khi filter rail collapsed → col 1 = 56px */
 .smax-chat-grid:has(.filter-rail.collapsed) {
   grid-template-columns: 56px 380px 1fr 350px;
@@ -338,17 +333,11 @@ watch(searchQuery, () => {
   .smax-chat-grid:not(:has(.smax-info-col)) {
     grid-template-columns: 260px 340px 1fr;
   }
-  .smax-chat-grid:has(.smax-info-col.score-expanded) {
-    grid-template-columns: 260px 340px 1fr 480px;
-  }
   .smax-chat-grid:has(.filter-rail.collapsed) {
     grid-template-columns: 56px 340px 1fr 310px;
   }
   .smax-chat-grid:has(.filter-rail.collapsed):not(:has(.smax-info-col)) {
     grid-template-columns: 56px 340px 1fr;
-  }
-  .smax-chat-grid:has(.filter-rail.collapsed):has(.smax-info-col.score-expanded) {
-    grid-template-columns: 56px 340px 1fr 480px;
   }
 }
 /* Tight: filter rail vẫn show nhưng compact */
@@ -357,17 +346,11 @@ watch(searchQuery, () => {
   .smax-chat-grid:not(:has(.smax-info-col)) {
     grid-template-columns: 240px 320px 1fr;
   }
-  .smax-chat-grid:has(.smax-info-col.score-expanded) {
-    grid-template-columns: 240px 320px 1fr 440px;
-  }
   .smax-chat-grid:has(.filter-rail.collapsed) {
     grid-template-columns: 56px 320px 1fr 280px;
   }
   .smax-chat-grid:has(.filter-rail.collapsed):not(:has(.smax-info-col)) {
     grid-template-columns: 56px 320px 1fr;
-  }
-  .smax-chat-grid:has(.filter-rail.collapsed):has(.smax-info-col.score-expanded) {
-    grid-template-columns: 56px 320px 1fr 440px;
   }
 }
 /* < 1200: drop filter rail */

@@ -1,56 +1,32 @@
 <template>
-  <aside class="info-panel" :class="{ 'score-expanded': scoreSplitActive }">
+  <aside class="info-panel">
     <!-- ════════ HEADER pinned (avatar + lead score overlay + care-status) ════════ -->
-    <header class="ip-header" :class="{ 'split-mode': scoreSplitActive }">
+    <header class="ip-header">
       <button class="ip-close" title="Đóng" @click="$emit('close')">×</button>
-
-      <!-- Gear toggle: 1-click bật/tắt bảng điểm chi tiết -->
-      <button
-        class="ip-gear"
-        :class="{ active: showScorePanel }"
-        :title="showScorePanel ? 'Ẩn bảng điểm' : 'Hiển thị bảng điểm chi tiết'"
-        @click="toggleScorePanel"
-      >⚙</button>
-
-      <!-- LEFT BLOCK: avatar + name/UID/status. Split-mode → row horizontal,
-           otherwise → centered column (mặc định). -->
-      <div class="ip-header-left">
-        <div class="ip-avatar-wrap">
-          <!-- KHÔNG truyền :gender — gender badge ♂/♀ sẽ đè lên lead-score-badge. -->
-          <Avatar
-            :src="props.contact?.avatarUrl"
-            :name="headerFullName"
-            :size="scoreSplitActive ? 52 : 64"
-            :gradient-seed="props.contact?.id || headerFullName"
-            class="ip-avatar-big"
-          />
-          <span
-            v-if="props.contact"
-            class="lead-score-badge"
-            :class="leadScoreTier"
-            :title="`Lead score: ${props.contact.leadScore ?? 0} điểm${props.contact.lastActivity ? ' · cập nhật ' + relativeTime(props.contact.lastActivity) : ''}`"
-          >
-            ⭐ {{ props.contact.leadScore ?? 0 }}
-          </span>
-        </div>
-        <div class="ip-info-stack">
-          <div class="ip-name-line" :title="headerFullName">{{ headerFullName }}</div>
-          <div v-if="props.contact?.zaloUid" class="ip-id">UID: {{ props.contact.zaloUid }}</div>
-          <div class="ip-care-row">
-            <CareStatusBadge
-              :model-value="(form.status as string | null) || 'new'"
-              @update:model-value="onChangeCareStatus"
-            />
-          </div>
-        </div>
+      <div class="ip-avatar-wrap">
+        <!-- KHÔNG truyền :gender — gender badge ♂/♀ sẽ đè lên lead-score-badge. -->
+        <Avatar
+          :src="props.contact?.avatarUrl"
+          :name="headerFullName"
+          :size="64"
+          :gradient-seed="props.contact?.id || headerFullName"
+          class="ip-avatar-big"
+        />
+        <span
+          v-if="props.contact"
+          class="lead-score-badge"
+          :class="leadScoreTier"
+          :title="`Lead score: ${props.contact.leadScore ?? 0} điểm${props.contact.lastActivity ? ' · cập nhật ' + relativeTime(props.contact.lastActivity) : ''}`"
+        >
+          ⭐ {{ props.contact.leadScore ?? 0 }}
+        </span>
       </div>
-
-      <!-- RIGHT COLUMN: score inline panel (chỉ render khi split-mode active) -->
-      <div v-if="scoreSplitActive" class="ip-header-right">
-        <ScoreInlinePanel
-          :friend-id="props.friendId ?? null"
-          :stage-label="scoreStageLabel"
-          @view-history="openScoreHistory"
+      <div class="ip-name-line" :title="headerFullName">{{ headerFullName }}</div>
+      <div v-if="props.contact?.zaloUid" class="ip-id">UID: {{ props.contact.zaloUid }}</div>
+      <div class="ip-care-row">
+        <CareStatusBadge
+          :model-value="(form.status as string | null) || 'new'"
+          @update:model-value="onChangeCareStatus"
         />
       </div>
     </header>
@@ -80,6 +56,18 @@
       >
         <span class="ic">📅</span> Lịch hẹn
         <span v-if="activityBadgeCount || pendingAptBump" class="tab-badge">{{ (activityBadgeCount ?? 0) + pendingAptBump }}</span>
+      </button>
+      <button
+        v-if="props.friendId"
+        class="ip-tab"
+        :class="{ active: activeTab === 'score' }"
+        :title="`Điểm KH: ${props.contact?.leadScore ?? 0}`"
+        @click="activeTab = 'score'"
+      >
+        <span class="ic">⭐</span> Điểm
+        <span v-if="(props.contact?.leadScore ?? 0) > 0" class="tab-badge tab-badge-score">
+          {{ props.contact?.leadScore }}
+        </span>
       </button>
     </nav>
 
@@ -343,6 +331,19 @@
           <p>Chưa có hoạt động — sau khi có conv tin nhắn, AI sẽ tự tóm tắt + phân tích cảm xúc.</p>
         </div>
       </div>
+
+      <!-- ══════ TAB 4: ĐIỂM (Lead Scoring) ══════ -->
+      <div v-show="activeTab === 'score'" class="tab-pane tab-pane-score">
+        <ScoreInlinePanel
+          v-if="props.friendId"
+          :friend-id="props.friendId"
+          :stage-label="scoreStageLabel"
+          @view-history="openScoreHistory"
+        />
+        <div v-else class="tab-empty">
+          <p>Tab Điểm chỉ áp dụng cho hội thoại 1-1 (có Friend).</p>
+        </div>
+      </div>
     </div>
 
     <!-- Score history modal (overlay full screen, Teleport to body) -->
@@ -404,7 +405,7 @@ const {
 );
 
 // ════════ Tab state (persist sang tab khác KH khác) ════════
-const activeTab = ref<'profile' | 'relations' | 'activity'>('profile');
+const activeTab = ref<'profile' | 'relations' | 'activity' | 'score'>('profile');
 
 // Info section auto-collapse: mặc định compact (chỉ Tên + SĐT). Click tab Hồ Sơ
 // hoặc bấm "Xem đầy đủ" → expand, đếm 5s rồi tự thu gọn lại.
@@ -464,24 +465,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('appointment-created', onGlobalAppointmentCreated);
 });
 
-// ════════ Score panel toggle ═══════════════════════════════════════════════
-// Click gear icon → toggle ngay (không dropdown). Persist localStorage.
-const SCORE_PANEL_LS_KEY = 'zalocrm.scorePanel.show';
-const showScorePanel = ref<boolean>((() => {
-  try { return localStorage.getItem(SCORE_PANEL_LS_KEY) === '1'; } catch { return false; }
-})());
-watch(showScorePanel, (v) => {
-  try { localStorage.setItem(SCORE_PANEL_LS_KEY, v ? '1' : '0'); } catch { /* ignore */ }
-});
-function toggleScorePanel() {
-  showScorePanel.value = !showScorePanel.value;
-}
-
-// Split mode chỉ active khi user bật toggle VÀ có friendId (user thread). Group chat
-// hoặc contact chưa có Friend row → fallback về 1 cột mặc định.
-const scoreSplitActive = computed(() => showScorePanel.value && !!props.friendId);
-
-// Score history modal
+// ════════ Score history modal (mở từ tab Điểm "Xem toàn bộ →") ════════
 const scoreHistoryOpen = ref(false);
 function openScoreHistory() {
   scoreHistoryOpen.value = true;
@@ -693,58 +677,16 @@ function relativeTime(dateStr: string) {
   position: relative;
   flex-shrink: 0;
 }
-/* Split mode: 2 cột thật — trái avatar+name+status (180px), phải score panel.
- * Hoạt động nhờ .info-panel.score-expanded widen cột 4 thành ~540px qua grid override. */
-.ip-header.split-mode {
-  display: grid;
-  grid-template-columns: 180px 1fr;
-  gap: 14px;
-  padding: 12px 14px 10px;
-  text-align: left;
-  max-height: 300px;
+/* Tab 4 "Điểm" — score panel content full-width 280px, vertical stack */
+.tab-pane-score {
+  padding: 12px 14px 18px;
 }
-.ip-header.split-mode .ip-header-left {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  padding: 4px 4px 4px 0;
-  border-right: 1px solid var(--smax-grey-100, #eef0f4);
-  text-align: center;
-  min-width: 0;
-}
-.ip-header.split-mode .ip-header-right {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  padding: 2px 0;
-  overflow: hidden;
-}
-.ip-header.split-mode .ip-name-line {
-  font-size: 14px;
-  margin-top: 6px;
-  padding: 0 4px;
-  max-width: 100%;
-  font-weight: 700;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.ip-header.split-mode .ip-id {
-  font-size: 10px;
-  margin-top: 2px;
-  padding: 0 4px;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.ip-header.split-mode .ip-care-row {
-  margin-top: 5px;
-}
-.ip-header.split-mode .ip-info-stack {
-  display: contents; /* các child name/UID/status flow trực tiếp trong flex column */
+/* Tab badge cho score (khác badge số tin chưa đọc) */
+.tab-badge-score {
+  background: #fef3c7 !important;
+  color: #b45309 !important;
+  font-weight: 700 !important;
+  min-width: 24px;
 }
 
 .ip-close {
@@ -758,27 +700,6 @@ function relativeTime(dateStr: string) {
 }
 .ip-close:hover { background: var(--smax-grey-100); }
 
-/* Gear toggle (1-click switch, không dropdown) */
-.ip-gear {
-  position: absolute;
-  top: 7px;
-  right: 38px;
-  width: 26px; height: 26px;
-  background: transparent; border: none;
-  font-size: 14px; cursor: pointer;
-  color: var(--smax-grey-700, #5a6478);
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 5;
-  transition: background 0.12s, color 0.12s;
-}
-.ip-gear:hover { background: var(--smax-grey-100, #eef0f4); }
-.ip-gear.active {
-  color: var(--smax-primary, #2962ff);
-  background: var(--smax-primary-soft, #e8efff);
-}
 
 .ip-avatar-wrap {
   position: relative;
