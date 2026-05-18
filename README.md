@@ -96,6 +96,9 @@ git checkout -b restore-2026-05-18 stable-2026-05-18
 
 ## 🔄 Workflow phát triển song song với locphamnguyen
 
+> 📖 **Hướng dẫn đầy đủ** (push, PR upstream, sync update, setup máy mới, cheat sheet): [docs/HUONG-DAN-GIT-WORKFLOW.md](docs/HUONG-DAN-GIT-WORKFLOW.md)
+
+
 Mô hình 3-nhánh trên fork:
 
 ```
