@@ -1,26 +1,16 @@
 <template>
-  <aside class="info-panel">
+  <aside class="info-panel" :class="{ 'score-expanded': scoreSplitActive }">
     <!-- ════════ HEADER pinned (avatar + lead score overlay + care-status) ════════ -->
     <header class="ip-header" :class="{ 'split-mode': scoreSplitActive }">
       <button class="ip-close" title="Đóng" @click="$emit('close')">×</button>
 
-      <!-- Gear toggle: bật/tắt panel điểm chi tiết -->
-      <div class="ip-gear-wrap">
-        <button
-          class="ip-gear"
-          :class="{ active: showScorePanel }"
-          title="Tuỳ chọn hiển thị"
-          @click.stop="toggleGearMenu"
-        >⚙</button>
-        <div v-if="gearMenuOpen" class="ip-gear-dropdown" @click.stop>
-          <div class="ip-gear-item" @click="onToggleScorePanel(); closeGearMenu()">
-            <span class="ip-gear-check">{{ showScorePanel ? '✓' : '' }}</span>
-            <span>Hiển thị bảng điểm chi tiết</span>
-          </div>
-          <div class="ip-gear-divider"></div>
-          <div class="ip-gear-note">Lưu tại máy này (localStorage)</div>
-        </div>
-      </div>
+      <!-- Gear toggle: 1-click bật/tắt bảng điểm chi tiết -->
+      <button
+        class="ip-gear"
+        :class="{ active: showScorePanel }"
+        :title="showScorePanel ? 'Ẩn bảng điểm' : 'Hiển thị bảng điểm chi tiết'"
+        @click="toggleScorePanel"
+      >⚙</button>
 
       <!-- LEFT BLOCK: avatar + name/UID/status. Split-mode → row horizontal,
            otherwise → centered column (mặc định). -->
@@ -475,6 +465,7 @@ onBeforeUnmount(() => {
 });
 
 // ════════ Score panel toggle ═══════════════════════════════════════════════
+// Click gear icon → toggle ngay (không dropdown). Persist localStorage.
 const SCORE_PANEL_LS_KEY = 'zalocrm.scorePanel.show';
 const showScorePanel = ref<boolean>((() => {
   try { return localStorage.getItem(SCORE_PANEL_LS_KEY) === '1'; } catch { return false; }
@@ -482,23 +473,8 @@ const showScorePanel = ref<boolean>((() => {
 watch(showScorePanel, (v) => {
   try { localStorage.setItem(SCORE_PANEL_LS_KEY, v ? '1' : '0'); } catch { /* ignore */ }
 });
-const gearMenuOpen = ref(false);
-function toggleGearMenu() { gearMenuOpen.value = !gearMenuOpen.value; }
-function closeGearMenu() { gearMenuOpen.value = false; }
-function onToggleScorePanel() {
+function toggleScorePanel() {
   showScorePanel.value = !showScorePanel.value;
-}
-// Click outside → close dropdown
-onMounted(() => {
-  document.addEventListener('click', onDocClickForGear);
-});
-onBeforeUnmount(() => {
-  document.removeEventListener('click', onDocClickForGear);
-});
-function onDocClickForGear(e: MouseEvent) {
-  if (!gearMenuOpen.value) return;
-  const target = e.target as HTMLElement;
-  if (!target.closest('.ip-gear-wrap')) closeGearMenu();
 }
 
 // Split mode chỉ active khi user bật toggle VÀ có friendId (user thread). Group chat
@@ -680,9 +656,13 @@ const hasAnyActivity = computed(() =>
 const toast = useToast();
 
 // Khi đổi sang contact mới, reset về tab Hồ sơ + refetch relations
-// (NotesSection tự fetch khi prop contactId đổi)
+// (NotesSection tự fetch khi prop contactId đổi).
+// Cũng force reset infoExpanded + start countdown — nếu activeTab đã = 'profile',
+// watch(activeTab) sẽ KHÔNG fire khi cùng giá trị → form section stuck ở state cũ.
 watch(() => props.contactId, (id) => {
   activeTab.value = 'profile';
+  infoExpanded.value = true;
+  startCollapseCountdown();
   if (id) void fetchRelations(id);
   else relations.value = { friends: [] };
 }, { immediate: true });
@@ -713,44 +693,39 @@ function relativeTime(dateStr: string) {
   position: relative;
   flex-shrink: 0;
 }
-/* Split mode: vertical stack — avatar+name+status row TRÊN (compact horizontal),
- * score panel DƯỚI full width. Phù hợp với cột 4 hẹp (~280px) — giữ cell rộng đủ
- * để label "Tương tác/Ý định/Phù hợp/Đà tăng" không bị crush. */
+/* Split mode: 2 cột thật — trái avatar+name+status (180px), phải score panel.
+ * Hoạt động nhờ .info-panel.score-expanded widen cột 4 thành ~540px qua grid override. */
 .ip-header.split-mode {
-  padding: 10px 14px 10px;
+  display: grid;
+  grid-template-columns: 180px 1fr;
+  gap: 14px;
+  padding: 12px 14px 10px;
   text-align: left;
-  max-height: 320px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
+  max-height: 300px;
 }
 .ip-header.split-mode .ip-header-left {
   display: flex;
-  flex-direction: row;
+  flex-direction: column;
   align-items: center;
-  gap: 10px;
-  padding: 0;
-  border-right: none;
-  border-bottom: 1px solid var(--smax-grey-100, #eef0f4);
-  padding-bottom: 9px;
-  text-align: left;
+  justify-content: center;
+  gap: 6px;
+  padding: 4px 4px 4px 0;
+  border-right: 1px solid var(--smax-grey-100, #eef0f4);
+  text-align: center;
   min-width: 0;
-}
-.ip-header.split-mode .ip-header-left .ip-avatar-wrap {
-  flex-shrink: 0;
 }
 .ip-header.split-mode .ip-header-right {
   display: flex;
   flex-direction: column;
   min-width: 0;
-  padding: 0;
+  padding: 2px 0;
   overflow: hidden;
 }
 .ip-header.split-mode .ip-name-line {
   font-size: 14px;
-  margin-top: 0;
-  padding: 0;
-  text-align: left;
+  margin-top: 6px;
+  padding: 0 4px;
+  max-width: 100%;
   font-weight: 700;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -758,27 +733,18 @@ function relativeTime(dateStr: string) {
 }
 .ip-header.split-mode .ip-id {
   font-size: 10px;
-  margin-top: 1px;
-  padding: 0;
+  margin-top: 2px;
+  padding: 0 4px;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .ip-header.split-mode .ip-care-row {
-  margin-top: 4px;
-  text-align: left;
-}
-/* Left col flex: avatar + (name + UID + status) inline */
-.ip-header.split-mode .ip-header-left::before {
-  content: "";
-  display: contents;
+  margin-top: 5px;
 }
 .ip-header.split-mode .ip-info-stack {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  flex: 1;
-  gap: 2px;
+  display: contents; /* các child name/UID/status flow trực tiếp trong flex column */
 }
 
 .ip-close {
@@ -792,67 +758,26 @@ function relativeTime(dateStr: string) {
 }
 .ip-close:hover { background: var(--smax-grey-100); }
 
-/* Gear toggle */
-.ip-gear-wrap {
+/* Gear toggle (1-click switch, không dropdown) */
+.ip-gear {
   position: absolute;
   top: 7px;
   right: 38px;
-  z-index: 5;
-}
-.ip-gear {
-  width: 24px; height: 24px;
+  width: 26px; height: 26px;
   background: transparent; border: none;
-  font-size: 13px; cursor: pointer;
+  font-size: 14px; cursor: pointer;
   color: var(--smax-grey-700, #5a6478);
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
+  z-index: 5;
+  transition: background 0.12s, color 0.12s;
 }
 .ip-gear:hover { background: var(--smax-grey-100, #eef0f4); }
-.ip-gear.active { color: var(--smax-primary, #2962ff); }
-.ip-gear-dropdown {
-  position: absolute;
-  top: 28px;
-  right: 0;
-  background: white;
-  border-radius: 10px;
-  box-shadow: 0 6px 20px rgba(0,0,0,0.12);
-  border: 1px solid var(--smax-grey-100, #eef0f4);
-  padding: 5px;
-  min-width: 210px;
-  z-index: 10;
-  text-align: left;
-}
-.ip-gear-item {
-  padding: 7px 9px;
-  border-radius: 6px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  cursor: pointer;
-  white-space: nowrap;
-}
-.ip-gear-item:hover { background: var(--smax-grey-50, #f8f9fb); }
-.ip-gear-check {
-  width: 13px;
-  text-align: center;
+.ip-gear.active {
   color: var(--smax-primary, #2962ff);
-  font-weight: 700;
-  font-size: 12px;
-  flex-shrink: 0;
-}
-.ip-gear-divider {
-  height: 1px;
-  background: var(--smax-grey-100, #eef0f4);
-  margin: 3px -5px;
-}
-.ip-gear-note {
-  font-size: 10px;
-  color: var(--smax-grey-400, #a8aebb);
-  padding: 4px 9px;
-  line-height: 1.3;
+  background: var(--smax-primary-soft, #e8efff);
 }
 
 .ip-avatar-wrap {
