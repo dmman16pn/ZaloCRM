@@ -213,11 +213,11 @@
                 <div class="name-text">
                   {{ contact.crmName || contact.fullName || '—' }}
                   <span
-                    v-if="(contact._count?.conversations || 0) > 1"
+                    v-if="(contact.childrenCount ?? 0) > 1"
                     class="chip chip-multi-nick"
-                    :title="`${contact._count?.conversations} nick CRM đang chăm khách này`"
+                    :title="`${contact.childrenCount} Friend row (nick chăm × Zalo identity) — mở ▸ để xem chi tiết`"
                   >
-                    👥 Đa nick ({{ contact._count?.conversations }})
+                    👥 Đa nick ({{ contact.childrenCount }})
                   </span>
                 </div>
                 <div v-if="contact.fullName && contact.crmName && contact.fullName !== contact.crmName" class="name-sub">
