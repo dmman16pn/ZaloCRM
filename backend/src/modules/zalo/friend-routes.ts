@@ -6,7 +6,7 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { authMiddleware } from '../auth/auth-middleware.js';
 import { zaloOps } from '../../shared/zalo-operations.js';
-import { resolveAccount, checkAccess, handleError } from './zalo-route-helpers.js';
+import { resolveAccount, checkAccess, handleError, getAccessibleZaloAccountIds } from './zalo-route-helpers.js';
 import { markFriendRequestSent } from './friend-event-handler.js';
 import { prisma } from '../../shared/database/prisma-client.js';
 import { normalizePhone } from '../../shared/utils/phone.js';
@@ -103,22 +103,14 @@ export async function friendRoutes(app: FastifyInstance) {
       search = '',
     } = request.query as { kind?: string; page?: string; limit?: string; search?: string };
     try {
-      // Resolve accessible accounts: union của ZaloAccountAccess + accounts user own.
-      // Admin/manager có thể không có ZaloAccountAccess row nhưng vẫn own → include cả 2.
-      const accessRows = await prisma.zaloAccountAccess.findMany({
-        where: { userId: user.id, zaloAccount: { orgId: user.orgId } },
-        select: { zaloAccountId: true },
+      // B3 fix — Resolve accessible accounts via shared helper (cùng hierarchy với
+      // checkAccess): owner/admin → tất cả nick org; non-admin → ACL + owned.
+      // Trước đây inline chỉ explicit + owned → admin không own đủ nick bị empty list.
+      const accessibleIds = await getAccessibleZaloAccountIds({
+        id: user.id,
+        orgId: user.orgId,
+        role: user.role,
       });
-      const ownedRows = await prisma.zaloAccount.findMany({
-        where: { orgId: user.orgId, ownerUserId: user.id },
-        select: { id: true },
-      });
-      const accessibleIds = [
-        ...new Set([
-          ...accessRows.map((r) => r.zaloAccountId),
-          ...ownedRows.map((r) => r.id),
-        ]),
-      ];
 
       if (accessibleIds.length === 0) {
         return { friends: [], total: 0, counts: {}, page: 1, limit: parseInt(limit, 10) || 25 };

@@ -257,6 +257,28 @@ export async function applyFriendAggregate(args: AggregateMessageInput): Promise
         },
       });
 
+      // B8 fix — Backfill Contact.fullName từ "Unknown" stub khi message inbound
+      // mang theo zaloDisplayName. Stub tạo bởi friend-event-handler khi
+      // pending_received event đến (KH gửi mời) không có name → Contact stuck "Unknown".
+      // Message đầu tiên KH gửi sau khi accept → backfill name (kèm avatar nếu thiếu).
+      if (isInbound && args.contactZaloDisplayName && conv.contactId) {
+        const c = await tx.contact.findUnique({
+          where: { id: conv.contactId },
+          select: { fullName: true, avatarUrl: true },
+        });
+        if (c && (c.fullName === 'Unknown' || c.fullName === null || c.fullName === '')) {
+          await tx.contact.update({
+            where: { id: conv.contactId },
+            data: {
+              fullName: args.contactZaloDisplayName,
+              ...(args.contactZaloAvatarUrl && !c.avatarUrl
+                ? { avatarUrl: args.contactZaloAvatarUrl }
+                : {}),
+            },
+          });
+        }
+      }
+
       if (!existing) {
         // No Friend row yet — this is the first message exchanged.
         // Create as chatting_stranger (no friendship_event has fired).

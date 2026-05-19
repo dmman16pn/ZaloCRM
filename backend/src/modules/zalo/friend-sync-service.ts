@@ -149,11 +149,14 @@ export async function syncFriendsForAccount(
   let liveFriends: Array<Record<string, unknown>> = [];
   let sentRequests: Array<Record<string, unknown>> = [];
 
+  // B4 fix — SDK errors PHẢI throw lên outer catch để increment errors + logActivity.
+  // Trước đây `.catch(() => [])` swallow lỗi → Zalo disconnect/rate-limit hiện liveCount=0
+  // không phân biệt với "0 friends" thật, sale không biết sync fail.
+  // Defensive Array.isArray normalize giữ nguyên (cho shape variants), nhưng lỗi SDK
+  // (rate limit, network) bubble lên outer try/catch.
   try {
-    // SDK có thể trả: array | {data:[]} | {items:[]} | undefined tuỳ phiên bản zca-js.
-    // Defensive normalize sang array; non-array shape coi như empty.
-    const liveRaw: any = await zaloOps.getAllFriends(accountId).catch(() => []);
-    const sentRaw: any = await zaloOps.getSentFriendRequests(accountId).catch(() => []);
+    const liveRaw: any = await zaloOps.getAllFriends(accountId);
+    const sentRaw: any = await zaloOps.getSentFriendRequests(accountId);
     liveFriends = Array.isArray(liveRaw) ? liveRaw
       : Array.isArray(liveRaw?.data) ? liveRaw.data
       : Array.isArray(liveRaw?.items) ? liveRaw.items
@@ -287,24 +290,89 @@ interface ProcessFriendArgs {
 }
 
 async function processFriend(args: ProcessFriendArgs): Promise<void> {
-  // 1. Resolve or create Contact
-  let contact = await prisma.contact.findFirst({
-    where: { orgId: args.orgId, zaloUid: args.uid },
-    select: { id: true },
-  });
+  // 1. Resolve or create Contact.
+  //    Memory anh: per-account zaloUid khác nhau cho cùng person → KHÔNG được dedup
+  //    theo zaloUid only (sẽ tạo duplicate Contact cho mỗi nick nhìn cùng KH).
+  //    Phải dedup theo zaloGlobalId (cross-nick canonical) khi có, fallback zaloUid.
+  //    Bug Codex flagged + memory: Phong Lam 2 Contacts vì cùng KH 2 nick → 2 zaloUid.
+  const globalId = args.snapshot.zaloGlobalId;
+  let contact: { id: string; fullName: string | null } | null = null;
+
+  // 1a. Dedup priority 1 — match zaloGlobalId (canonical, cross-nick).
+  // KHÔNG filter mergedInto:null vì @@unique([orgId, zaloGlobalId]) apply cả
+  // merged Contact → nếu skip merged sẽ Race: pre-check miss, create thì
+  // UniqueConstraint violation. Match cả merged để follow chain tới root.
+  if (globalId) {
+    const matched = await prisma.contact.findFirst({
+      where: { orgId: args.orgId, zaloGlobalId: globalId },
+      select: { id: true, fullName: true, mergedInto: true },
+    });
+    if (matched?.mergedInto) {
+      // Soft-merge target — redirect Friend về root contact thay vì merged stub
+      const root = await prisma.contact.findUnique({
+        where: { id: matched.mergedInto },
+        select: { id: true, fullName: true },
+      });
+      contact = root ?? { id: matched.id, fullName: matched.fullName };
+    } else if (matched) {
+      contact = { id: matched.id, fullName: matched.fullName };
+    }
+  }
+  // 1b. Fallback — match per-nick zaloUid (legacy data + khi globalId chưa pull về).
   if (!contact) {
-    contact = await prisma.contact.create({
+    const matched = await prisma.contact.findFirst({
+      where: { orgId: args.orgId, zaloUid: args.uid },
+      select: { id: true, fullName: true, mergedInto: true },
+    });
+    if (matched?.mergedInto) {
+      const root = await prisma.contact.findUnique({
+        where: { id: matched.mergedInto },
+        select: { id: true, fullName: true },
+      });
+      contact = root ?? { id: matched.id, fullName: matched.fullName };
+    } else if (matched) {
+      contact = { id: matched.id, fullName: matched.fullName };
+    }
+  }
+  if (!contact) {
+    const newContact = await prisma.contact.create({
       data: {
         id: randomUUID(),
         orgId: args.orgId,
         zaloUid: args.uid,
+        zaloGlobalId: globalId || null,
+        zaloUsername: args.snapshot.zaloUsername || null,
         fullName: args.fallbackName || 'Unknown',
         avatarUrl: args.fallbackAvatar || null,
         hasZalo: true,
       },
-      select: { id: true },
+      select: { id: true, fullName: true },
     });
+    contact = newContact;
     args.result.createdContacts++;
+  }
+
+  // 1c. B8 — Backfill Contact.fullName khi Contact stub 'Unknown' mà Friend đã có
+  // zaloDisplayName từ SDK. Stub được tạo bởi resolveContact (friend-event-handler)
+  // khi event đến trước message → fullName='Unknown'. Sau khi sync pull zaloName
+  // về Friend, KH Cha vẫn stuck "Unknown" gây UI broken popup/chat.
+  // Chỉ ghi đè khi fullName = 'Unknown' literal — KHÔNG đụng nếu sale đã edit thủ công.
+  const newName = args.snapshot.zaloDisplayName || args.fallbackName;
+  if (
+    newName
+    && newName !== 'Unknown'
+    && (contact.fullName === 'Unknown' || contact.fullName === null || contact.fullName === '')
+  ) {
+    await prisma.contact.update({
+      where: { id: contact.id },
+      data: {
+        fullName: newName,
+        // Cũng backfill globalId/username nếu Contact thiếu (matched bằng zaloUid fallback)
+        ...(globalId && !args.snapshot.zaloUsername ? { zaloGlobalId: globalId } : {}),
+        ...(args.snapshot.zaloUsername ? { zaloUsername: args.snapshot.zaloUsername } : {}),
+        ...(args.fallbackAvatar ? { avatarUrl: args.fallbackAvatar } : {}),
+      },
+    });
   }
 
   // 2. Drive friendship state machine (handles upsert + counter delta + assignedUser)
@@ -392,13 +460,13 @@ export async function syncAccountFully(
     durationMs: 0,
   };
 
-  // Lazy import labels + alias để tránh circular dependency (labels-routes import nhiều thứ)
-  const [friendsRes, aliasesRes, labelsRes] = await Promise.allSettled([
+  // B5 fix — labels full-sync internally calls syncAliasesForAccount (alias-sync.ts
+  // imported lazy inside syncLabelsForAccount full path). Wrapper bỏ alias parallel
+  // để tránh double getAliasList pagination + DB diff cùng account mỗi cycle.
+  // Result: 2 nhánh parallel thay vì 3 (friends + labels). aliasesUpdated lấy từ
+  // labelsRes.aliasesUpdated do syncLabelsForAccount propagate qua.
+  const [friendsRes, labelsRes] = await Promise.allSettled([
     syncFriendsForAccount(accountId, orgId, opts),
-    (async () => {
-      const { syncAliasesForAccount } = await import('./alias-sync.js');
-      return syncAliasesForAccount(accountId, orgId);
-    })(),
     (async () => {
       const { syncLabelsIfStale } = await import('./zalo-labels-routes.js');
       return syncLabelsIfStale(accountId, orgId);
@@ -410,16 +478,42 @@ export async function syncAccountFully(
   } else {
     result.errors.push(`friends: ${friendsRes.reason instanceof Error ? friendsRes.reason.message : String(friendsRes.reason)}`);
   }
-  if (aliasesRes.status === 'fulfilled') {
-    result.aliasesUpdated = aliasesRes.value?.updated ?? 0;
-  } else {
-    result.errors.push(`aliases: ${aliasesRes.reason instanceof Error ? aliasesRes.reason.message : String(aliasesRes.reason)}`);
-  }
   if (labelsRes.status === 'fulfilled') {
     // syncLabelsIfStale có thể trả null (cooldown / grace) → coi như 0
     result.labelsUpdated = labelsRes.value?.friendsUpdated ?? 0;
+    result.aliasesUpdated = labelsRes.value?.aliasesUpdated ?? 0;
   } else {
     result.errors.push(`labels: ${labelsRes.reason instanceof Error ? labelsRes.reason.message : String(labelsRes.reason)}`);
+  }
+
+  // B8 sweep — backfill Contact stub 'Unknown' bằng Friend.zaloDisplayName.
+  // Coverage cho pending_received friends (không nằm trong getAllFriends/getSentFriendRequests
+  // loop của processFriend) + legacy stub data. Single UPDATE…FROM atomic, không N+1.
+  try {
+    const backfilled = await prisma.$executeRaw`
+      UPDATE contacts
+      SET full_name = sub.new_name,
+          avatar_url = COALESCE(contacts.avatar_url, sub.new_avatar)
+      FROM (
+        SELECT DISTINCT ON (f.contact_id)
+          f.contact_id, f.zalo_display_name AS new_name, f.zalo_avatar_url AS new_avatar
+        FROM friends f
+        WHERE f.org_id = ${orgId}
+          AND f.zalo_account_id = ${accountId}
+          AND f.zalo_display_name IS NOT NULL
+          AND f.zalo_display_name <> ''
+          AND f.zalo_display_name <> 'Unknown'
+        ORDER BY f.contact_id, f.updated_at DESC
+      ) sub
+      WHERE contacts.id = sub.contact_id
+        AND contacts.org_id = ${orgId}
+        AND (contacts.full_name IS NULL OR contacts.full_name = '' OR contacts.full_name = 'Unknown')
+    `;
+    if (backfilled > 0) {
+      logger.info(`[friend-sync-full:${accountId}] B8 backfill: ${backfilled} Contact stubs filled from Friend.zaloDisplayName`);
+    }
+  } catch (err) {
+    logger.warn(`[friend-sync-full:${accountId}] B8 backfill sweep failed:`, err);
   }
 
   result.durationMs = Date.now() - startedAt;

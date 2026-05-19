@@ -4,8 +4,18 @@
     <aside class="side-panel" :class="{ open: !!friend }">
       <template v-if="friend">
         <div class="panel-head">
-          <div class="av" :class="avatarClass(friend)">{{ initials(friend.contact?.crmName || friend.contact?.fullName) }}</div>
-          <h3>{{ friend.contact?.crmName || friend.contact?.fullName || 'Khách hàng' }}</h3>
+          <div class="av" :class="avatarClass(friend)">
+            <!-- B7 fix — avatar Zalo img khi có, fallback initials từ displayName chain -->
+            <img
+              v-if="friend.zaloAvatarUrl"
+              :src="friend.zaloAvatarUrl"
+              :alt="displayCustomerName(friend)"
+              loading="lazy"
+              referrerpolicy="no-referrer"
+            />
+            <span v-else>{{ customerInitials(friend) }}</span>
+          </div>
+          <h3>{{ displayCustomerName(friend) }}</h3>
           <button class="close" @click="$emit('close')">✕</button>
         </div>
 
@@ -103,6 +113,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import type { DbFriend } from '@/composables/use-friends';
+import { displayCustomerName, customerInitials } from '@/composables/use-friend-display';
 
 const props = defineProps<{
   friend: DbFriend | null;
@@ -125,12 +136,7 @@ const zaloLabels = computed(() => {
   return list.filter((l): l is { name: string; color?: string } => !!l && typeof l.name === 'string');
 });
 
-function initials(name?: string | null): string {
-  if (!name) return '?';
-  const parts = name.trim().split(/\s+/);
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return (parts[parts.length - 2][0] + parts[parts.length - 1][0]).toUpperCase();
-}
+// Note: `initials` cũ đã thay bởi customerInitials từ use-friend-display.ts — B7 fix
 
 const CUSTOMER_PALETTE = ['av-c1', 'av-c2', 'av-c3', 'av-c4', 'av-c5', 'av-c6', 'av-c7'];
 function avatarClass(f: DbFriend): string {
@@ -253,6 +259,10 @@ function formatRelative(iso: string): string {
   width: 40px; height: 40px; border-radius: 50%;
   color: #fff; display: grid; place-items: center;
   font-weight: 700;
+  overflow: hidden; /* clip img tròn */
+}
+.panel-head .av img {
+  width: 100%; height: 100%; object-fit: cover; display: block;
 }
 .panel-head h3 { margin: 0; font-size: 14px; flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .panel-head .close {

@@ -283,15 +283,27 @@ function mergedTags(conv: Conversation): string[] {
 }
 
 // ── Conversation display ───────────────────────────────────────────────────
+// B7 fix — Contact stub "Unknown" (tạo bởi friend-event-handler khi event đến
+// trước message, no name payload) phải fallback sang zaloDisplayName của Friend
+// để không hiện "Unknown" dù sync đã pull về tên Zalo thật.
+function isUsableName(s: string | null | undefined): s is string {
+  return !!s && s.trim().length > 0 && s.trim().toLowerCase() !== 'unknown';
+}
 function displayName(conv: Conversation): string {
   if (conv.threadType === 'group') {
-    return (conv as Conversation & { groupName?: string }).groupName
-      || conv.contact?.fullName
-      || 'Nhóm Zalo';
+    const groupName = (conv as Conversation & { groupName?: string }).groupName;
+    if (isUsableName(groupName)) return groupName!;
+    if (isUsableName(conv.contact?.fullName)) return conv.contact!.fullName!;
+    return 'Nhóm Zalo';
   }
   // Ưu tiên Tên gợi nhớ Zalo (Friend.aliasInNick) — sync 2-way với Zalo Real.
   // Fallback fullName (tên Zalo gốc). KHÔNG dùng Contact.crmName để UI khớp Zalo Real.
-  return conv.friendship?.aliasInNick || conv.contact?.fullName || 'Unknown';
+  if (isUsableName(conv.friendship?.aliasInNick)) return conv.friendship!.aliasInNick!;
+  if (isUsableName(conv.contact?.fullName)) return conv.contact!.fullName!;
+  // B7 — fallback zaloDisplayName của Friend nếu Contact stub
+  const friendship = conv.friendship as { zaloDisplayName?: string | null } | undefined;
+  if (isUsableName(friendship?.zaloDisplayName)) return friendship!.zaloDisplayName!;
+  return 'Unknown';
 }
 function avatarSrcOf(conv: Conversation): string | null {
   if (conv.threadType === 'group') {

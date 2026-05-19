@@ -375,7 +375,7 @@
         <AppointmentQuickDialog
           v-model="showAppointmentDialog"
           :contact-id="conversation.contact?.id ?? null"
-          :contact-name="conversation.contact?.fullName ?? null"
+          :contact-name="headerName"
           header="📅 Tạo nhắc hẹn"
           @created="onAppointmentCreated"
         />
@@ -528,23 +528,38 @@ const editorRef = ref<InstanceType<typeof RichTextEditor> | null>(null);
 const currentTypers = computed(() => props.typingUsers || []);
 
 // ── Header derived data (Avatar handles initials/gradient/gender) ──────────
+// B7 fix — Contact stub "Unknown" fallback chain qua zaloDisplayName Friend.
+function _isUsableName(s: string | null | undefined): s is string {
+  return !!s && s.trim().length > 0 && s.trim().toLowerCase() !== 'unknown';
+}
 const headerName = computed(() => {
   if (props.conversation?.threadType === 'group') {
-    return (props.conversation as { groupName?: string }).groupName
-      || props.conversation?.contact?.fullName
-      || 'Nhóm Zalo';
+    const groupName = (props.conversation as { groupName?: string }).groupName;
+    if (_isUsableName(groupName)) return groupName!;
+    if (_isUsableName(props.conversation?.contact?.fullName)) return props.conversation!.contact!.fullName!;
+    return 'Nhóm Zalo';
   }
   // Ưu tiên Tên gợi nhớ Zalo (Friend.aliasInNick) — sync 2-way với Zalo Real.
   // UI khớp với Zalo Real để sale nhận diện KH bằng cùng 1 tên.
-  return props.conversation?.friendship?.aliasInNick
-    || props.conversation?.contact?.fullName
-    || 'Unknown';
+  if (_isUsableName(props.conversation?.friendship?.aliasInNick)) {
+    return props.conversation!.friendship!.aliasInNick!;
+  }
+  if (_isUsableName(props.conversation?.contact?.fullName)) {
+    return props.conversation!.contact!.fullName!;
+  }
+  const friendship = props.conversation?.friendship as { zaloDisplayName?: string | null } | undefined;
+  if (_isUsableName(friendship?.zaloDisplayName)) return friendship!.zaloDisplayName!;
+  return 'Unknown';
 });
 const headerAvatarSrc = computed(() => {
   if (props.conversation?.threadType === 'group') {
     return (props.conversation as { groupAvatarUrl?: string }).groupAvatarUrl || null;
   }
-  return props.conversation?.contact?.avatarUrl || null;
+  // B7 — fallback avatar Zalo của Friend nếu Contact.avatarUrl chưa có
+  const friendship = props.conversation?.friendship as { zaloAvatarUrl?: string | null } | undefined;
+  return props.conversation?.contact?.avatarUrl
+    || friendship?.zaloAvatarUrl
+    || null;
 });
 const contactGender = computed(() => props.conversation?.contact?.gender || null);
 

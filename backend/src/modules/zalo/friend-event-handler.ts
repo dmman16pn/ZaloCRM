@@ -134,7 +134,11 @@ export async function applyFriendTransition(args: {
   await prisma.$transaction(async (tx) => {
     const existing = await tx.friend.findUnique({
       where: { zaloAccountId_zaloUidInNick: { zaloAccountId, zaloUidInNick } },
-      select: { relationshipKind: true, hasConversation: true },
+      select: {
+        relationshipKind: true,
+        hasConversation: true,
+        becameFriendAt: true,  // B1 — cần để biết đã set chưa, tránh reset
+      },
     });
 
     const fromKind = (existing?.relationshipKind as RelationshipKind) ?? 'none';
@@ -146,8 +150,23 @@ export async function applyFriendTransition(args: {
       friendshipStatus: newFriendshipStatus,
       relationshipKind: toKind,
     };
-    if (newFriendshipStatus === 'accepted') data.becameFriendAt = now;
-    if (newFriendshipStatus === 'removed' || newFriendshipStatus === 'blocked') data.removedAt = now;
+    // B1 fix — chỉ set becameFriendAt khi LẦN ĐẦU transition vào 'accepted'.
+    // Cron 15min re-run với newFriendshipStatus='accepted' cho friend đã KB từ
+    // trước KHÔNG được reset ngày KB cũ (regression Codex flagged).
+    // Set khi: (a) Friend mới tinh chưa có existing, hoặc (b) becameFriendAt còn NULL.
+    if (newFriendshipStatus === 'accepted' && !existing?.becameFriendAt) {
+      data.becameFriendAt = now;
+    }
+    // removedAt cũng phải tương tự — chỉ set khi transition NEW, không overwrite ngày ngắt cũ
+    if ((newFriendshipStatus === 'removed' || newFriendshipStatus === 'blocked') && !existing?.relationshipKind) {
+      data.removedAt = now;
+    } else if (
+      (newFriendshipStatus === 'removed' || newFriendshipStatus === 'blocked')
+      && existing?.relationshipKind !== 'ghost'
+    ) {
+      // Transition non-ghost → ghost: set removedAt lần đầu
+      data.removedAt = now;
+    }
 
     await tx.friend.upsert({
       where: { zaloAccountId_zaloUidInNick: { zaloAccountId, zaloUidInNick } },

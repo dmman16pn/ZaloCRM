@@ -16,6 +16,7 @@
  */
 import { io, type Socket } from 'socket.io-client';
 import { onMounted, onUnmounted } from 'vue';
+import { useAuthStore } from '@/stores/auth';
 
 export interface FriendUpdatedPayload {
   friendId: string;
@@ -26,11 +27,38 @@ export interface FriendUpdatedPayload {
 }
 
 let socket: Socket | null = null;
+let joinedOrgId: string | null = null;
 
-/** Lazy init — chỉ kết nối khi composable đầu tiên gọi. */
+/**
+ * B2 fix — Lazy init + auto-join org room.
+ * Backend emit `io.to('org:${orgId}').emit(...)` → client phải `socket.emit('org:join')`
+ * để được vào room. Trước đây composable chỉ register handler không join room → no-op
+ * (Codex flagged: live update broken cho normal users).
+ *
+ * Pattern: emit ngay khi connect + re-emit trên reconnect (network blip).
+ */
 function ensureSocket(): Socket {
   if (!socket) {
     socket = io({ transports: ['websocket', 'polling'] });
+
+    // Auto re-join org room mỗi khi socket connect (init + reconnect)
+    socket.on('connect', () => {
+      const auth = useAuthStore();
+      const orgId = auth.user?.orgId;
+      if (orgId) {
+        socket!.emit('org:join', { orgId });
+        joinedOrgId = orgId;
+      }
+    });
+  }
+  // Trường hợp socket đã connect rồi (composable thứ 2 mount sau) — join ngay
+  if (socket.connected && !joinedOrgId) {
+    const auth = useAuthStore();
+    const orgId = auth.user?.orgId;
+    if (orgId) {
+      socket.emit('org:join', { orgId });
+      joinedOrgId = orgId;
+    }
   }
   return socket;
 }
@@ -65,5 +93,6 @@ export function _resetSocketForTest(): void {
   if (socket) {
     socket.disconnect();
     socket = null;
+    joinedOrgId = null;
   }
 }

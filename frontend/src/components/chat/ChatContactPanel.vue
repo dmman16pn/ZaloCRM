@@ -635,9 +635,18 @@ function onChangeCareStatus(value: CareStatusValue) {
 }
 
 // ════════ Header name (Avatar component handle initials + gender + gradient) ════════
-const headerFullName = computed(() =>
-  props.contact?.crmName || props.contact?.fullName || 'Khách hàng',
-);
+// B7 fix — Contact stub có thể fullName='Unknown'; fallback qua aliasInNick (props.friendship)
+// rồi activeFriend.zaloDisplayName (nick đang chăm) trước khi hiện 'Khách hàng'.
+const headerFullName = computed(() => {
+  const isUsable = (s: string | null | undefined): s is string =>
+    !!s && s.trim().length > 0 && s.trim().toLowerCase() !== 'unknown';
+  if (isUsable(props.contact?.crmName)) return props.contact!.crmName!;
+  if (isUsable(props.contact?.fullName)) return props.contact!.fullName!;
+  if (isUsable(props.friendship?.aliasInNick)) return props.friendship!.aliasInNick!;
+  const af = activeFriend.value as { zaloDisplayName?: string | null } | null;
+  if (isUsable(af?.zaloDisplayName)) return af!.zaloDisplayName!;
+  return 'Khách hàng';
+});
 
 // Lead score tier để màu badge overlay trên avatar (thấp/TB/cao)
 const leadScoreTier = computed(() => {
