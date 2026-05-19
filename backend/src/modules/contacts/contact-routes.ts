@@ -17,6 +17,7 @@ import { computeAggregateDisplay, AGGREGATE_INCLUDE } from './contact-aggregate-
 import { runAutomationRules } from '../automation/automation-service.js';
 import { normalizePhone } from '../../shared/utils/phone.js';
 import { logActivity, computeDiff } from '../activity/activity-logger.js';
+import { emitWebhook } from '../api/webhook-service.js';
 
 type QueryParams = Record<string, string>;
 
@@ -446,6 +447,22 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
           entityId: updated.id,
           details: { changes: infoDiff },
         });
+        // Outbound webhook cho external systems (vd GetFly sync) — fire-and-forget
+        void emitWebhook(user.orgId, 'contact.updated', {
+          contactId: updated.id,
+          changes: infoDiff,
+          contact: {
+            id: updated.id,
+            fullName: updated.fullName,
+            crmName: updated.crmName,
+            phone: updated.phone,
+            email: updated.email,
+            source: updated.source,
+            status: updated.status,
+            gender: updated.gender,
+            leadScore: updated.leadScore,
+          },
+        });
       }
 
       return updated;
@@ -718,6 +735,7 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
         select: {
           id: true, contactId: true, statusId: true, leadScore: true,
           crmTagsPerNick: true, aliasInNick: true,
+          zaloAccountId: true, zaloUidInNick: true,  // cần để push alias qua SDK
         },
       });
       if (!friend) return reply.status(404).send({ error: 'Friend not found' });
@@ -776,8 +794,33 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
             action: 'friend_alias_change',
             entityType: 'contact',
             entityId,
-            details: { old: friend.aliasInNick, new: body.aliasInNick, friendId: friend.id },
+            details: { old: friend.aliasInNick, new: body.aliasInNick, friendId: friend.id, trigger: 'crm_edit' },
           });
+
+          // CRM → Zalo Real: push alias via SDK. Fire-and-forget — không block PUT
+          // response. Nếu SDK fail (account offline / network), log warn; lần sync
+          // alias periodic sẽ thấy mismatch và reconcile (CRM là source of truth ở
+          // moment user edit, nhưng nếu Zalo Real bị thay đổi parallel → race lần
+          // touch sau resolve).
+          const newAlias = body.aliasInNick;
+          const uidToTarget = friend.zaloUidInNick;
+          const accountIdToCall = friend.zaloAccountId;
+          if (uidToTarget && accountIdToCall) {
+            void (async () => {
+              try {
+                const { zaloOps } = await import('../../shared/zalo-operations.js');
+                if (newAlias && newAlias.trim()) {
+                  await zaloOps.changeFriendAlias(accountIdToCall, newAlias.trim(), uidToTarget);
+                  logger.info(`[friends] Pushed alias "${newAlias}" → Zalo for uid=${uidToTarget}`);
+                } else {
+                  await zaloOps.removeFriendAlias(accountIdToCall, uidToTarget);
+                  logger.info(`[friends] Removed alias on Zalo for uid=${uidToTarget}`);
+                }
+              } catch (err) {
+                logger.warn(`[friends] Push alias to Zalo failed (uid=${uidToTarget}):`, err);
+              }
+            })();
+          }
         }
         if (cleanTags !== undefined) {
           const oldT = Array.isArray(friend.crmTagsPerNick) ? (friend.crmTagsPerNick as string[]) : [];
@@ -797,6 +840,31 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
               details: { tag: t, level: 'friend', friendId: friend.id },
             });
           }
+        }
+      }
+
+      // Outbound webhook cho external systems (vd GetFly sync per-pair) — fire-and-forget.
+      // Mỗi loại change emit event riêng để external system filter dễ hơn.
+      if (entityId) {
+        if (body.aliasInNick !== undefined && body.aliasInNick !== friend.aliasInNick) {
+          void emitWebhook(user.orgId, 'friend.alias_changed', {
+            friendId: friend.id, contactId: entityId,
+            zaloAccountId: friend.zaloAccountId, zaloUidInNick: friend.zaloUidInNick,
+            old: friend.aliasInNick, new: body.aliasInNick,
+            origin: 'crm',
+          });
+        }
+        if (body.statusId !== undefined && body.statusId !== friend.statusId) {
+          void emitWebhook(user.orgId, 'friend.status_changed', {
+            friendId: friend.id, contactId: entityId,
+            old: friend.statusId, new: body.statusId,
+          });
+        }
+        if (body.leadScore !== undefined && body.leadScore !== friend.leadScore) {
+          void emitWebhook(user.orgId, 'friend.score_changed', {
+            friendId: friend.id, contactId: entityId,
+            old: friend.leadScore, new: body.leadScore,
+          });
         }
       }
 

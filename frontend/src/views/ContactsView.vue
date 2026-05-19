@@ -337,9 +337,9 @@
                     <thead>
                       <tr>
                         <th>Nick Zalo (Sale)</th>
-                        <th>Tên CRM/Nick KH</th>
                         <th>Ảnh KH</th>
                         <th>Tên Zalo + UID</th>
+                        <th>Tên gợi nhớ</th>
                         <th v-if="visibleChildCols.zaloGlobalId" title="Zalo globalId per identity (toàn cục)">Global ID</th>
                         <th v-if="visibleChildCols.zaloUsername" title="Zalo username (handle)">Username</th>
                         <th>Trạng thái KB</th>
@@ -369,11 +369,6 @@
                           </div>
                         </td>
                         <td>
-                          <span :class="['line1', { empty: !row.aliasInNick }]">
-                            {{ row.aliasInNick || '— chưa đặt —' }}
-                          </span>
-                        </td>
-                        <td>
                           <Avatar :src="row.zaloAvatarUrl || contact.avatarUrl" :name="row.zaloName || contact.fullName || '?'" :size="32" :gradient-seed="row.id" />
                         </td>
                         <td>
@@ -381,6 +376,15 @@
                             <span class="line1">{{ row.zaloName || '—' }}</span>
                             <span class="uid">{{ row.zaloUid || 'chưa lấy' }}</span>
                           </div>
+                        </td>
+                        <td>
+                          <input
+                            class="alias-input"
+                            :value="row.aliasInNick || ''"
+                            placeholder="— Tên gợi nhớ —"
+                            :title="'Sync 2-chiều với Zalo Real. Đổi ở đây → push qua Zalo của Sale.'"
+                            @change="onFriendAliasChange(row, ($event.target as HTMLInputElement).value)"
+                          />
                         </td>
                         <td v-if="visibleChildCols.zaloGlobalId">
                           <code v-if="row.zaloGlobalId" class="uid-cell" :title="row.zaloGlobalId">{{ row.zaloGlobalId.slice(0, 10) }}…</code>
@@ -842,6 +846,24 @@ async function onFriendScoreChange(row: ChildRow, value: string) {
   }
 }
 
+/* Edit "Tên gợi nhớ" — sync 2-chiều với Zalo Real.
+ * PATCH /friends/:id sẽ:
+ *  1. Update DB (Friend.aliasInNick)
+ *  2. Backend fire-and-forget gọi api.changeFriendAlias / removeFriendAlias để push lên Zalo
+ *  3. Log activity friend_alias_change với trigger='crm_edit' */
+async function onFriendAliasChange(row: ChildRow, value: string) {
+  const trimmed = (value || '').trim();
+  const newAlias = trimmed.length ? trimmed : null;
+  if (newAlias === (row.aliasInNick || null)) return;  // no-op
+  try {
+    await api.patch(`/friends/${row.id}`, { aliasInNick: newAlias });
+    row.aliasInNick = newAlias;
+    toast.success(newAlias ? `Đã đổi tên gợi nhớ → "${newAlias}"` : 'Đã xoá tên gợi nhớ');
+  } catch (err) {
+    toast.error('Cập nhật tên gợi nhớ thất bại');
+  }
+}
+
 const statusEditTarget = ref<ChildRow | null>(null);
 const allStatuses = ref<StatusLite[]>([]);
 
@@ -1199,6 +1221,9 @@ onMounted(() => {
 .status-edit-chip:hover { filter: brightness(1.1); }
 .score-input { width: 50px; padding: 2px 4px; font-size: 11.5px; text-align: center; border: 1px solid var(--smax-grey-300); border-radius: 4px; }
 .score-input:focus { outline: 2px solid var(--smax-primary, #00f2ff); }
+.alias-input { width: 100%; min-width: 140px; padding: 3px 6px; font-size: 12px; border: 1px solid var(--smax-grey-300); border-radius: 4px; background: transparent; }
+.alias-input:focus { outline: 1.5px solid var(--smax-primary, #00f2ff); background: white; }
+.alias-input::placeholder { color: var(--smax-grey-400); font-style: italic; }
 .status-picker-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 1100; display: flex; align-items: center; justify-content: center; }
 .status-picker { background: var(--smax-bg); border-radius: 10px; padding: 16px 20px; min-width: 320px; max-width: 480px; }
 .status-picker h4 { margin: 0 0 12px; font-size: 14px; }

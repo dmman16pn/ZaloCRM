@@ -63,6 +63,7 @@
       v-if="showContactPanel && selectedConv?.contact"
       :contact-id="selectedConv.contact.id"
       :contact="selectedConv.contact"
+      :friendship="selectedConv.friendship ?? null"
       :active-zalo-account-id="selectedConv.zaloAccount?.id ?? null"
       :friend-id="selectedConv.friendship?.id ?? null"
       :ai-summary="aiSummary"
