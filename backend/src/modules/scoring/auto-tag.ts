@@ -38,39 +38,38 @@ export function computeAutoTagsForFriend(friend: {
   scoreBreakdown: any;
   // For atrisk detection: previous score 7d ago — passed in by caller
   scoreBreakdown7dAgo?: number | null;
+  // For has-appointment detection: count of future scheduled appointments
+  futureAppointmentCount?: number;
 }): AutoTagKey[] {
   const tags = new Set<AutoTagKey>();
   const now = Date.now();
 
-  // Silent-based tags
+  // Silent-based tags (recency group — exactly 1 sẽ qua bộ lọc mutual-exclusion)
   if (friend.lastInboundAt) {
     const daysSilent = Math.floor((now - friend.lastInboundAt.getTime()) / DAY_MS);
     if (daysSilent < 1) {
       tags.add('active');
     } else if (daysSilent >= 7 && daysSilent < 15) {
       tags.add('cooling');
-    } else if (daysSilent >= 15 && daysSilent < 30) {
+    } else if (daysSilent >= 15 && daysSilent < 60) {
+      // 15-60 ngày → cold (unified — bỏ split 15-30/30-60 vì cùng action follow-up)
       tags.add('cold');
     } else if (daysSilent >= 60) {
       tags.add('frozen');
     }
-    // 30-60: ngầm hiểu cold continues
-    if (daysSilent >= 30 && daysSilent < 60) {
-      tags.add('cold');
-    }
   }
 
-  // Stuck
+  // Stuck — pipeline blocker
   if (friend.stuckSince) {
     tags.add('stuck');
   }
 
-  // Ready
+  // Ready — score ≥ 80
   if (friend.leadScore >= 80) {
     tags.add('ready');
   }
 
-  // At-risk: score dropped > 20 in 7d
+  // At-risk — score dropped > 20 in 7d
   if (friend.scoreBreakdown7dAgo != null) {
     const drop = friend.scoreBreakdown7dAgo - friend.leadScore;
     if (drop > 20) {
@@ -78,13 +77,51 @@ export function computeAutoTagsForFriend(friend: {
     }
   }
 
-  // Re-warmed: detection requires history — handled separately via cron + history check
+  // Has-appointment — Friend có Appointment scheduled tương lai
+  if ((friend.futureAppointmentCount ?? 0) > 0) {
+    tags.add('has-appointment');
+  }
 
-  return Array.from(tags);
+  return applyMutualExclusion(Array.from(tags));
+}
+
+/**
+ * Áp quy tắc loại trừ — 1 KH KHÔNG được vừa có tag mâu thuẫn logic.
+ *
+ * Logic groups:
+ *   - Recency (active|cooling|cold|frozen|rewarmed) — exactly 1
+ *   - Pipeline (stuck) — excludes active (KH đang chat → không đình trệ)
+ *   - Outcome (ready vs atrisk) — atrisk win nếu cả 2 (cảnh báo > opportunity)
+ *   - active overrides atrisk (KH đang chat → không có nguy cơ)
+ *   - has-appointment — orthogonal, luôn giữ
+ */
+export function applyMutualExclusion(input: AutoTagKey[]): AutoTagKey[] {
+  const out = new Set(input);
+  const has = (t: AutoTagKey) => out.has(t);
+
+  // Rule 1: rewarmed = active + (đã cold/cooling/frozen) — overrides cả 2
+  if (has('rewarmed')) {
+    out.delete('active');
+    out.delete('cooling');
+    out.delete('cold');
+    out.delete('frozen');
+  }
+
+  // Rule 2: active overrides stuck (đang tương tác = không đình trệ)
+  if (has('active') && has('stuck')) out.delete('stuck');
+
+  // Rule 3: active overrides atrisk (đang tương tác = engagement đang lên, ko phải xuống)
+  if (has('active') && has('atrisk')) out.delete('atrisk');
+
+  // Rule 4: atrisk overrides ready (cảnh báo score giảm > status score cao)
+  if (has('atrisk') && has('ready')) out.delete('ready');
+
+  return [...out];
 }
 
 /**
  * Update Friend.autoTags + log if changed.
+ * Ghi ActivityLog với tag diff (added/removed) khi thay đổi.
  */
 export async function updateFriendAutoTags(friendId: string): Promise<boolean> {
   try {
@@ -120,42 +157,83 @@ export async function updateFriendAutoTags(friendId: string): Promise<boolean> {
         ? (historicalScoreLog.details as any).newScore ?? null
         : null;
 
-    const newTags = computeAutoTagsForFriend({
+    // Has-appointment — đếm Appointment scheduled tương lai của contact này
+    let futureAppointmentCount = 0;
+    if (friend.contactId) {
+      futureAppointmentCount = await prisma.appointment.count({
+        where: {
+          contactId: friend.contactId,
+          status: 'scheduled',
+          appointmentDate: { gte: new Date() },
+        },
+      });
+    }
+
+    let newTags = computeAutoTagsForFriend({
       leadScore: friend.leadScore,
       lastInboundAt: friend.lastInboundAt,
       stuckSince: friend.stuckSince,
       scoreBreakdown: friend.scoreBreakdown,
       scoreBreakdown7dAgo: oldScore,
+      futureAppointmentCount,
     });
 
-    // Detect re-warmed: was cold yesterday, has inbound in 48h
-    const wasCold =
-      Array.isArray(friend.autoTags) &&
-      (friend.autoTags.includes('cold') ||
-        friend.autoTags.includes('frozen') ||
-        friend.autoTags.includes('cooling'));
-    const isActiveNow = newTags.includes('active');
-    if (wasCold && isActiveNow) {
-      newTags.push('rewarmed');
-      // Remove cold/cooling/frozen since rewarmed is the more current state
-      const filtered = newTags.filter((t) => t !== 'cold' && t !== 'frozen' && t !== 'cooling');
-      if (filtered.length !== newTags.length) {
-        filtered.push('rewarmed');
-      }
+    // Detect re-warmed — was cold/cooling/frozen → has inbound trong 48h.
+    // Inject `rewarmed`, qua mutual-exclusion sẽ tự loại active+cold combo.
+    const existingTags = (friend.autoTags as AutoTagKey[]) ?? [];
+    const wasCold = existingTags.includes('cold')
+      || existingTags.includes('cooling')
+      || existingTags.includes('frozen');
+    if (wasCold && newTags.includes('active')) {
+      newTags = applyMutualExclusion([...newTags, 'rewarmed']);
     }
 
-    // Compare with existing
-    const existingTags = (friend.autoTags as AutoTagKey[]) ?? [];
+    // Compare with existing — early exit nếu không đổi (tránh ghi DB + activity log thừa)
     const existingSet = new Set(existingTags);
     const newSet = new Set(newTags);
     const same =
       existingSet.size === newSet.size && [...existingSet].every((t) => newSet.has(t));
     if (same) return false;
 
+    // Diff để log: tag nào vừa add, tag nào vừa remove
+    const added = newTags.filter((t) => !existingSet.has(t));
+    const removed = [...existingSet].filter((t) => !newSet.has(t));
+
     await prisma.friend.update({
       where: { id: friendId },
       data: { autoTags: newTags },
     });
+
+    // ActivityLog — ghi cho mỗi tag add/remove (1 entry/diff để timeline render rõ)
+    // Reason ngắn để sale hiểu tại sao hệ thống tự gắn/gỡ.
+    if (added.length || removed.length) {
+      try {
+        await prisma.activityLog.create({
+          data: {
+            orgId: friend.orgId,
+            entityType: 'friend',
+            entityId: friendId,
+            action: 'auto_tag_change',
+            details: {
+              contactId: friend.contactId,
+              added,
+              removed,
+              context: {
+                leadScore: friend.leadScore,
+                daysSilent: friend.lastInboundAt
+                  ? Math.floor((Date.now() - friend.lastInboundAt.getTime()) / DAY_MS)
+                  : null,
+                stuckSince: friend.stuckSince,
+                futureAppointmentCount,
+              },
+            },
+          },
+        });
+      } catch (logErr) {
+        // Activity log fail không nên block tag update — log warn rồi tiếp tục
+        logger.warn({ friendId, err: logErr }, 'auto_tag_change activity log failed');
+      }
+    }
 
     return true;
   } catch (err) {

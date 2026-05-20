@@ -120,6 +120,8 @@ export interface FriendUpdatedPayload {
   friendId: string;
   contactId: string;
   zaloAccountId: string;
+  /** Per-nick UID — FE filter để phân biệt nhiều Friend rows cùng nick (per-account UID). */
+  zaloUidInNick?: string;
   /** Subset fields đã đổi. Key/value khớp Prisma.FriendUpdateInput shape. */
   patch: Record<string, unknown>;
 }
@@ -128,12 +130,14 @@ export function buildFriendUpdatedPayload(args: {
   friendId: string;
   contactId: string;
   zaloAccountId: string;
+  zaloUidInNick?: string;
   patch: Record<string, unknown>;
 }): FriendUpdatedPayload {
   return {
     friendId: args.friendId,
     contactId: args.contactId,
     zaloAccountId: args.zaloAccountId,
+    zaloUidInNick: args.zaloUidInNick,
     patch: args.patch,
   };
 }

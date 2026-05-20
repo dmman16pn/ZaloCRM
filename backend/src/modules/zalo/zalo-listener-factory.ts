@@ -339,7 +339,7 @@ export function attachZaloListener(ctx: ListenerContext): void {
             zaloAccountId_zaloUidInNick: { zaloAccountId: accountId, zaloUidInNick: threadId },
           },
           select: {
-            id: true, contactId: true, zaloAccountId: true, orgId: true,
+            id: true, contactId: true, zaloAccountId: true, zaloUidInNick: true, orgId: true,
             friendshipStatus: true, relationshipKind: true,
             becameFriendAt: true, removedAt: true,
           },
@@ -349,6 +349,7 @@ export function attachZaloListener(ctx: ListenerContext): void {
             friendId: friend.id,
             contactId: friend.contactId,
             zaloAccountId: friend.zaloAccountId,
+            zaloUidInNick: friend.zaloUidInNick, // FE filter: phân biệt Friend rows cùng nick (per-account UID)
             patch: {
               friendshipStatus: friend.friendshipStatus,
               relationshipKind: friend.relationshipKind,

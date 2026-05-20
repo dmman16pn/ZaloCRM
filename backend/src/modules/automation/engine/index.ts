@@ -44,7 +44,17 @@ export function startAutomationEngine(): void {
   // 3. Start polling worker
   startTaskWorker();
 
-  logger.info('[automation.engine] started — event bus + 3 action handlers + worker');
+  // 4. Start cron event scheduler (birthday + scheduled_cron triggers)
+  void (async () => {
+    try {
+      const { startCronEventScheduler } = await import('./cron-event-scheduler.js');
+      await startCronEventScheduler();
+    } catch (err) {
+      logger.error('[automation.engine] cron scheduler boot failed:', err);
+    }
+  })();
+
+  logger.info('[automation.engine] started — event bus + 3 action handlers + worker + cron');
 }
 
 export { automationEventBus } from './event-bus.js';

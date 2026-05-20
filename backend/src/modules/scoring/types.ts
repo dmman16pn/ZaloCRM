@@ -145,12 +145,13 @@ export interface NbaTemplateSeed {
 export type AutoTagKey =
   | 'active' // có tương tác trong 24h
   | 'cooling' // 7-14 ngày silent
-  | 'cold' // 15-30 ngày silent
+  | 'cold' // 15-30 ngày silent (60-30)
   | 'frozen' // 60+ ngày silent
   | 'rewarmed' // đã cold → tương tác lại trong 48h
   | 'stuck' // quá threshold ở stage 1/2/3
   | 'ready' // score ≥ 80
-  | 'atrisk'; // score giảm > 20 trong 7 ngày
+  | 'atrisk' // score giảm > 20 trong 7 ngày
+  | 'has-appointment'; // có Appointment scheduled tương lai
 
 export const AUTO_TAG_LABELS: Record<AutoTagKey, string> = {
   active: 'Hoạt động',
@@ -161,6 +162,7 @@ export const AUTO_TAG_LABELS: Record<AutoTagKey, string> = {
   stuck: 'Đình trệ',
   ready: 'Sẵn sàng chốt',
   atrisk: 'Có nguy cơ',
+  'has-appointment': 'Có lịch hẹn',
 };
 
 export const AUTO_TAG_ICONS: Record<AutoTagKey, string> = {
@@ -172,6 +174,23 @@ export const AUTO_TAG_ICONS: Record<AutoTagKey, string> = {
   stuck: '⏰',
   ready: '💯',
   atrisk: '🚧',
+  'has-appointment': '📅',
+};
+
+/**
+ * Tooltip chi tiết per-tag — hiển thị khi hover trong UI. Sale phải hiểu CHÍNH XÁC
+ * điều kiện trigger để hành động phù hợp.
+ */
+export const AUTO_TAG_TOOLTIPS: Record<AutoTagKey, string> = {
+  active: 'KH vừa nhắn tin trong 24h qua. Đang tương tác — ưu tiên reply nhanh.',
+  cooling: 'KH im lặng 7–14 ngày. Cần follow-up trước khi nguội hẳn.',
+  cold: 'KH im lặng 15–60 ngày. Cần chiến dịch re-engage (warm-up message).',
+  frozen: 'KH im lặng trên 60 ngày. Coi như mất liên lạc — chỉ tiếp cận khi có chiến dịch lớn.',
+  rewarmed: 'KH đã cold/frozen, nay vừa nhắn lại trong 48h. Cơ hội re-engage — chăm sóc đặc biệt.',
+  stuck: 'KH dậm chân tại stage hiện tại quá threshold (stage 1/2/3). Process gặp blocker — cần rà soát lý do.',
+  ready: 'Lead score ≥ 80. KH sẵn sàng chốt — push proposal/booking ngay.',
+  atrisk: 'Lead score giảm > 20 điểm trong 7 ngày qua. Engagement xuống — can thiệp giữ chân.',
+  'has-appointment': 'Có lịch hẹn đã đặt trong tương lai. Chuẩn bị nội dung trước cuộc gặp.',
 };
 
 // ─── Aggregate result types ───────────────────────────────────────────────

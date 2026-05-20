@@ -412,7 +412,7 @@ async function processFriend(args: ProcessFriendArgs): Promise<void> {
       },
     },
     data: patch,
-    select: { id: true, contactId: true, zaloAccountId: true },
+    select: { id: true, contactId: true, zaloAccountId: true, zaloUidInNick: true },
   });
 
   // Emit socket patch — FE composable use-friend-socket mutate cache row
@@ -421,6 +421,7 @@ async function processFriend(args: ProcessFriendArgs): Promise<void> {
       friendId: updated.id,
       contactId: updated.contactId,
       zaloAccountId: updated.zaloAccountId,
+      zaloUidInNick: updated.zaloUidInNick,
       patch,
     });
     args.io.to(`org:${args.orgId}`).emit('friend:updated', payload);

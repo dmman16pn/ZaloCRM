@@ -19,7 +19,7 @@ const CATEGORY_LIMITS: Record<OpCategory, CategoryLimit> = {
   chat_action:   { daily: 500,  burst: 15, burstWindowMs: 30_000 },
   group_admin:   { daily: 50,   burst: 5,  burstWindowMs: 60_000 },
   group_read:    { daily: 1000, burst: 20, burstWindowMs: 30_000 },
-  friend_action: { daily: 30,   burst: 3,  burstWindowMs: 60_000 },
+  friend_action: { daily: 30,   burst: 8,  burstWindowMs: 60_000 },
   friend_read:   { daily: 500,  burst: 10, burstWindowMs: 30_000 },
   profile:       { daily: 10,   burst: 3,  burstWindowMs: 60_000 },
   query:         { daily: 2000, burst: 30, burstWindowMs: 30_000 },

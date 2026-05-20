@@ -1,10 +1,12 @@
 /**
  * lead-scoring.ts — Computes lead scores for contacts.
  * Score factors: recent messages, scheduled appointments, status, last activity.
+ *
+ * Auto-tagging đã chuyển sang Phase 6+ tại `scoring/auto-tag.ts` (Friend-level).
+ * Legacy `applyAutoTags` (Phase 5) đã deprecated — script này CHỈ compute score.
  */
 import { prisma } from '../../shared/database/prisma-client.js';
 import { logger } from '../../shared/utils/logger.js';
-import { applyAutoTags } from './auto-tagger.js';
 
 export async function computeLeadScore(contactId: string): Promise<number> {
   const now = new Date();
@@ -81,7 +83,7 @@ export async function computeAllLeadScores(): Promise<void> {
   for (const contact of contacts) {
     const score = await computeLeadScore(contact.id);
 
-    // Determine lastActivity for auto-tagger (reuse same logic briefly)
+    // Determine lastActivity (max of message/appointment/updatedAt) cho cột sort
     const conversations = await prisma.conversation.findMany({
       where: { contactId: contact.id },
       select: { id: true },
@@ -104,11 +106,11 @@ export async function computeAllLeadScores(): Promise<void> {
     if (latestApt) candidates.push(latestApt.appointmentDate);
     const lastActivity = new Date(Math.max(...candidates.map((d) => d.getTime())));
 
-    const tags = await applyAutoTags(contact.id, score, lastActivity);
-
+    // CHỈ update leadScore + lastActivity — KHÔNG ghi tags (Phase 5 deprecated).
+    // Phase 6+ scoring/auto-tag.ts updateFriendAutoTags() là source duy nhất.
     await prisma.contact.update({
       where: { id: contact.id },
-      data: { leadScore: score, lastActivity, tags },
+      data: { leadScore: score, lastActivity },
     });
 
     updated++;

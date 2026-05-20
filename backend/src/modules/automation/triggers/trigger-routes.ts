@@ -29,6 +29,7 @@ import {
   type TriggerBindingKind,
 } from './types.js';
 import { automationEventBus } from '../engine/event-bus.js';
+import { registerCronTrigger, unregisterCronTrigger } from '../engine/cron-event-scheduler.js';
 
 const BASE = '/api/v1/automation/triggers';
 
@@ -151,6 +152,10 @@ export async function triggerRoutes(app: FastifyInstance): Promise<void> {
           createdById: user.id,
         },
       });
+      // Hot-reload cron scheduler if this is a scheduled_cron trigger
+      if (trigger.eventType === 'scheduled_cron' && trigger.enabled) {
+        void registerCronTrigger(trigger.id);
+      }
       return reply.status(201).send(trigger);
     } catch (error) {
       logger.error('[trigger] create error:', error);
@@ -212,6 +217,11 @@ export async function triggerRoutes(app: FastifyInstance): Promise<void> {
           enabled: body.enabled ?? undefined,
         },
       });
+      // Hot-reload cron schedule (handles enable→disable, expression change, etc.)
+      if (trigger.eventType === 'scheduled_cron') {
+        if (trigger.enabled) void registerCronTrigger(trigger.id);
+        else                 unregisterCronTrigger(trigger.id);
+      }
       return trigger;
     } catch (error) {
       logger.error('[trigger] update error:', error);
@@ -286,6 +296,7 @@ export async function triggerRoutes(app: FastifyInstance): Promise<void> {
       }
 
       await prisma.automationTrigger.delete({ where: { id } });
+      unregisterCronTrigger(id); // safe no-op if not a cron trigger
       return { success: true };
     } catch (error) {
       logger.error('[trigger] delete error:', error);
@@ -307,6 +318,11 @@ async function toggleEnabled(request: FastifyRequest, reply: FastifyReply, enabl
       where: { id },
       data: { enabled },
     });
+    // Hot-reload cron schedule if applicable
+    if (trigger.eventType === 'scheduled_cron') {
+      if (enabled) void registerCronTrigger(trigger.id);
+      else         unregisterCronTrigger(trigger.id);
+    }
     return trigger;
   } catch (error) {
     logger.error('[trigger] toggle error:', error);
