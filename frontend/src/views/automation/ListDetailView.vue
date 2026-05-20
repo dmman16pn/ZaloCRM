@@ -185,6 +185,37 @@
           @input="debouncedFetchEntries"
         />
       </div>
+      <!-- Column visibility menu -->
+      <v-menu :close-on-content-click="false">
+        <template #activator="{ props: act }">
+          <button v-bind="act" class="at-btn col-toggle-btn" title="Ẩn / hiện cột">
+            <v-icon size="14">mdi-view-column-outline</v-icon>
+            Cột {{ visibleColCount }}/{{ ALL_COLUMNS.length }}
+            <v-icon size="13">mdi-chevron-down</v-icon>
+          </button>
+        </template>
+        <v-list density="compact" min-width="240">
+          <v-list-item
+            v-for="col in ALL_COLUMNS"
+            :key="col.key"
+            @click="toggleColumn(col.key)"
+          >
+            <template #prepend>
+              <v-icon size="16" :color="isColVisible(col.key) ? '#6366F1' : '#9CA3AF'">
+                {{ isColVisible(col.key) ? 'mdi-checkbox-marked' : 'mdi-checkbox-blank-outline' }}
+              </v-icon>
+            </template>
+            <v-list-item-title style="font-size:13px">{{ col.label }}</v-list-item-title>
+          </v-list-item>
+          <v-divider />
+          <v-list-item @click="resetColumns">
+            <template #prepend>
+              <v-icon size="16" color="#6B7280">mdi-restore</v-icon>
+            </template>
+            <v-list-item-title style="font-size:12.5px;color:#6B7280">Reset về mặc định</v-list-item-title>
+          </v-list-item>
+        </v-list>
+      </v-menu>
     </div>
 
     <!-- Entries table -->
@@ -202,26 +233,26 @@
               />
             </th>
             <th>#</th>
-            <th title="Phone gốc anh paste">📋 Phone (paste)</th>
-            <th title="Phone E.164 chuẩn quốc tế">🌐 Phone (+84)</th>
-            <th title="Phone local VN (0xxx)">🇻🇳 Phone (local)</th>
-            <th>Tên KH (file)</th>
-            <th>Tên KH (Zalo)</th>
-            <th title="Lời mời / tin nhắn riêng cho KH này (chỉ có khi import từ CSV/Excel)">💬 Lời mời riêng</th>
-            <th title="Lifecycle 5 ô: Mới / Đang chờ Quét / Có Zalo / Không có Zalo / Lỗi">🔄 Trạng thái</th>
-            <th>Zalo UID</th>
-            <th>Nick tìm ra</th>
-            <th>Global ID</th>
-            <th title="Stack thông báo hệ thống — trùng, sale loại, số sai cụ thể... (newest top, hover xem full)">📨 Thông báo hệ thống</th>
+            <th v-show="isColVisible('phoneRaw')"       title="Phone gốc anh paste">📋 Phone (paste)</th>
+            <th v-show="isColVisible('phoneE164')"      title="Phone E.164 chuẩn quốc tế">🌐 Phone (+84)</th>
+            <th v-show="isColVisible('phoneLocal')"     title="Phone local VN (0xxx)">🇻🇳 Phone (local)</th>
+            <th v-show="isColVisible('nameRaw')">Tên KH (file)</th>
+            <th v-show="isColVisible('nameZalo')">Tên KH (Zalo)</th>
+            <th v-show="isColVisible('personalNote')"   title="Lời mời / tin nhắn riêng cho KH này (chỉ có khi import từ CSV/Excel)">💬 Lời mời riêng</th>
+            <th v-show="isColVisible('lifecycle')"      title="Lifecycle 5 ô: Mới / Đang chờ Quét / Có Zalo / Không có Zalo / Lỗi">🔄 Trạng thái</th>
+            <th v-show="isColVisible('zaloUid')">Zalo UID</th>
+            <th v-show="isColVisible('resolvedByNick')">Nick tìm ra</th>
+            <th v-show="isColVisible('zaloGlobalId')">Global ID</th>
+            <th v-show="isColVisible('systemMessages')" title="Stack thông báo hệ thống — trùng, sale loại, số sai cụ thể... (newest top, hover xem full)">📨 Thông báo hệ thống</th>
             <th class="right">Action</th>
           </tr>
         </thead>
         <tbody>
           <tr v-if="loadingEntries">
-            <td colspan="14" class="loading-cell">⏳ Đang tải...</td>
+            <td :colspan="dynamicColspan" class="loading-cell">⏳ Đang tải...</td>
           </tr>
           <tr v-else-if="entries.length === 0">
-            <td colspan="14" class="empty-cell">Không có SĐT nào ở tab này</td>
+            <td :colspan="dynamicColspan" class="empty-cell">Không có SĐT nào ở tab này</td>
           </tr>
           <tr
             v-for="entry in entries"
@@ -239,7 +270,7 @@
             </td>
             <td class="ix">#{{ entry.rowIndex }}</td>
             <!-- Editable phoneRaw — Enter sẽ re-validate + re-dedup -->
-            <td class="phone-cell raw editable" @click.stop="startEdit(entry.id, 'phoneRaw', entry.phoneRaw)">
+            <td v-show="isColVisible('phoneRaw')" class="phone-cell raw editable cell-scroll" @click.stop="startEdit(entry.id, 'phoneRaw', entry.phoneRaw)">
               <input
                 v-if="editing && editing.entryId === entry.id && editing.field === 'phoneRaw'"
                 v-model="editing.value"
@@ -252,13 +283,17 @@
                 @keydown.esc="cancelEdit"
                 @blur="commitEdit"
               />
-              <template v-else>{{ entry.phoneRaw }}</template>
+              <span v-else class="cell-content">{{ entry.phoneRaw }}</span>
             </td>
             <!-- Readonly: auto-derive từ phoneRaw -->
-            <td class="phone-cell e164 readonly" :title="'Tự derive từ Phone (paste). KHÔNG edit ở đây.'">{{ entry.phoneE164 || '—' }}</td>
-            <td class="phone-cell local readonly" :title="'Tự derive từ Phone (paste). KHÔNG edit ở đây.'">{{ entry.phoneLocal || '—' }}</td>
+            <td v-show="isColVisible('phoneE164')" class="phone-cell e164 readonly cell-scroll" :title="'Tự derive từ Phone (paste). KHÔNG edit ở đây.'">
+              <span class="cell-content">{{ entry.phoneE164 || '—' }}</span>
+            </td>
+            <td v-show="isColVisible('phoneLocal')" class="phone-cell local readonly cell-scroll" :title="'Tự derive từ Phone (paste). KHÔNG edit ở đây.'">
+              <span class="cell-content">{{ entry.phoneLocal || '—' }}</span>
+            </td>
             <!-- Editable nameRaw -->
-            <td class="name editable" @click.stop="startEdit(entry.id, 'nameRaw', entry.nameRaw ?? '')">
+            <td v-show="isColVisible('nameRaw')" class="name editable cell-scroll" @click.stop="startEdit(entry.id, 'nameRaw', entry.nameRaw ?? '')">
               <input
                 v-if="editing && editing.entryId === entry.id && editing.field === 'nameRaw'"
                 v-model="editing.value"
@@ -270,16 +305,18 @@
                 @keydown.esc="cancelEdit"
                 @blur="commitEdit"
               />
-              <template v-else-if="entry.nameRaw">{{ entry.nameRaw }}</template>
+              <span v-else-if="entry.nameRaw" class="cell-content">{{ entry.nameRaw }}</span>
               <span v-else class="muted-italic">(click để thêm)</span>
             </td>
-            <td class="name-zalo readonly" :class="entry.zaloName ? 'has' : 'no'">
-              <template v-if="entry.zaloName">{{ entry.zaloName }}</template>
-              <template v-else-if="entry.status === 'invalid'">—</template>
-              <template v-else>(chưa có)</template>
+            <td v-show="isColVisible('nameZalo')" class="name-zalo readonly cell-scroll" :class="entry.zaloName ? 'has' : 'no'">
+              <span class="cell-content">
+                <template v-if="entry.zaloName">{{ entry.zaloName }}</template>
+                <template v-else-if="entry.status === 'invalid'">—</template>
+                <template v-else>(chưa có)</template>
+              </span>
             </td>
             <!-- Editable personalNote -->
-            <td class="personal-note editable" :title="entry.personalNote || 'Click để thêm lời mời'" @click.stop="startEdit(entry.id, 'personalNote', entry.personalNote ?? '')">
+            <td v-show="isColVisible('personalNote')" class="personal-note editable cell-scroll" :title="entry.personalNote || 'Click để thêm lời mời'" @click.stop="startEdit(entry.id, 'personalNote', entry.personalNote ?? '')">
               <input
                 v-if="editing && editing.entryId === entry.id && editing.field === 'personalNote'"
                 v-model="editing.value"
@@ -291,20 +328,20 @@
                 @keydown.esc="cancelEdit"
                 @blur="commitEdit"
               />
-              <template v-else-if="entry.personalNote">{{ entry.personalNote }}</template>
+              <span v-else-if="entry.personalNote" class="cell-content">{{ entry.personalNote }}</span>
               <span v-else class="muted-italic">(click để thêm)</span>
             </td>
             <!-- Cột 1: Lifecycle (5 ô cố định) -->
-            <td class="lifecycle-cell">
+            <td v-show="isColVisible('lifecycle')" class="lifecycle-cell">
               <span class="status-pill" :class="lifecycle(entry).cls">
                 {{ lifecycle(entry).label }}
               </span>
             </td>
-            <td class="uid-cell" :class="{ empty: !entry.zaloUid }">
-              {{ entry.zaloUid || '—' }}
+            <td v-show="isColVisible('zaloUid')" class="uid-cell cell-scroll" :class="{ empty: !entry.zaloUid }">
+              <span class="cell-content">{{ entry.zaloUid || '—' }}</span>
             </td>
-            <td>
-              <span v-if="entry.resolvedByNick" class="nick-cell">
+            <td v-show="isColVisible('resolvedByNick')" class="cell-scroll">
+              <span v-if="entry.resolvedByNick" class="nick-cell cell-content">
                 <span class="av" :style="nickAvatarStyle(entry.resolvedByNick.displayName ?? '?')">
                   {{ initials(entry.resolvedByNick.displayName ?? '?') }}
                 </span>
@@ -313,12 +350,12 @@
               </span>
               <span v-else class="muted-italic">—</span>
             </td>
-            <td>
-              <span v-if="entry.zaloGlobalId" class="global-id">{{ entry.zaloGlobalId }}</span>
+            <td v-show="isColVisible('zaloGlobalId')" class="cell-scroll">
+              <span v-if="entry.zaloGlobalId" class="global-id cell-content">{{ entry.zaloGlobalId }}</span>
               <span v-else class="global-id empty">—</span>
             </td>
             <!-- Cột 2: System Messages (stack, newest top, hover xem full) -->
-            <td class="system-messages-cell">
+            <td v-show="isColVisible('systemMessages')" class="system-messages-cell">
               <template v-if="sortedMessages(entry.systemMessages).length === 0">
                 <span class="muted-italic">—</span>
               </template>
@@ -363,7 +400,7 @@
           <tr class="add-row">
             <td></td>
             <td class="ix" style="color:#9CA3AF">➕</td>
-            <td colspan="11">
+            <td :colspan="visibleColCount + 1">
               <input
                 v-model="addRowText"
                 class="add-input"
@@ -822,6 +859,69 @@ function formatMsgTs(ts: string): string {
   return d.toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 }
 
+// ───────── Column visibility (persist localStorage) ─────────
+interface ColumnDef { key: string; label: string; defaultVisible: boolean }
+const ALL_COLUMNS: ColumnDef[] = [
+  { key: 'phoneRaw',        label: '📋 Phone (paste)',        defaultVisible: true  },
+  { key: 'phoneE164',       label: '🌐 Phone (+84)',          defaultVisible: true  },
+  { key: 'phoneLocal',      label: '🇻🇳 Phone (local)',         defaultVisible: true  },
+  { key: 'nameRaw',         label: 'Tên KH (file)',           defaultVisible: true  },
+  { key: 'nameZalo',        label: 'Tên KH (Zalo)',           defaultVisible: true  },
+  { key: 'personalNote',    label: '💬 Lời mời riêng',         defaultVisible: true  },
+  { key: 'lifecycle',       label: '🔄 Trạng thái',            defaultVisible: true  },
+  { key: 'zaloUid',         label: 'Zalo UID',                defaultVisible: true  },
+  { key: 'resolvedByNick',  label: 'Nick tìm ra',             defaultVisible: true  },
+  { key: 'zaloGlobalId',    label: 'Global ID',               defaultVisible: false },
+  { key: 'systemMessages',  label: '📨 Thông báo hệ thống',     defaultVisible: true  },
+];
+const COL_STORAGE_KEY = 'zalocrm:listDetail:visibleColumns:v1';
+
+function loadVisibleColumns(): Set<string> {
+  try {
+    const raw = localStorage.getItem(COL_STORAGE_KEY);
+    if (raw) {
+      const arr = JSON.parse(raw) as string[];
+      if (Array.isArray(arr)) return new Set(arr);
+    }
+  } catch (e) {
+    console.warn('[list-detail] visibleColumns parse failed', e);
+  }
+  return new Set(ALL_COLUMNS.filter((c) => c.defaultVisible).map((c) => c.key));
+}
+
+const visibleColumns = ref<Set<string>>(loadVisibleColumns());
+
+function isColVisible(key: string): boolean {
+  return visibleColumns.value.has(key);
+}
+
+function toggleColumn(key: string) {
+  const s = new Set(visibleColumns.value);
+  if (s.has(key)) s.delete(key);
+  else s.add(key);
+  visibleColumns.value = s;
+  try {
+    localStorage.setItem(COL_STORAGE_KEY, JSON.stringify([...s]));
+  } catch (e) {
+    console.warn('[list-detail] visibleColumns persist failed', e);
+  }
+}
+
+function resetColumns() {
+  const defaultSet = new Set(ALL_COLUMNS.filter((c) => c.defaultVisible).map((c) => c.key));
+  visibleColumns.value = defaultSet;
+  try {
+    localStorage.setItem(COL_STORAGE_KEY, JSON.stringify([...defaultSet]));
+  } catch (e) {
+    console.warn('[list-detail] visibleColumns reset failed', e);
+  }
+}
+
+const visibleColCount = computed(() => visibleColumns.value.size);
+
+// Dynamic colspan cho loading/empty row (fixed: checkbox + #, + 1 cho action + visible cols)
+const dynamicColspan = computed(() => 3 + visibleColumns.value.size);
+
 function initials(name: string): string {
   if (!name) return '?';
   const parts = name.trim().split(/\s+/);
@@ -973,6 +1073,30 @@ function nickAvatarStyle(name: string): Record<string, string> {
 .entries-table tbody td {
   padding: 8px 9px; border-bottom: 1px solid #EFF1F4;
   vertical-align: middle; color: #111827;
+  white-space: nowrap; /* No wrap by default — long text scrolls horizontally */
+}
+
+/* Scroll-x cells: content overflow ngang → scrollbar nhỏ ở đáy cell, không wrap */
+.cell-scroll {
+  max-width: 200px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: #D1D5DB transparent;
+}
+.cell-scroll::-webkit-scrollbar {
+  height: 5px;
+  background: transparent;
+}
+.cell-scroll::-webkit-scrollbar-thumb {
+  background: #D1D5DB;
+  border-radius: 3px;
+}
+.cell-scroll::-webkit-scrollbar-thumb:hover { background: #9CA3AF; }
+.cell-content {
+  display: inline-block;
+  white-space: nowrap;
+  min-width: 100%; /* để scroll-x ngang được khi content rộng hơn cell */
 }
 .entries-table tbody tr { transition: background .1s; cursor: pointer; }
 .entries-table tbody tr:hover { background: #FAFBFC; }
@@ -989,18 +1113,15 @@ function nickAvatarStyle(name: string): Record<string, string> {
 .phone-cell.raw { color: #6B7280; }
 .phone-cell.e164 { color: #4B5563; }
 .phone-cell.local { color: #111827; font-weight: 600; }
-.name { font-weight: 500; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.name-zalo {
-  max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
+/* Width override cho name cells — scroll-x sẽ handle overflow */
+.name { font-weight: 500; }
+.name.cell-scroll { max-width: 160px; }
+.name-zalo.cell-scroll { max-width: 160px; }
 .name-zalo.has { color: #111827; font-weight: 500; }
 .name-zalo.no { color: #9CA3AF; font-style: italic; }
 
-.personal-note {
-  max-width: 200px;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  color: #4B5563; font-size: 12px;
-}
+.personal-note { color: #4B5563; font-size: 12px; }
+.personal-note.cell-scroll { max-width: 220px; }
 
 /* ─── Editable cells ─── */
 .editable {
@@ -1186,6 +1307,16 @@ function nickAvatarStyle(name: string): Record<string, string> {
 }
 
 .lifecycle-cell { white-space: nowrap; }
+
+.col-toggle-btn {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 6px 10px;
+  background: #fff; border: 1px solid #E5E7EB; border-radius: 7px;
+  font-size: 12px; font-weight: 500; color: #4B5563;
+  cursor: pointer; font-family: inherit;
+  white-space: nowrap;
+}
+.col-toggle-btn:hover { background: #F4F5F8; border-color: #D1D5DB; }
 
 .uid-cell {
   font-family: "JetBrains Mono", monospace;
