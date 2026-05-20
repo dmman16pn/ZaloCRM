@@ -143,6 +143,7 @@ export async function chatRoutes(app: FastifyInstance) {
       stuck = '',               // 'true' → friends.some.stuckSince != null
       ready = '',               // 'true' → score >= 80
       zaloLabels = '',          // CSV: filter by Zalo Real labels
+      engagementPattern = '',   // Phase 8 — CSV: hot,champion,stable,cooling,cold
     } = request.query as QueryParams;
 
     const where: any = { orgId: user.orgId };
@@ -242,6 +243,12 @@ export async function chatRoutes(app: FastifyInstance) {
     if (relationshipKindAny) {
       const kinds = relationshipKindAny.split(',').map(s => s.trim()).filter(Boolean);
       if (kinds.length > 0) contactWhere.friends = { some: { relationshipKind: { in: kinds } } };
+    }
+    // Phase 8 — Engagement pattern filter (1+ pattern from heatmap classification)
+    if (engagementPattern) {
+      const patterns = engagementPattern.split(',').map((s) => s.trim()).filter(Boolean);
+      if (patterns.length === 1) contactWhere.engagementPattern = patterns[0];
+      else if (patterns.length > 1) contactWhere.engagementPattern = { in: patterns };
     }
     if (Object.keys(contactWhere).length > 0) where.contact = contactWhere;
 
@@ -359,14 +366,19 @@ export async function chatRoutes(app: FastifyInstance) {
       prisma.conversation.count({ where }),
     ]);
 
-    // Batch fetch Friend records cho user threads để FE biết friendship state
+    // Batch fetch Friend records cho user threads để FE biết friendship state.
+    // QUAN TRỌNG: lookup theo (zaloAccountId × zaloUidInNick = conv.externalThreadId)
+    // — đây là unique key cho Friend row. KHÔNG dùng (accountId × contactId) vì cùng
+    // contact có thể có nhiều Friend rows cùng account (per-nick UID khác nhau từ
+    // session reset). Mỗi conv bind đúng 1 friend row qua externalThreadId.
     const userPairs = conversations
-      .filter(c => c.threadType === 'user' && c.contactId)
-      .map(c => ({ zaloAccountId: c.zaloAccountId, contactId: c.contactId! }));
+      .filter(c => c.threadType === 'user' && c.contactId && c.externalThreadId)
+      .map(c => ({ zaloAccountId: c.zaloAccountId, zaloUidInNick: c.externalThreadId! }));
     let friendMap = new Map<string, {
       id: string;
       relationshipKind: string; friendshipStatus: string;
       becameFriendAt: Date | null; firstMessageAt: Date | null;
+      updatedAt: Date;
       crmTagsPerNick: unknown;
       aliasInNick: string | null;        // ui-phase5: "Tên gợi nhớ" Zalo sync 2-way
       // Per-pair counter (FE header cột 3 đọc — fix bug 235/198 revert 0/0)
@@ -383,12 +395,14 @@ export async function chatRoutes(app: FastifyInstance) {
     }>();
     if (userPairs.length) {
       const friends = await prisma.friend.findMany({
-        where: { OR: userPairs.map(p => ({ AND: [{ zaloAccountId: p.zaloAccountId }, { contactId: p.contactId }] })) },
+        where: { OR: userPairs.map(p => ({ AND: [{ zaloAccountId: p.zaloAccountId }, { zaloUidInNick: p.zaloUidInNick }] })) },
         select: {
           id: true,                            // Friend.id để FE fetch /scoring/:friendId/breakdown
           zaloAccountId: true, contactId: true,
+          zaloUidInNick: true,                 // dùng làm map key
           relationshipKind: true, friendshipStatus: true,
           becameFriendAt: true, firstMessageAt: true,
+          updatedAt: true,                     // last status change — dùng cho pendingDaysLabel
           crmTagsPerNick: true,                // per-pair CRM tags (kèm Zalo-mirrored "🔵 X")
           aliasInNick: true,                   // "Tên gợi nhớ" Zalo, sync 2-way (ui-phase5)
           // ── Per-pair counter ─────────────────────────────────────────────
@@ -409,12 +423,15 @@ export async function chatRoutes(app: FastifyInstance) {
           statusRef: { select: { name: true, color: true } },
         },
       });
-      friendMap = new Map(friends.map(f => [`${f.zaloAccountId}:${f.contactId}`, {
+      // Map key = (accountId × zaloUidInNick) khớp với conv.externalThreadId
+      // → mỗi conv lấy ĐÚNG friend row của thread đó, không dedup nhầm KH có nhiều UID.
+      friendMap = new Map(friends.map(f => [`${f.zaloAccountId}:${f.zaloUidInNick}`, {
         id: f.id,
         relationshipKind: f.relationshipKind,
         friendshipStatus: f.friendshipStatus,
         becameFriendAt: f.becameFriendAt,
         firstMessageAt: f.firstMessageAt,
+        updatedAt: f.updatedAt,
         crmTagsPerNick: f.crmTagsPerNick,
         aliasInNick: f.aliasInNick,          // ui-phase5
         // Per-pair counter — header chat cột 3 dùng (fix bug 235/198 → 0/0)
@@ -435,7 +452,9 @@ export async function chatRoutes(app: FastifyInstance) {
       conversations: conversations.map((c) => ({
         ...c,
         isPinned: c.pins.length > 0,
-        friendship: c.contactId ? friendMap.get(`${c.zaloAccountId}:${c.contactId}`) || null : null,
+        friendship: c.contactId && c.externalThreadId
+          ? friendMap.get(`${c.zaloAccountId}:${c.externalThreadId}`) || null
+          : null,
       })),
       total,
       page: parseInt(page),
@@ -468,6 +487,7 @@ export async function chatRoutes(app: FastifyInstance) {
       hasConversation: boolean;
       becameFriendAt: Date | null;
       firstMessageAt: Date | null;
+      updatedAt: Date;
       totalInbound: number;
       totalOutbound: number;
       leadScore: number;
@@ -486,6 +506,7 @@ export async function chatRoutes(app: FastifyInstance) {
           hasConversation: true,
           becameFriendAt: true,
           firstMessageAt: true,
+          updatedAt: true,
           totalInbound: true,
           totalOutbound: true,
           leadScore: true,

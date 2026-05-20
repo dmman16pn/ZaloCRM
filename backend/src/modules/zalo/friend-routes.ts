@@ -13,6 +13,7 @@ import { normalizePhone } from '../../shared/utils/phone.js';
 import { FRIEND_INCLUDE_WITH_CONTACT, toFriendDto } from '../../shared/friend-serializer.js';
 import { syncAccountFully } from './friend-sync-service.js';
 import { zaloPool } from './zalo-pool.js';
+import { logger } from '../../shared/utils/logger.js';
 
 const BASE = '/api/v1/zalo-accounts/:accountId/friends';
 
@@ -383,28 +384,136 @@ export async function friendRoutes(app: FastifyInstance) {
   });
 
   // POST .../friends/requests/:userId/accept — accept incoming request
+  // Per-nick UID resolution: 1 Contact có thể có nhiều Friend rows trong cùng 1 nick
+  // (old friendship UID + new pending invite UID khác nhau — Zalo issue UID mới mỗi
+  // lần re-request). Conv bind vào UID cũ nhưng accept phải target UID PENDING.
+  // → Resolve actual pending UID qua Friend table trước khi gọi SDK.
   app.post(`${BASE}/requests/:userId/accept`, async (request: FastifyRequest, reply: FastifyReply) => {
     const { accountId, userId } = request.params as { accountId: string; userId: string };
     const user = request.user!;
     try {
       if (!await checkAccess(request, reply, accountId, 'chat')) return;
       await resolveAccount(accountId, user.orgId);
-      const data = await zaloOps.acceptFriendRequest(accountId, userId);
-      return { data };
+
+      // Bước 1: resolve actual pending UID. userId từ URL có thể là externalThreadId
+      // của conv (= UID old friendship). Tìm Friend row pending_received cùng (nick, contact).
+      let acceptUid = userId;
+      let resolvedFrom: string | null = null;
+      try {
+        const convFriend = await prisma.friend.findUnique({
+          where: { zaloAccountId_zaloUidInNick: { zaloAccountId: accountId, zaloUidInNick: userId } },
+          select: { contactId: true, friendshipStatus: true },
+        });
+        if (convFriend?.contactId && convFriend.friendshipStatus !== 'pending_received') {
+          // Conv UID không phải pending → tìm pending sibling cùng contact + nick
+          const pendingSibling = await prisma.friend.findFirst({
+            where: {
+              zaloAccountId: accountId,
+              contactId: convFriend.contactId,
+              friendshipStatus: 'pending_received',
+              zaloUidInNick: { not: userId },
+            },
+            select: { zaloUidInNick: true, id: true },
+          });
+          if (pendingSibling?.zaloUidInNick) {
+            acceptUid = pendingSibling.zaloUidInNick;
+            resolvedFrom = userId;
+            logger.info(`[friend-op] Resolved pending UID for accept`, {
+              accountId, originalUid: userId, actualUid: acceptUid,
+              contactId: convFriend.contactId, siblingFriendId: pendingSibling.id,
+            });
+          }
+        }
+      } catch (resolveErr: any) {
+        logger.warn(`[friend-op] UID resolve failed, using original`, { userId, err: resolveErr?.message });
+      }
+
+      // Bước 2: verify current state qua getFriendRequestStatus (diagnostic)
+      let statusBefore: any = null;
+      try {
+        statusBefore = await zaloOps.getFriendRequestStatus(accountId, acceptUid);
+        logger.info(`[friend-op] accept ${accountId}→${acceptUid} status:`, statusBefore);
+      } catch (statusErr: any) {
+        logger.warn(`[friend-op] getFriendRequestStatus failed before accept`, { accountId, acceptUid, err: statusErr?.message });
+      }
+
+      // Bước 3: thử acceptFriendRequest với UID đã resolve
+      try {
+        const data = await zaloOps.acceptFriendRequest(accountId, acceptUid);
+        return { data, method: resolvedFrom ? 'accept-resolved' : 'accept', acceptUid, resolvedFrom };
+      } catch (acceptErr: any) {
+        const errMsg = String(acceptErr?.message || '');
+        logger.warn(`[friend-op] acceptFriendRequest failed`, {
+          accountId, acceptUid, originalUid: userId,
+          errMsg, errCode: acceptErr?.code, statusBefore,
+        });
+
+        // Bước 4: fallback sendFriendRequest — Zalo SDK comment:
+        // "222 if user has already sent you a friend request, your request will be
+        //  treated as acceptance instead". Chỉ fallback khi statusBefore != is_friend.
+        const shouldFallback = !statusBefore?.is_friend && (
+          statusBefore?.is_requesting === 1 ||
+          errMsg.includes('Tham số không hợp lệ') ||
+          errMsg.includes('Invalid')
+        );
+        if (shouldFallback) {
+          logger.info(`[friend-op] Falling back to sendFriendRequest`, { acceptUid });
+          try {
+            const data = await zaloOps.sendFriendRequest(accountId, '', acceptUid);
+            return { data, method: 'send-as-accept', acceptUid, resolvedFrom };
+          } catch (sendErr: any) {
+            logger.error(`[friend-op] sendFriendRequest fallback also failed`, {
+              accountId, acceptUid, err: sendErr?.message,
+            });
+            throw sendErr;
+          }
+        }
+        throw acceptErr;
+      }
     } catch (err) {
       return handleError(reply, err, 'friend-op');
     }
   });
 
   // POST .../friends/requests/:userId/reject — reject incoming request
+  // Per-nick UID: same resolution logic như /accept — conv UID có thể là old friendship,
+  // pending invite trên Friend row sibling khác. Reject sai UID → "Tham số không hợp lệ".
   app.post(`${BASE}/requests/:userId/reject`, async (request: FastifyRequest, reply: FastifyReply) => {
     const { accountId, userId } = request.params as { accountId: string; userId: string };
     const user = request.user!;
     try {
       if (!await checkAccess(request, reply, accountId, 'chat')) return;
       await resolveAccount(accountId, user.orgId);
-      const data = await zaloOps.rejectFriendRequest(accountId, userId);
-      return { data };
+
+      let rejectUid = userId;
+      try {
+        const convFriend = await prisma.friend.findUnique({
+          where: { zaloAccountId_zaloUidInNick: { zaloAccountId: accountId, zaloUidInNick: userId } },
+          select: { contactId: true, friendshipStatus: true },
+        });
+        if (convFriend?.contactId && convFriend.friendshipStatus !== 'pending_received') {
+          const pendingSibling = await prisma.friend.findFirst({
+            where: {
+              zaloAccountId: accountId,
+              contactId: convFriend.contactId,
+              friendshipStatus: 'pending_received',
+              zaloUidInNick: { not: userId },
+            },
+            select: { zaloUidInNick: true },
+          });
+          if (pendingSibling?.zaloUidInNick) {
+            rejectUid = pendingSibling.zaloUidInNick;
+            logger.info(`[friend-op] Resolved pending UID for reject`, {
+              accountId, originalUid: userId, actualUid: rejectUid,
+            });
+          }
+        }
+      } catch (resolveErr: any) {
+        logger.warn(`[friend-op] UID resolve failed for reject`, { userId, err: resolveErr?.message });
+      }
+
+      const data = await zaloOps.rejectFriendRequest(accountId, rejectUid);
+      return { data, rejectUid, originalUid: userId };
     } catch (err) {
       return handleError(reply, err, 'friend-op');
     }

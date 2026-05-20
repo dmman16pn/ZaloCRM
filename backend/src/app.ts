@@ -64,6 +64,7 @@ import { blockRoutes } from './modules/automation/blocks/block-routes.js';
 import { blockFolderRoutes } from './modules/automation/blocks/block-folder-routes.js';
 import { sequenceRoutes } from './modules/automation/sequences/sequence-routes.js';
 import { triggerRoutes } from './modules/automation/triggers/trigger-routes.js';
+import { broadcastRoutes } from './modules/automation/broadcasts/broadcast-routes.js';
 // Tệp khách hàng (CustomerList) — Phase 7 audience layer
 import { customerListRoutes } from './modules/automation/lists/list-routes.js';
 import { customerListEntryRoutes } from './modules/automation/lists/list-entry-routes.js';
@@ -190,6 +191,7 @@ async function bootstrap() {
   await app.register(blockFolderRoutes);
   await app.register(sequenceRoutes);
   await app.register(triggerRoutes);
+  await app.register(broadcastRoutes);
   // Tệp khách hàng — CustomerList CRUD + entries + enrichment + event handlers
   await app.register(customerListRoutes);
   await app.register(customerListEntryRoutes);
@@ -249,6 +251,9 @@ async function bootstrap() {
     // Phase 8 — Engagement heatmap classification (02:30 VN daily)
     const { startEngagementCron } = await import('./modules/engagement/engagement-cron.js');
     startEngagementCron();
+    // Phase A — Real-time Zalo presence cache + bulk refresh 60s + socket emit
+    const { startPresenceCron } = await import('./modules/zalo/presence-service.js');
+    startPresenceCron(io);
     // Friend full-sync periodic (*/15 min) — catch alias/name/avatar drift từ Zalo
     // native app mà friend_event listener không bắt được (xem friend-sync-cron.ts)
     const { startFriendSyncCron } = await import('./modules/zalo/friend-sync-cron.js');
@@ -261,6 +266,9 @@ async function bootstrap() {
     if (config.nodeEnv !== 'test') {
       const { startAutomationEngine } = await import('./modules/automation/engine/index.js');
       startAutomationEngine();
+      // Phase F — Broadcast scheduler: poll automation_broadcasts scheduled→running
+      const { startBroadcastScheduler } = await import('./modules/automation/broadcasts/broadcast-scheduler.js');
+      startBroadcastScheduler();
       // Tệp khách hàng — enrichment worker + reverse-update event handlers
       startListEnrichmentWorker();
       registerCustomerListEventHandlers();

@@ -170,6 +170,17 @@ export async function updateContactAggregate(contactId: string): Promise<void> {
         aggregateScoreUpdatedAt: new Date(),
       },
     });
+
+    // Phase 8.C — Recompute Priority Score sau khi leadScore aggregate đổi.
+    // Fire-and-forget, không block aggregate path.
+    void (async () => {
+      try {
+        const { recomputeContactPriority } = await import('../engagement/priority-service.js');
+        await recomputeContactPriority(contactId);
+      } catch {
+        /* silent — priority is best-effort */
+      }
+    })();
   } catch (err) {
     logger.error({ contactId, err }, 'Failed to update contact aggregate');
   }

@@ -103,6 +103,16 @@ export interface Contact {
   totalInbound?: number;
   totalOutbound?: number;
   totalAppointments?: number;
+
+  // Phase 8 — Engagement Heatmap (read-only, server-computed)
+  engagementPattern?: 'hot' | 'champion' | 'stable' | 'cooling' | 'cold' | 'noise' | null;
+  engagementTrend?: number | null;
+  engagementScore?: number | null;
+  engagementUpdatedAt?: string | null;
+
+  // Phase 8.C — Priority Score (combined Lead × 0.55 + Engagement × 0.30 + trend)
+  priorityScore?: number | null;
+  priorityUpdatedAt?: string | null;
 }
 
 export const GENDER_OPTIONS = [

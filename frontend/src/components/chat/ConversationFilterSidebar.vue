@@ -623,15 +623,25 @@
           </div>
         </section>
 
-        <!-- TIER 2: TƯƠNG TÁC (collapsed default) -->
-        <section class="section collapsed">
-          <header class="section-header" tabindex="0" role="button" aria-expanded="false">
+        <!-- TIER 2: TƯƠNG TÁC (Phase 8 — Engagement pattern filter) -->
+        <section class="section" :class="{ collapsed: !sectionsOpen.engagement }">
+          <header class="section-header" tabindex="0" role="button" :aria-expanded="sectionsOpen.engagement" @click="toggleEngagementSection" @keydown.enter.prevent="toggleEngagementSection" @keydown.space.prevent="toggleEngagementSection">
             <div class="left"><span class="emoji">💬</span>Tương tác</div>
             <div class="right">
-              <span class="count-badge zero">0</span>
+              <span v-if="engagementActiveCount > 0" class="count-badge">{{ engagementActiveCount }}</span>
+              <span v-else class="count-badge zero">0</span>
               <span class="chevron">▾</span>
             </div>
           </header>
+          <div class="section-body">
+            <div class="subsection-label">Pattern engagement</div>
+            <div class="event-row" v-for="p in ENGAGEMENT_PATTERNS" :key="p.key" :class="{ checked: filters.state.engagementPatterns.includes(p.key) }" @click="toggleEngagementPattern(p.key)">
+              <div class="left">
+                <span class="icon">{{ p.icon }}</span>
+                <span class="lbl">{{ p.label }}</span>
+              </div>
+            </div>
+          </div>
         </section>
 
         <!-- TIER 2: HỒ SƠ KH -->
@@ -706,7 +716,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, reactive, watch } from 'vue';
-import type { AccountFolder, AutoTagKey, ScoreTier, StuckDuration, LastMessageWithin } from '@/composables/use-inbox-filters';
+import type { AccountFolder, AutoTagKey, ScoreTier, StuckDuration, LastMessageWithin, EngagementPatternKey } from '@/composables/use-inbox-filters';
 import { useCrmTagDefs, cleanTagName, type CrmTagDef } from '@/composables/use-crm-tag-defs';
 
 const props = defineProps<{
@@ -816,8 +826,8 @@ async function onCreatePresetFromPopover() {
 }
 
 // ─── Section expand state (persist) ──────────────────────
-type SectionKey = 'tag' | 'score' | 'time' | 'event' | 'sale';
-const SECTION_KEYS: SectionKey[] = ['tag', 'score', 'time', 'event', 'sale'];
+type SectionKey = 'tag' | 'score' | 'time' | 'event' | 'sale' | 'engagement';
+const SECTION_KEYS: SectionKey[] = ['tag', 'score', 'time', 'event', 'sale', 'engagement'];
 
 function loadSectionState(): Record<SectionKey, boolean> {
   const result = {} as Record<SectionKey, boolean>;
@@ -970,6 +980,15 @@ const LAST_MESSAGE_OPTIONS: Array<{ key: NonNullable<LastMessageWithin>; label: 
   { key: 'custom', label: 'Tuỳ chỉnh' },
 ];
 
+// Phase 8 — Engagement pattern filter buttons
+const ENGAGEMENT_PATTERNS: Array<{ key: EngagementPatternKey; icon: string; label: string }> = [
+  { key: 'hot', icon: '🔥', label: 'Đang nóng lên' },
+  { key: 'champion', icon: '💎', label: 'Champion (đều cao)' },
+  { key: 'stable', icon: '📈', label: 'Ổn định' },
+  { key: 'cooling', icon: '⚠', label: 'Đang nguội' },
+  { key: 'cold', icon: '😴', label: 'Lạnh' },
+];
+
 // ─── Active count per section ────────────────────────────
 const tagActiveCount = computed(() =>
   props.filters.state.tagsCrm.length +
@@ -1001,6 +1020,20 @@ const eventActiveCount = computed(() => {
 const saleActiveCount = computed(() =>
   props.filters.state.saleAssigneeId !== null ? 1 : 0
 );
+const engagementActiveCount = computed(() =>
+  props.filters.state.engagementPatterns.length
+);
+
+function toggleEngagementPattern(key: EngagementPatternKey) {
+  const arr = props.filters.state.engagementPatterns as EngagementPatternKey[];
+  const idx = arr.indexOf(key);
+  if (idx >= 0) arr.splice(idx, 1); else arr.push(key);
+  props.filters.activePresetId.value = null;
+}
+
+function toggleEngagementSection() {
+  toggleSection('engagement');
+}
 
 // ─── Score slider ────────────────────────────────────────
 const scoreFillStyle = computed(() => {

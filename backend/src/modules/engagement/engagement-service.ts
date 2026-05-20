@@ -297,4 +297,14 @@ export async function recomputeContactEngagement(contactId: string): Promise<voi
       engagementUpdatedAt: new Date(),
     },
   });
+
+  // Phase 8.C — Recompute Priority Score sau khi engagement đổi (fire-and-forget)
+  void (async () => {
+    try {
+      const { recomputeContactPriority } = await import('./priority-service.js');
+      await recomputeContactPriority(contactId);
+    } catch {
+      /* silent — priority is best-effort */
+    }
+  })();
 }

@@ -375,13 +375,16 @@ async function processFriend(args: ProcessFriendArgs): Promise<void> {
     });
   }
 
-  // 2. Drive friendship state machine (handles upsert + counter delta + assignedUser)
+  // 2. Drive friendship state machine (handles upsert + counter delta + assignedUser).
+  // source='sync' → KHÔNG set becameFriendAt vì Zalo không trả ngày kết bạn thực
+  // (sync time = today gây "Đã KB hôm nay" sai cho KH cũ).
   await applyFriendTransition({
     orgId: args.orgId,
     zaloAccountId: args.accountId,
     contactId: contact.id,
     zaloUidInNick: args.uid,
     newFriendshipStatus: args.targetStatus,
+    source: 'sync',
   });
   args.result.upsertedFriends++;
 

@@ -65,6 +65,7 @@ export type TimeAxis =
   | 'last-inbound';
 
 export type AutoTagKey = 'hot' | 'active' | 'stuck' | 'cold';
+export type EngagementPatternKey = 'hot' | 'champion' | 'stable' | 'cooling' | 'cold';
 export type ScoreTier = 'cold' | 'warm' | 'hot' | 'champion' | null;
 export type StuckDuration = '>3d' | '>7d' | '>14d' | '>30d' | null;
 export type LastMessageWithin = '24h' | '7d' | '30d' | '>30d' | 'custom' | null;
@@ -97,6 +98,8 @@ export interface FilterState {
   birthdayWithin7d: boolean;
   appointmentWithin24h: boolean;
   appointmentOverdue: boolean;
+  // Phase 8 — Engagement heatmap patterns
+  engagementPatterns: EngagementPatternKey[];
 }
 
 // ─── Default state ──────────────────────────────────────────────────────
@@ -128,6 +131,7 @@ export function defaultFilterState(): FilterState {
     birthdayWithin7d: false,
     appointmentWithin24h: false,
     appointmentOverdue: false,
+    engagementPatterns: [],
   };
 }
 
@@ -304,6 +308,10 @@ export function useInboxFilters() {
     if (state.appointmentWithin24h) params.appointmentWithin24h = 'true';
     if (state.appointmentOverdue) params.appointmentOverdue = 'true';
     if (state.saleAssigneeId === 'unassigned') params.assignedUserId = 'unassigned';
+    // Phase 8 — Engagement pattern filter
+    if (state.engagementPatterns.length > 0) {
+      params.engagementPattern = state.engagementPatterns.join(',');
+    }
 
     return params;
   }
@@ -331,7 +339,8 @@ export function useInboxFilters() {
       state.saleWaitingReply ||
       state.birthdayWithin7d ||
       state.appointmentWithin24h ||
-      state.appointmentOverdue
+      state.appointmentOverdue ||
+      state.engagementPatterns.length > 0
     );
   });
 
@@ -444,6 +453,24 @@ export function useInboxFilters() {
       chips.push({ key: 'sale-all', label: '👥 Tất cả sale', remove: () => { state.saleAssigneeId = null; activePresetId.value = null; } });
     } else if (state.saleAssigneeId === 'unassigned') {
       chips.push({ key: 'sale-none', label: '🆕 Chưa giao', remove: () => { state.saleAssigneeId = null; activePresetId.value = null; } });
+    }
+    // Phase 8 — Engagement patterns
+    const PATTERN_CHIP_LABELS: Record<EngagementPatternKey, string> = {
+      hot: '🔥 Đang nóng',
+      champion: '💎 Champion',
+      stable: '📈 Ổn định',
+      cooling: '⚠ Đang nguội',
+      cold: '😴 Lạnh',
+    };
+    for (const p of state.engagementPatterns) {
+      chips.push({
+        key: `eng:${p}`,
+        label: PATTERN_CHIP_LABELS[p],
+        remove: () => {
+          state.engagementPatterns = state.engagementPatterns.filter((x) => x !== p);
+          activePresetId.value = null;
+        },
+      });
     }
     return chips;
   });

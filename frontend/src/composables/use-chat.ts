@@ -63,6 +63,9 @@ export interface FriendshipInfo {
   hasConversation?: boolean;
   becameFriendAt: string | null;
   firstMessageAt: string | null;
+  /** Friend.updatedAt — last status change timestamp (Prisma auto). Dùng cho pendingDaysLabel
+   *  để phản ánh "thời điểm pending status được set/refresh" thay vì firstMessageAt. */
+  updatedAt?: string | null;
   /** Per-pair counters (RIÊNG cặp nick × KH này, KHÔNG phải Contact aggregate) */
   totalInbound?: number;
   totalOutbound?: number;

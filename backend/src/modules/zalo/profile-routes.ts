@@ -47,15 +47,27 @@ export async function profileRoutes(app: FastifyInstance) {
     },
   );
 
-  // GET .../profile/last-online/:userId — get last online time for a user
+  // GET .../profile/last-online/:userId — get REAL last online via Zalo SDK
+  // với cache layer 30s + privacy gate (show_online_status). Trả format flat
+  // cho FE: { lastOnline: number|null, showStatus: bool, isOnline: bool, fetchedAt }
   app.get(`${BASE}/last-online/:userId`, async (request, reply) => {
     const { accountId, userId } = request.params as { accountId: string; userId: string };
     const { orgId } = request.user!;
     try {
       await resolveAccount(accountId, orgId);
       if (!await checkAccess(request, reply, accountId, 'read')) return;
-      const result = await zaloOps.getLastOnline(accountId, userId);
-      return { lastOnline: result };
+      const { getPresence } = await import('./presence-service.js');
+      const entry = await getPresence(accountId, userId);
+      if (!entry) {
+        return { lastOnline: null, showStatus: false, isOnline: false, fetchedAt: Date.now() };
+      }
+      const isOnline = entry.lastOnline !== null && Date.now() - entry.lastOnline < 5 * 60_000;
+      return {
+        lastOnline: entry.lastOnline,
+        showStatus: entry.showStatus,
+        isOnline,
+        fetchedAt: entry.fetchedAt,
+      };
     } catch (err) {
       return handleError(reply, err, 'getLastOnline');
     }

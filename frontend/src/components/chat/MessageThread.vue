@@ -111,11 +111,13 @@
               <span class="cnt-out">{{ msgOutCount }}</span>↗
               <span class="cnt-scope">per nick này</span>
             </span>
-            <span class="ch-sep">|</span>
-            <span class="last-online" :class="{ 'is-online': isOnline }">
-              <span class="online-dot" />
-              {{ lastOnlineLabel }}
-            </span>
+            <template v-if="showOnlineIndicator && lastOnlineLabel">
+              <span class="ch-sep">|</span>
+              <span class="last-online" :class="{ 'is-online': isOnline }">
+                <span class="online-dot" />
+                {{ lastOnlineLabel }}
+              </span>
+            </template>
           </div>
         </div>
 
@@ -130,27 +132,59 @@
             <span class="ic">✓</span> Đã KB
             <span v-if="friendDaysLabel" class="sub-meta">{{ friendDaysLabel }}</span>
           </button>
-          <button
-            v-else-if="friendshipState === 'pending_friend'"
-            class="btn-action btn-pending"
-            :title="`Đã gửi mời. ${pendingDaysLabel}. Click để hủy.`"
-            @click="onCancelInvite"
-          >
-            <span class="ic">📤</span> Đã mời <span class="sub-meta">{{ pendingDaysLabel }}</span>
-          </button>
+          <!-- Sale đã gửi mời, đợi KH accept: primary "Đã mời" + secondary "Thu hồi" -->
+          <template v-else-if="friendshipState === 'pending_sent' || friendshipState === 'pending_friend'">
+            <button
+              class="btn-action btn-pending"
+              :title="pendingSentTooltip"
+              disabled
+            >
+              <span class="ic">📤</span> Đã mời <span class="sub-meta">{{ pendingDaysLabel }}</span>
+            </button>
+            <button
+              class="btn-action btn-cancel-invite"
+              title="Thu hồi lời mời kết bạn"
+              :disabled="actionLoading"
+              @click="onCancelInvite"
+            >
+              <span class="ic">↩️</span> Thu hồi
+            </button>
+          </template>
+          <!-- KH đã gửi mời, sale chưa accept: primary "Chấp nhận" + secondary "Từ chối" -->
+          <template v-else-if="friendshipState === 'pending_received'">
+            <button
+              class="btn-action btn-accept-friend"
+              :title="pendingReceivedTooltip"
+              :disabled="actionLoading"
+              @click="onAcceptInvite"
+            >
+              <span class="ic">✋</span> Chấp nhận <span class="sub-meta">{{ pendingDaysLabel }}</span>
+            </button>
+            <button
+              class="btn-action btn-reject-invite"
+              title="Từ chối lời mời kết bạn"
+              :disabled="actionLoading"
+              @click="onRejectInvite"
+            >
+              <span class="ic">✗</span> Từ chối
+            </button>
+          </template>
+          <!-- 'ghost' = trước từng là friend, đã unfriend -->
           <button
             v-else-if="friendshipState === 'ghost'"
             class="btn-action btn-add-friend"
-            title="KH đã ngắt — gửi mời lại?"
-            @click="onSendInvite"
+            title="KH đã huỷ kết bạn. Gửi lời mời lại?"
+            :disabled="actionLoading"
+            @click="onOpenInviteDialog"
           >
-            <span class="ic">+</span> Mời lại
+            <span class="ic">↻</span> Mời lại
           </button>
           <button
             v-else-if="conversation.threadType === 'user'"
             class="btn-action btn-add-friend"
             title="Gửi lời mời kết bạn"
-            @click="onSendInvite"
+            :disabled="actionLoading"
+            @click="onOpenInviteDialog"
           >
             <span class="ic">+</span> Kết bạn
           </button>
@@ -445,6 +479,14 @@
       :child-contact-id="conversation.contact.id"
       @linked="onLinkedParent"
     />
+
+    <!-- Friend invite dialog: nhập lời chào gửi kèm lời mời kết bạn -->
+    <FriendInviteDialog
+      v-model="showInviteDialog"
+      :receiver-name="headerName"
+      :loading="actionLoading"
+      @submit="onSendInviteSubmit"
+    />
   </div>
 </template>
 
@@ -468,7 +510,10 @@ import ForwardDialog from '@/components/chat/forward-dialog.vue';
 import RichTextEditor from '@/components/chat/rich-text-editor.vue';
 import TagCrmBar from '@/components/chat/TagCrmBar.vue';
 import AppointmentQuickDialog from '@/components/chat/AppointmentQuickDialog.vue';
+import FriendInviteDialog from '@/components/chat/FriendInviteDialog.vue';
 import { useToast } from '@/composables/use-toast';
+import { useZaloPresence } from '@/composables/use-zalo-presence';
+import { useZaloFriendStatus } from '@/composables/use-zalo-friend-status';
 import { groupAvatarStore } from '@/composables/use-group-avatar-cache';
 import { registerPendingTags, clearPendingTags } from '@/composables/use-pending-mutations';
 
@@ -800,30 +845,33 @@ const msgOutCount = computed(() => props.conversation?.friendship?.totalOutbound
 const contactTotalIn = computed(() => props.conversation?.contact?.totalInbound ?? 0);
 const contactTotalOut = computed(() => props.conversation?.contact?.totalOutbound ?? 0);
 
-// ── Last online status ──────────────────────────────────────────────────────
-// MOCK: dùng contact.lastInboundAt làm proxy. Chờ wire endpoint
-// GET /zalo-accounts/:accountId/profile/last-online/:userId cho realtime.
-const onlineMins = computed<number | null>(() => {
-  if (props.conversation?.threadType === 'group') return null;
-  const at = props.conversation?.contact?.lastInboundAt;
-  if (!at) return null;
-  return Math.floor((Date.now() - new Date(at).getTime()) / 60000);
-});
-const isOnline = computed(() => onlineMins.value != null && onlineMins.value < 5);
+// ── Real-time Zalo online presence (Phase A) ────────────────────────────────
+// Wire useZaloPresence composable → fetch via /profile/last-online/:uid
+// + subscribe socket 'friend:presence' để real-time update từ cron 60s.
+// Privacy gate: nếu KH tắt show_online_status → indicator ẩn hoàn toàn.
+const presence = useZaloPresence(
+  () => props.conversation?.zaloAccount?.id || null,
+  () => {
+    if (props.conversation?.threadType === 'group') return null;
+    // Per-account UID: dùng externalThreadId (UID KH từ POV nick này),
+    // KHÔNG dùng contact.zaloUid (UID từ nick khác, Zalo reject "Tham số không hợp lệ").
+    return props.conversation?.externalThreadId || props.conversation?.contact?.zaloUid || null;
+  },
+);
+
+const isOnline = computed(() => presence.isOnline.value);
 const lastOnlineLabel = computed(() => {
+  // Group thread → hiển thị member count
   if (props.conversation?.threadType === 'group') {
     const count = (props.conversation as { groupMembersCount?: number | null }).groupMembersCount;
     return count ? `${count} thành viên` : 'Nhóm';
   }
-  const mins = onlineMins.value;
-  if (mins == null) return 'Không rõ';
-  if (mins < 5) return 'Vừa online';
-  if (mins < 60) return `Online ${mins}p trước`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `Online ${hours}h trước`;
-  const days = Math.floor(hours / 24);
-  if (days < 30) return `Online ${days}d trước`;
-  return 'Không rõ';
+  // KH user thread: dùng real Zalo presence label, fallback null nếu privacy off
+  return presence.label.value;
+});
+const showOnlineIndicator = computed(() => {
+  if (props.conversation?.threadType === 'group') return true;
+  return presence.hasIndicator.value;
 });
 
 // ── Resolve sender avatar cho MessageBubble ─────────────────────────────────
@@ -897,42 +945,130 @@ function reminderNoticeTime(msg: Message): string {
 // ── Smart friendship state ─────────────────────────────────────────────────
 // Source: conv.friendship (backend join Friend by zaloAccountId × contactId).
 // Fallback heuristic: nếu không có Friend record nhưng contact.zaloUid set → assume 'chatting_stranger'.
-type FriendshipState = 'friend' | 'pending_friend' | 'chatting_stranger' | 'ghost' | null;
+type FriendshipState = 'friend' | 'pending_sent' | 'pending_received' | 'pending_friend' | 'chatting_stranger' | 'ghost' | null;
+
+// Phase C — Cross-check friend status real-time qua Zalo SDK
+// Override DB state nếu Zalo trả KHÁC (KH unfriend mà DB chưa kịp sync).
+// Quan trọng: phân biệt direction của pending request:
+//   is_requested = 1 → SALE đã gửi mời, đợi KH accept    → 'pending_sent'
+//   is_requesting = 1 → KH đã gửi mời, sale chưa accept  → 'pending_received'
+const zaloFriend = useZaloFriendStatus(
+  () => props.conversation?.zaloAccount?.id || null,
+  () => {
+    if (props.conversation?.threadType !== 'user') return null;
+    // Per-account UID: externalThreadId là UID KH FROM POV nick này.
+    // contact.zaloUid có thể là UID từ nick khác → getFriendRequestStatus trả sai/empty.
+    return props.conversation?.externalThreadId || props.conversation?.contact?.zaloUid || null;
+  },
+);
 
 const friendshipState = computed<FriendshipState>(() => {
   if (props.conversation?.threadType !== 'user') return null;
+
   const fs = props.conversation?.friendship;
+  // "Was once friend" = có becameFriendAt hoặc friendshipStatus đã từng 'accepted'/'removed'
+  const wasOnceFriend = !!(
+    fs && (fs.becameFriendAt
+      || fs.friendshipStatus === 'removed'
+      || fs.friendshipStatus === 'blocked'
+      || fs.relationshipKind === 'ghost')
+  );
+
+  // 1. Zalo SDK realtime status WINS nếu đã fetch xong
+  const z = zaloFriend.status.value;
+  if (z) {
+    if (z.isFriend) return 'friend';
+    if (z.isRequested) return 'pending_sent';
+    if (z.isRequesting) return 'pending_received';
+    // Zalo nói NOT friend → state phụ thuộc lịch sử:
+    //   - Từng là friend (becameFriendAt set, hoặc DB nói 'removed'/'ghost') → 'ghost'
+    //   - Chưa từng kết bạn nhưng có chat → 'chatting_stranger' (Mời kết bạn lần đầu)
+    if (wasOnceFriend) return 'ghost';
+    if (props.conversation?.contact?.zaloUid) return 'chatting_stranger';
+    return null;
+  }
+
+  // 2. Fallback DB state (loading hoặc API error)
   if (fs) {
+    if (fs.friendshipStatus === 'pending_sent') return 'pending_sent';
+    if (fs.friendshipStatus === 'pending_received') return 'pending_received';
     const k = fs.relationshipKind;
     if (k === 'friend' || k === 'pending_friend' || k === 'chatting_stranger' || k === 'ghost') {
       return k;
     }
   }
-  // No friend record yet → if contact has zaloUid (đã từng xuất hiện) treat as stranger
   if (props.conversation?.contact?.zaloUid) return 'chatting_stranger';
   return null;
 });
 
+/**
+ * Calendar day diff — "hôm nay" = cùng DATE (không phải <24h rolling).
+ * VD: nếu friend được add 2026-05-19 23:55 và now là 2026-05-20 00:10, rolling 24h
+ * trả về "hôm nay" (chỉ 15p) — sai vì sang ngày khác. Calendar diff trả "hôm qua".
+ */
+function calendarDaysDiff(at: string | Date): number {
+  const d1 = new Date(at);
+  const d2 = new Date();
+  const day1 = new Date(d1.getFullYear(), d1.getMonth(), d1.getDate());
+  const day2 = new Date(d2.getFullYear(), d2.getMonth(), d2.getDate());
+  return Math.floor((day2.getTime() - day1.getTime()) / 86400000);
+}
+
 const friendDaysLabel = computed(() => {
   const at = props.conversation?.friendship?.becameFriendAt;
   if (!at) return null;
-  const d = Math.floor((Date.now() - new Date(at).getTime()) / 86400000);
-  if (d < 1) return 'hôm nay';
+  const d = calendarDaysDiff(at);
+  if (d <= 0) return 'hôm nay';
+  if (d === 1) return 'hôm qua';
   if (d < 30) return `${d} ngày`;
   if (d < 365) return `${Math.floor(d / 30)} tháng`;
   return `${Math.floor(d / 365)} năm`;
 });
 
 const pendingDaysLabel = computed(() => {
-  // becameFriendAt được set khi accept; với pending dùng firstMessageAt (first outbound) làm proxy
-  const at = props.conversation?.friendship?.firstMessageAt
+  // Ưu tiên friendship.updatedAt — phản ánh "thời điểm pending status set gần nhất"
+  // (Prisma auto-set khi REQUEST event đến). Fallback firstMessageAt nếu thiếu.
+  // Cuối cùng Contact.lastOutboundAt nếu Friend row chưa có data.
+  const fs = props.conversation?.friendship;
+  const at = fs?.updatedAt
+    || fs?.firstMessageAt
     || props.conversation?.contact?.lastOutboundAt
     || null;
   if (!at) return 'vừa gửi';
-  const d = Math.floor((Date.now() - new Date(at).getTime()) / 86400000);
-  if (d < 1) return 'hôm nay';
+  const d = calendarDaysDiff(at);
+  if (d <= 0) return 'hôm nay';
+  if (d === 1) return 'hôm qua';
+  if (d === 2) return 'hôm kia';
+  if (d < 7) return `${d} ngày trước`;
   if (d < 30) return `${d} ngày`;
-  return `${Math.floor(d / 30)} tháng`;
+  if (d < 60) return '1 tháng';
+  if (d < 365) return `${Math.floor(d / 30)} tháng`;
+  return `${Math.floor(d / 365)} năm`;
+});
+
+/**
+ * Tooltip natural language — "Anh Bảo đã gửi lời mời kết bạn từ HÔM NAY. Chấp nhận kết bạn?"
+ * Grammar fix: "hôm nay/hôm qua/hôm kia/N ngày trước/N tháng" — không nối thêm "trước".
+ */
+function naturalTimeLabel(daysLabel: string): string {
+  // pendingDaysLabel có thể trả "hôm nay" / "hôm qua" / "hôm kia" / "X ngày trước" / "X ngày" / "X tháng" / ...
+  // Chuẩn hoá cho ngữ pháp "từ {X}":
+  //   từ hôm nay, từ hôm qua, từ hôm kia, từ 3 ngày trước, từ 1 tuần trước, từ 2 tháng trước
+  if (daysLabel === 'hôm nay' || daysLabel === 'hôm qua' || daysLabel === 'hôm kia') return daysLabel;
+  if (daysLabel.endsWith('trước')) return daysLabel;
+  // "5 ngày" → "5 ngày trước", "2 tháng" → "2 tháng trước"
+  return `${daysLabel} trước`;
+}
+
+const pendingReceivedTooltip = computed(() => {
+  const name = headerName.value && headerName.value !== 'Unknown' ? headerName.value : 'Khách hàng';
+  const time = naturalTimeLabel(pendingDaysLabel.value);
+  return `${name} đã gửi lời mời kết bạn từ ${time}. Chấp nhận kết bạn?`;
+});
+
+const pendingSentTooltip = computed(() => {
+  const time = naturalTimeLabel(pendingDaysLabel.value);
+  return `Sale đã gửi mời kết bạn từ ${time}. Click để huỷ.`;
 });
 
 const friendshipTitle = computed(() => {
@@ -942,12 +1078,116 @@ const friendshipTitle = computed(() => {
   return '';
 });
 
-// Action stubs — chờ backend wire /friends/requests
-function onSendInvite() {
-  toast.warning('Gửi mời KB: chờ backend POST /friends/requests');
+// ── Friendship action handlers ──────────────────────────────────────────────
+// Tất cả dùng externalThreadId (per-nick UID) — KHÔNG dùng contact.zaloUid (cross-nick bug).
+// Sau action thành công, gọi zaloFriend.setStatus() để ép UI update ngay
+// (Zalo SDK getFriendRequestStatus có thể trả stale data khi multiple Friend rows
+// cùng nick — accept-resolved nhắm UID khác, cache cũ vẫn lưu pending).
+const actionLoading = ref(false);
+const showInviteDialog = ref(false);
+
+function getActionContext() {
+  const accountId = props.conversation?.zaloAccount?.id;
+  const uid = props.conversation?.externalThreadId || props.conversation?.contact?.zaloUid;
+  return { accountId, uid };
 }
-function onCancelInvite() {
-  toast.warning('Hủy mời KB: chờ backend DELETE /friends/requests/:uid');
+
+function onOpenInviteDialog() {
+  const { accountId, uid } = getActionContext();
+  if (!accountId || !uid) {
+    toast.error('Thiếu thông tin nick hoặc KH');
+    return;
+  }
+  showInviteDialog.value = true;
+}
+
+async function onSendInviteSubmit(message: string) {
+  const { accountId, uid } = getActionContext();
+  if (!accountId || !uid) {
+    toast.error('Thiếu thông tin nick hoặc KH');
+    return;
+  }
+  actionLoading.value = true;
+  try {
+    await api.post(`/zalo-accounts/${accountId}/friends/requests`, { userId: uid, message });
+    toast.success('Đã gửi lời mời kết bạn');
+    // Optimistic: set pending_sent ngay (Zalo SDK sẽ confirm ở refresh tiếp theo)
+    zaloFriend.setStatus({ isFriend: false, isRequested: true, isRequesting: false });
+    showInviteDialog.value = false;
+  } catch (err: any) {
+    const msg = err?.response?.data?.error || err?.message || 'Không thể gửi lời mời';
+    toast.error(msg);
+    console.error('[send-invite] failed', { accountId, uid, err: err?.response?.data || err });
+  } finally {
+    actionLoading.value = false;
+  }
+}
+
+async function onCancelInvite() {
+  const { accountId, uid } = getActionContext();
+  if (!accountId || !uid) {
+    toast.error('Thiếu thông tin nick hoặc KH');
+    return;
+  }
+  actionLoading.value = true;
+  try {
+    await api.delete(`/zalo-accounts/${accountId}/friends/requests/${uid}`);
+    toast.success('Đã thu hồi lời mời kết bạn');
+    // Reset về chatting_stranger (no pending) — UI sẽ hiện nút "Kết bạn" lại
+    zaloFriend.setStatus({ isFriend: false, isRequested: false, isRequesting: false });
+  } catch (err: any) {
+    const msg = err?.response?.data?.error || err?.message || 'Không thể thu hồi';
+    toast.error(msg);
+    console.error('[cancel-invite] failed', { accountId, uid, err: err?.response?.data || err });
+  } finally {
+    actionLoading.value = false;
+  }
+}
+
+async function onRejectInvite() {
+  const { accountId, uid } = getActionContext();
+  if (!accountId || !uid) {
+    toast.error('Thiếu thông tin nick hoặc KH');
+    return;
+  }
+  actionLoading.value = true;
+  try {
+    await api.post(`/zalo-accounts/${accountId}/friends/requests/${uid}/reject`);
+    toast.success('Đã từ chối lời mời kết bạn');
+    zaloFriend.setStatus({ isFriend: false, isRequested: false, isRequesting: false });
+  } catch (err: any) {
+    const msg = err?.response?.data?.error || err?.message || 'Không thể từ chối lời mời';
+    toast.error(msg);
+    console.error('[reject-invite] failed', { accountId, uid, err: err?.response?.data || err });
+  } finally {
+    actionLoading.value = false;
+  }
+}
+
+async function onAcceptInvite() {
+  const { accountId, uid } = getActionContext();
+  if (!accountId || !uid) {
+    toast.error('Thiếu thông tin nick hoặc KH');
+    return;
+  }
+  actionLoading.value = true;
+  try {
+    const res = await api.post(`/zalo-accounts/${accountId}/friends/requests/${uid}/accept`);
+    const method = res?.data?.method;
+    toast.success(method === 'send-as-accept'
+      ? 'Đã chấp nhận lời mời kết bạn (qua sendFriendRequest)'
+      : 'Đã chấp nhận lời mời kết bạn');
+    // ÉP local state về friend ngay — Zalo SDK cache có thể stale, đặc biệt khi
+    // accept-resolved nhắm UID khác conv binding (multiple Friend rows cùng nick).
+    zaloFriend.setStatus({ isFriend: true, isRequested: false, isRequesting: false });
+  } catch (err: any) {
+    const msg = err?.response?.data?.error || err?.message || 'Không thể chấp nhận lời mời';
+    const code = err?.response?.data?.code;
+    toast.error(code ? `${msg} (code: ${code})` : msg);
+    console.error('[accept-friend] failed', { accountId, uid, err: err?.response?.data || err });
+  } finally {
+    actionLoading.value = false;
+  }
 }
 function onOpenNote() {
   // Open right info panel + scroll to note footer
@@ -1506,6 +1746,11 @@ watch(() => props.editingMessage?.id, async (id) => {
   display: inline-flex; align-items: center; gap: 5px;
   background: var(--smax-bg);
   font-family: inherit;
+  transition: background 0.12s, border-color 0.12s, box-shadow 0.12s, transform 0.08s;
+}
+.btn-action:hover:not(:disabled) {
+  box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+  transform: translateY(-0.5px);
 }
 .btn-friend-already {
   background: rgba(0,200,83,0.08);
@@ -1513,19 +1758,70 @@ watch(() => props.editingMessage?.id, async (id) => {
   border-color: rgba(0,200,83,0.25);
   cursor: default;
 }
+.btn-friend-already:hover {
+  background: rgba(0,200,83,0.16);
+  border-color: rgba(0,200,83,0.45);
+}
 .btn-friend-already:disabled { opacity: 1; }
 .btn-pending {
   background: rgba(255,145,0,0.10);
   color: #ef6c00;
   border-color: rgba(255,145,0,0.35);
 }
-.btn-pending:hover { background: rgba(255,145,0,0.18); }
+.btn-pending:hover {
+  background: rgba(255,145,0,0.22);
+  border-color: rgba(255,145,0,0.6);
+}
+/* Phase C — KH gửi mời, sale cần accept. Màu vàng cảnh báo + emphasize action */
+.btn-accept-friend {
+  background: rgba(251, 191, 36, 0.18);
+  color: #B45309;
+  border-color: rgba(251, 191, 36, 0.5);
+  font-weight: 600;
+}
+.btn-accept-friend:hover {
+  background: rgba(251, 191, 36, 0.34);
+  border-color: #F59E0B;
+  color: #92400E;
+}
 .btn-add-friend {
   background: var(--smax-primary-soft);
   color: var(--smax-primary);
   border-color: var(--smax-primary);
 }
-.btn-add-friend:hover { background: var(--smax-primary); color: white; }
+.btn-add-friend:hover {
+  background: var(--smax-primary);
+  color: white;
+  border-color: var(--smax-primary);
+}
+/* Secondary "Thu hồi" — neutral grey, không cảnh báo (rút lại action của chính mình) */
+.btn-cancel-invite {
+  background: rgba(100, 116, 139, 0.10);
+  color: #475569;
+  border-color: rgba(100, 116, 139, 0.30);
+  font-weight: 500;
+}
+.btn-cancel-invite:hover:not(:disabled) {
+  background: rgba(100, 116, 139, 0.20);
+  border-color: rgba(100, 116, 139, 0.55);
+  color: #1e293b;
+}
+/* Secondary "Từ chối" — đỏ nhạt, action destructive đối với KH */
+.btn-reject-invite {
+  background: rgba(239, 68, 68, 0.10);
+  color: #b91c1c;
+  border-color: rgba(239, 68, 68, 0.35);
+  font-weight: 500;
+}
+.btn-reject-invite:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.22);
+  border-color: rgba(239, 68, 68, 0.6);
+  color: #991b1b;
+}
+.btn-action:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
 .btn-action .ic {
   font-size: 13px;
   line-height: 1;

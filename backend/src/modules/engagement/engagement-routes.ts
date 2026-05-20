@@ -13,12 +13,13 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { prisma } from '../../shared/database/prisma-client.js';
 import { logger } from '../../shared/utils/logger.js';
+import { authMiddleware } from '../auth/auth-middleware.js';
 import { recomputeContactEngagement } from './engagement-service.js';
 import { runBackfill } from './engagement-backfill.js';
 
 export async function registerEngagementRoutes(app: FastifyInstance): Promise<void> {
   // GET /api/v1/contacts/:id/engagement-timeline
-  app.get('/api/v1/contacts/:id/engagement-timeline', async (request: FastifyRequest, reply: FastifyReply) => {
+  app.get('/api/v1/contacts/:id/engagement-timeline', { preHandler: authMiddleware }, async (request: FastifyRequest, reply: FastifyReply) => {
     const user = (request as any).user;
     if (!user) return reply.status(401).send({ error: 'unauthorized' });
 
@@ -29,10 +30,13 @@ export async function registerEngagementRoutes(app: FastifyInstance): Promise<vo
       where: { id, orgId: user.orgId },
       select: {
         id: true,
+        leadScore: true,
         engagementPattern: true,
         engagementTrend: true,
         engagementScore: true,
         engagementUpdatedAt: true,
+        priorityScore: true,
+        priorityUpdatedAt: true,
       },
     });
     if (!contact) return reply.status(404).send({ error: 'contact not found' });
@@ -112,6 +116,14 @@ export async function registerEngagementRoutes(app: FastifyInstance): Promise<vo
       trend: contact.engagementTrend,
       score: contact.engagementScore,
       updatedAt: contact.engagementUpdatedAt,
+      // Phase 8.C — return all 3 scores so frontend ScoreBanner renders cleanly
+      scores: {
+        lead: contact.leadScore,
+        engagement: contact.engagementScore,
+        priority: contact.priorityScore,
+        engagementTrend: contact.engagementTrend,
+        engagementPattern: contact.engagementPattern,
+      },
       timeline,
       breakdown: {
         totalInbound,
@@ -127,7 +139,7 @@ export async function registerEngagementRoutes(app: FastifyInstance): Promise<vo
   });
 
   // POST /api/v1/admin/engagement/recompute — full re-classify
-  app.post('/api/v1/admin/engagement/recompute', async (request: FastifyRequest, reply: FastifyReply) => {
+  app.post('/api/v1/admin/engagement/recompute', { preHandler: authMiddleware }, async (request: FastifyRequest, reply: FastifyReply) => {
     const user = (request as any).user;
     if (!user || !['admin', 'owner'].includes(user.role)) {
       return reply.status(403).send({ error: 'forbidden' });
@@ -152,7 +164,7 @@ export async function registerEngagementRoutes(app: FastifyInstance): Promise<vo
   });
 
   // POST /api/v1/admin/engagement/backfill — one-time backfill from Message history
-  app.post('/api/v1/admin/engagement/backfill', async (request: FastifyRequest, reply: FastifyReply) => {
+  app.post('/api/v1/admin/engagement/backfill', { preHandler: authMiddleware }, async (request: FastifyRequest, reply: FastifyReply) => {
     const user = (request as any).user;
     if (!user || !['admin', 'owner'].includes(user.role)) {
       return reply.status(403).send({ error: 'forbidden' });

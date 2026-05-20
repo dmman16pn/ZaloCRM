@@ -1,34 +1,29 @@
 <template>
   <aside class="info-panel">
-    <!-- ════════ HEADER pinned (avatar + lead score overlay + care-status) ════════ -->
+    <!-- ════════ HEADER: Phase 8.C Score Banner (3 stat cards + avatar below) ════════ -->
     <header class="ip-header">
       <button class="ip-close" title="Đóng" @click="$emit('close')">×</button>
-      <div class="ip-avatar-wrap">
-        <!-- KHÔNG truyền :gender — gender badge ♂/♀ sẽ đè lên lead-score-badge. -->
-        <Avatar
-          :src="props.contact?.avatarUrl"
-          :name="headerFullName"
-          :size="64"
-          :gradient-seed="props.contact?.id || headerFullName"
-          class="ip-avatar-big"
-        />
-        <span
-          v-if="props.contact"
-          class="lead-score-badge"
-          :class="leadScoreTier"
-          :title="`Lead score: ${props.contact.leadScore ?? 0} điểm${props.contact.lastActivity ? ' · cập nhật ' + relativeTime(props.contact.lastActivity) : ''}`"
-        >
-          ⭐ {{ props.contact.leadScore ?? 0 }}
-        </span>
-      </div>
-      <div class="ip-name-line" :title="headerFullName">{{ headerFullName }}</div>
-      <div v-if="props.contact?.zaloUid" class="ip-id">UID: {{ props.contact.zaloUid }}</div>
-      <div class="ip-care-row">
-        <CareStatusBadge
-          :model-value="(form.status as string | null) || 'new'"
-          @update:model-value="onChangeCareStatus"
-        />
-      </div>
+      <ScoreBanner :scores="scoreData">
+        <template #avatar>
+          <Avatar
+            :src="props.contact?.avatarUrl"
+            :name="headerFullName"
+            :size="56"
+            :gradient-seed="props.contact?.id || headerFullName"
+            class="ip-avatar-big"
+          />
+        </template>
+        <template #name>
+          <div class="ip-name-line" :title="headerFullName">{{ headerFullName }}</div>
+          <div v-if="props.contact?.zaloUid" class="ip-id">UID: {{ props.contact.zaloUid }}</div>
+          <div class="ip-care-row-inline">
+            <CareStatusBadge
+              :model-value="(form.status as string | null) || 'new'"
+              @update:model-value="onChangeCareStatus"
+            />
+          </div>
+        </template>
+      </ScoreBanner>
     </header>
 
     <!-- ════════ Tab bar ════════ -->
@@ -185,6 +180,11 @@
             :contact-name="headerFullName"
             @appointment-created="onAppointmentCreated"
           />
+        </section>
+
+        <!-- Phase 8 — Engagement Heatmap Timeline -->
+        <section v-if="props.contactId" class="ip-section">
+          <EngagementHeatmap :contact-id="props.contactId" />
         </section>
       </div>
 
@@ -381,6 +381,8 @@ import type { CareStatusValue } from '@/constants/care-status';
 import { useToast } from '@/composables/use-toast';
 import { api } from '@/api';
 import CustomerTimelineSection from './CustomerTimelineSection.vue';
+import EngagementHeatmap from './EngagementHeatmap.vue';
+import ScoreBanner from './ScoreBanner.vue';
 import ScoreInlinePanel from '@/components/scoring/ScoreInlinePanel.vue';
 import ScoreHistoryModal from '@/components/scoring/ScoreHistoryModal.vue';
 
@@ -649,13 +651,14 @@ const headerFullName = computed(() => {
 });
 
 // Lead score tier để màu badge overlay trên avatar (thấp/TB/cao)
-const leadScoreTier = computed(() => {
-  const s = props.contact?.leadScore ?? 0;
-  if (s >= 70) return 'tier-hot';
-  if (s >= 40) return 'tier-warm';
-  if (s >= 10) return 'tier-cool';
-  return 'tier-cold';
-});
+// ════════ Phase 8.C — ScoreBanner 3 score data ════════
+const scoreData = computed(() => ({
+  lead: props.contact?.leadScore ?? null,
+  engagement: props.contact?.engagementScore ?? null,
+  priority: props.contact?.priorityScore ?? null,
+  engagementTrend: props.contact?.engagementTrend ?? null,
+  engagementPattern: props.contact?.engagementPattern ?? null,
+}));
 
 // ════════ Phones extras ════════
 const showExtraPhones = ref(false);
@@ -763,11 +766,30 @@ function relativeTime(dateStr: string) {
 
 /* ════════ Header (pinned) ════════ */
 .ip-header {
-  padding: 13px 17px 9px;
-  text-align: center;
+  padding: 0;
+  text-align: left;
   border-bottom: 1px solid var(--smax-grey-200);
   position: relative;
   flex-shrink: 0;
+}
+/* Avatar + name layout inside ScoreBanner slot */
+.ip-header .ip-name-line {
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.2;
+  margin-top: 0;
+  padding: 0;
+  text-align: left;
+}
+.ip-header .ip-id {
+  font-size: 10.5px;
+  margin-top: 2px;
+  padding: 0;
+  text-align: left;
+}
+.ip-care-row-inline {
+  margin-top: 5px;
+  display: flex;
 }
 /* Tab 4 "Điểm" — score panel content full-width 280px, vertical stack */
 .tab-pane-score {

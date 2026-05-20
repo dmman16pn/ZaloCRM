@@ -128,8 +128,13 @@ export async function applyFriendTransition(args: {
   zaloUidInNick: string;
   newFriendshipStatus: string;
   attemptStateOnAccept?: string; // 'accepted' | 'rejected' | 'cancelled' | 'expired'
+  /** 'event' = real Zalo event (acceptFriendRequest…) → reliable becameFriendAt;
+   *  'sync' = bulk sync from getAllFriends → KHÔNG set becameFriendAt
+   *           (Zalo không trả ngày kết bạn thực, sync time = today gây "Đã KB hôm nay" sai). */
+  source?: 'event' | 'sync';
 }): Promise<void> {
   const { orgId, zaloAccountId, contactId, zaloUidInNick, newFriendshipStatus } = args;
+  const source = args.source ?? 'event';
 
   await prisma.$transaction(async (tx) => {
     const existing = await tx.friend.findUnique({
@@ -150,11 +155,14 @@ export async function applyFriendTransition(args: {
       friendshipStatus: newFriendshipStatus,
       relationshipKind: toKind,
     };
-    // B1 fix — chỉ set becameFriendAt khi LẦN ĐẦU transition vào 'accepted'.
-    // Cron 15min re-run với newFriendshipStatus='accepted' cho friend đã KB từ
-    // trước KHÔNG được reset ngày KB cũ (regression Codex flagged).
-    // Set khi: (a) Friend mới tinh chưa có existing, hoặc (b) becameFriendAt còn NULL.
-    if (newFriendshipStatus === 'accepted' && !existing?.becameFriendAt) {
+    // B1 + Phase B fix — chỉ set becameFriendAt khi:
+    //   1. source = 'event' (REAL Zalo acceptFriendRequest event) — reliable
+    //   2. AND becameFriendAt còn NULL (chưa set bao giờ)
+    //
+    // BULK SYNC (source='sync') KHÔNG set vì Zalo getAllFriends KHÔNG trả ngày
+    // KB thực — sync time = today → mọi KH cũ hiện "Đã KB hôm nay" sai. Để null
+    // trong DB và FE hiển thị "✓ Đã kết bạn" không kèm date label.
+    if (source === 'event' && newFriendshipStatus === 'accepted' && !existing?.becameFriendAt) {
       data.becameFriendAt = now;
     }
     // removedAt cũng phải tương tự — chỉ set khi transition NEW, không overwrite ngày ngắt cũ
