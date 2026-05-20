@@ -9,7 +9,10 @@
       :current-user-id="currentUserId"
       :all-accounts-count="zaloAccounts?.length || 0"
       :total-unread="totalUnreadCount"
+      :current-account-id="accountFilter"
+      :current-account="currentAccount"
       @manage-folders="showFolderManagePopup = true"
+      @clear-account-filter="onFilterAccount(null)"
     />
 
     <!-- COL 2: conversation list — FilterBar render INSIDE via named slot
@@ -69,6 +72,16 @@
       @refresh-thread="selectedConvId && fetchMessages(selectedConvId)"
     />
 
+    <!-- Folder management modal (overlay) -->
+    <FolderManagePopup
+      v-model="showFolderManagePopup"
+      :filters="inboxFilters"
+      :all-accounts-count="zaloAccounts?.length || 0"
+      :total-unread="totalUnreadCount"
+      :current-account-id="accountFilter"
+      @view-applied="onFolderViewApplied"
+    />
+
     <!-- COL 4: contact info panel (chỉ hiện khi có contact) -->
     <ChatContactPanel
       v-if="showContactPanel && selectedConv?.contact"
@@ -98,6 +111,7 @@ import MessageThread from '@/components/chat/MessageThread.vue';
 import ChatContactPanel from '@/components/chat/ChatContactPanel.vue';
 import ConversationFilterSidebar from '@/components/chat/ConversationFilterSidebar.vue';
 import ConversationFilterBar from '@/components/chat/ConversationFilterBar.vue';
+import FolderManagePopup from '@/components/chat/FolderManagePopup.vue';
 import { useChat } from '@/composables/use-chat';
 import { useInboxFilters } from '@/composables/use-inbox-filters';
 import { useAuthStore } from '@/stores/auth';
@@ -132,6 +146,10 @@ const {
 // ════════ Zalo accounts (for FilterRail nick picker) ════════
 const { accounts: zaloAccounts, fetchAccounts: fetchZaloAccounts } = useZaloAccounts();
 const selectedAccountIds = ref<string[]>([]);
+const currentAccount = computed(() => {
+  if (!accountFilter.value) return null;
+  return zaloAccounts.value.find(a => a.id === accountFilter.value) || null;
+});
 const accountList = computed(() =>
   (zaloAccounts.value || []).map(a => ({
     id: a.id,
@@ -237,6 +255,11 @@ function onTyping() {
 }
 function onFilterAccount(id: string | null) {
   accountFilter.value = id;
+  fetchConversations();
+}
+function onFolderViewApplied(payload: { folderId: string | null; accountId: string | null }) {
+  inboxFilters.setFolder(payload.folderId);
+  accountFilter.value = payload.accountId;
   fetchConversations();
 }
 function onFiltersUpdate(params: Record<string, string>) {

@@ -64,9 +64,15 @@ export type TimeAxis =
   | 'crm-added'
   | 'last-inbound';
 
+export type AutoTagKey = 'hot' | 'active' | 'stuck' | 'cold';
+export type ScoreTier = 'cold' | 'warm' | 'hot' | 'champion' | null;
+export type StuckDuration = '>3d' | '>7d' | '>14d' | '>30d' | null;
+export type LastMessageWithin = '24h' | '7d' | '30d' | '>30d' | 'custom' | null;
+export type SaleAssigneeFilter = string | null | 'all' | 'unassigned';
+
 export interface FilterState {
   folderId: string | null;
-  saleAssigneeId: string | null | 'all';
+  saleAssigneeId: SaleAssigneeFilter;
   /** Tab single-active (1 trong 4: personal/group/main/other). Default = main. */
   activeTab: ActiveTab;
   quickPills: Set<QuickPillKey>;
@@ -78,6 +84,19 @@ export interface FilterState {
   timeFrom: string | null;
   timeTo: string | null;
   searchQuery: string;
+  // ─── NEW Tier 1 deep CRM filter (v3 mockup) ──────────────
+  autoTags: AutoTagKey[];
+  scoreMin: number | null;
+  scoreMax: number | null;
+  scoreTier: ScoreTier;
+  stages: string[];
+  stuckDuration: StuckDuration;
+  lastMessageWithin: LastMessageWithin;
+  customerWaitingReply: boolean;
+  saleWaitingReply: boolean;
+  birthdayWithin7d: boolean;
+  appointmentWithin24h: boolean;
+  appointmentOverdue: boolean;
 }
 
 // ─── Default state ──────────────────────────────────────────────────────
@@ -96,6 +115,19 @@ export function defaultFilterState(): FilterState {
     timeFrom: null,
     timeTo: null,
     searchQuery: '',
+    // Tier 1 deep CRM filter defaults
+    autoTags: [],
+    scoreMin: null,
+    scoreMax: null,
+    scoreTier: null,
+    stages: [],
+    stuckDuration: null,
+    lastMessageWithin: null,
+    customerWaitingReply: false,
+    saleWaitingReply: false,
+    birthdayWithin7d: false,
+    appointmentWithin24h: false,
+    appointmentOverdue: false,
   };
 }
 
@@ -258,6 +290,21 @@ export function useInboxFilters() {
     if (state.timeFrom) params.dateFrom = state.timeFrom;
     if (state.timeTo) params.dateTo = state.timeTo;
 
+    // ─── NEW Tier 1 deep CRM filter params ──────────────
+    if (state.autoTags.length > 0) params.autoTags = state.autoTags.join(',');
+    if (state.scoreMin !== null) params.scoreMin = String(state.scoreMin);
+    if (state.scoreMax !== null) params.scoreMax = String(state.scoreMax);
+    if (state.scoreTier) params.scoreTier = state.scoreTier;
+    if (state.stages.length > 0) params.stages = state.stages.join(',');
+    if (state.stuckDuration) params.stuckDuration = state.stuckDuration;
+    if (state.lastMessageWithin) params.lastMessageWithin = state.lastMessageWithin;
+    if (state.customerWaitingReply) params.customerWaitingReply = 'true';
+    if (state.saleWaitingReply) params.saleWaitingReply = 'true';
+    if (state.birthdayWithin7d) params.birthdayWithin7d = 'true';
+    if (state.appointmentWithin24h) params.appointmentWithin24h = 'true';
+    if (state.appointmentOverdue) params.appointmentOverdue = 'true';
+    if (state.saleAssigneeId === 'unassigned') params.assignedUserId = 'unassigned';
+
     return params;
   }
 
@@ -271,8 +318,134 @@ export function useInboxFilters() {
       state.tagsCrm.length > 0 ||
       state.sortMode !== 'recent' ||
       state.timeRangePreset !== '7d' ||
-      state.searchQuery.length > 0
+      state.searchQuery.length > 0 ||
+      // Tier 1 new filters
+      state.autoTags.length > 0 ||
+      state.scoreMin !== null ||
+      state.scoreMax !== null ||
+      state.scoreTier !== null ||
+      state.stages.length > 0 ||
+      state.stuckDuration !== null ||
+      state.lastMessageWithin !== null ||
+      state.customerWaitingReply ||
+      state.saleWaitingReply ||
+      state.birthdayWithin7d ||
+      state.appointmentWithin24h ||
+      state.appointmentOverdue
     );
+  });
+
+  /** Chip list cho footer "Active filter" — mỗi chip có label + removeFn */
+  const activeFilterChips = computed<Array<{ key: string; label: string; remove: () => void }>>(() => {
+    const chips: Array<{ key: string; label: string; remove: () => void }> = [];
+    for (const t of state.tagsCrm) {
+      chips.push({
+        key: `crm:${t}`,
+        label: `🏷 ${t}`,
+        remove: () => {
+          state.tagsCrm = state.tagsCrm.filter(x => x !== t);
+          activePresetId.value = null;
+        },
+      });
+    }
+    for (const t of state.tagsZalo) {
+      chips.push({
+        key: `zalo:${t}`,
+        label: `🔵 ${t}`,
+        remove: () => {
+          state.tagsZalo = state.tagsZalo.filter(x => x !== t);
+          activePresetId.value = null;
+        },
+      });
+    }
+    for (const at of state.autoTags) {
+      const icon = at === 'hot' ? '🔥' : at === 'active' ? '✅' : at === 'stuck' ? '⏸' : '❄️';
+      chips.push({
+        key: `auto:${at}`,
+        label: `${icon} ${at}`,
+        remove: () => {
+          state.autoTags = state.autoTags.filter(x => x !== at);
+          activePresetId.value = null;
+        },
+      });
+    }
+    if (state.scoreMin !== null || state.scoreMax !== null) {
+      chips.push({
+        key: 'score',
+        label: `Score ${state.scoreMin ?? 0}-${state.scoreMax ?? 100}`,
+        remove: () => {
+          state.scoreMin = null;
+          state.scoreMax = null;
+          state.scoreTier = null;
+          activePresetId.value = null;
+        },
+      });
+    }
+    for (const s of state.stages) {
+      chips.push({
+        key: `stage:${s}`,
+        label: s,
+        remove: () => {
+          state.stages = state.stages.filter(x => x !== s);
+          activePresetId.value = null;
+        },
+      });
+    }
+    if (state.stuckDuration) {
+      chips.push({
+        key: 'stuck',
+        label: `Stuck ${state.stuckDuration}`,
+        remove: () => { state.stuckDuration = null; activePresetId.value = null; },
+      });
+    }
+    if (state.lastMessageWithin) {
+      chips.push({
+        key: 'lastMsg',
+        label: `Tin ${state.lastMessageWithin}`,
+        remove: () => { state.lastMessageWithin = null; activePresetId.value = null; },
+      });
+    }
+    if (state.customerWaitingReply) {
+      chips.push({
+        key: 'kh-wait',
+        label: 'KH chờ reply',
+        remove: () => { state.customerWaitingReply = false; activePresetId.value = null; },
+      });
+    }
+    if (state.saleWaitingReply) {
+      chips.push({
+        key: 'sale-wait',
+        label: 'Sale chờ reply',
+        remove: () => { state.saleWaitingReply = false; activePresetId.value = null; },
+      });
+    }
+    if (state.birthdayWithin7d) {
+      chips.push({
+        key: 'bday',
+        label: '🎂 SN 7d',
+        remove: () => { state.birthdayWithin7d = false; activePresetId.value = null; },
+      });
+    }
+    if (state.appointmentWithin24h) {
+      chips.push({
+        key: 'appt-24h',
+        label: '📞 Hẹn 24h',
+        remove: () => { state.appointmentWithin24h = false; activePresetId.value = null; },
+      });
+    }
+    if (state.appointmentOverdue) {
+      chips.push({
+        key: 'appt-overdue',
+        label: '⚠️ Quá hạn',
+        remove: () => { state.appointmentOverdue = false; activePresetId.value = null; },
+      });
+    }
+    if (state.saleAssigneeId === 'all') {
+      chips.push({ key: 'sale-all', label: '👥 Tất cả sale', remove: () => { state.saleAssigneeId = null; activePresetId.value = null; } });
+    } else if (state.saleAssigneeId === 'unassigned') {
+      chips.push({ key: 'sale-none', label: '🆕 Chưa giao', remove: () => { state.saleAssigneeId = null; activePresetId.value = null; } });
+    }
+    return chips;
   });
 
   return {
@@ -282,6 +455,7 @@ export function useInboxFilters() {
     activePresetId,
     loading,
     hasActiveFilter,
+    activeFilterChips,
     // Folder API
     fetchFolders,
     createFolder,

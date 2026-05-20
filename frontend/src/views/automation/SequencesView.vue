@@ -1,45 +1,64 @@
 <template>
-  <div class="d-flex" style="gap: 16px;">
-    <!-- Sidebar: sequence list -->
-    <div style="width: 280px; flex-shrink: 0;">
-      <div class="d-flex align-center mb-2">
-        <div class="text-subtitle-1">Kịch bản chăm sóc</div>
-        <v-spacer />
-        <v-btn icon size="small" variant="text" @click="createNew">
-          <v-icon size="small">mdi-plus</v-icon>
-          <v-tooltip activator="parent">Tạo sequence</v-tooltip>
-        </v-btn>
+  <div class="sequences-view">
+    <div class="page-header mb-4">
+      <div>
+        <h1 class="page-title">Kịch bản chăm sóc</h1>
+        <p class="page-subtitle">
+          Sequence ghép nhiều block thành chuỗi có delay. Mỗi KH được "enroll" sẽ trải qua từng bước theo thời gian.
+        </p>
       </div>
-
-      <v-text-field v-model="search" placeholder="Tìm..." variant="outlined" density="compact" prepend-inner-icon="mdi-magnify" hide-details class="mb-2" />
-
-      <v-list density="compact" nav class="seq-list">
-        <v-list-item
-          v-for="seq in filteredSequences"
-          :key="seq.id"
-          :active="seq.id === selectedSeqId"
-          @click="selectSequence(seq.id)"
-          rounded="lg"
-        >
-          <v-list-item-title>{{ seq.name }}</v-list-item-title>
-          <v-list-item-subtitle>
-            <span class="text-caption">{{ seq.steps.length }} bước</span>
-            <v-chip v-if="!seq.enabled" size="x-small" color="grey" class="ml-2">tắt</v-chip>
-          </v-list-item-subtitle>
-        </v-list-item>
-      </v-list>
+      <v-btn color="primary" variant="elevated" prepend-icon="mdi-plus" @click="createNew">Sequence mới</v-btn>
     </div>
 
-    <!-- Main: editor -->
-    <div class="flex-grow-1">
-      <div v-if="!editing" class="d-flex align-center justify-center" style="height: 60vh;">
-        <div class="text-center text-medium-emphasis">
-          <v-icon size="64" class="mb-3">mdi-format-list-numbered</v-icon>
-          <div>Chọn sequence ở sidebar hoặc tạo mới</div>
-        </div>
-      </div>
+    <div class="seq-layout">
+      <!-- Sidebar: sequence list -->
+      <aside class="seq-sidebar">
+        <v-text-field
+          v-model="search"
+          placeholder="Tìm sequence..."
+          variant="solo-filled"
+          flat
+          density="compact"
+          prepend-inner-icon="mdi-magnify"
+          hide-details
+          clearable
+          class="mb-2"
+        />
 
-      <div v-else>
+        <div v-if="filteredSequences.length === 0" class="empty-seq-list">
+          <v-icon size="36" color="grey-lighten-1">mdi-format-list-numbered</v-icon>
+          <p class="text-caption mt-2 text-medium-emphasis">Chưa có sequence</p>
+        </div>
+
+        <ul v-else class="seq-list">
+          <li v-for="seq in filteredSequences" :key="seq.id">
+            <button
+              class="seq-item"
+              :class="{ 'is-active': seq.id === selectedSeqId }"
+              @click="selectSequence(seq.id)"
+            >
+              <div class="seq-item__title">
+                <span>{{ seq.name }}</span>
+                <span v-if="!seq.enabled" class="seq-item__off-badge">tắt</span>
+              </div>
+              <div class="seq-item__meta">
+                <span><v-icon size="11">mdi-format-list-bulleted</v-icon> {{ seq.steps.length }} bước</span>
+                <span v-if="seq.enrolledCount > 0"><v-icon size="11">mdi-account-multiple</v-icon> {{ seq.enrolledCount }}</span>
+              </div>
+            </button>
+          </li>
+        </ul>
+      </aside>
+
+      <!-- Main: editor -->
+      <section class="seq-editor">
+        <div v-if="!editing" class="seq-empty">
+          <v-icon size="80" color="grey-lighten-1">mdi-format-list-numbered</v-icon>
+          <h3 class="mt-3">Chọn sequence ở sidebar</h3>
+          <p class="text-body-2 text-medium-emphasis">hoặc bấm <strong>Sequence mới</strong> để tạo</p>
+        </div>
+
+        <div v-else>
         <div class="d-flex align-center mb-3">
           <v-text-field
             v-model="editing.name"
@@ -136,9 +155,14 @@
           @update:steps="editing.steps = $event"
         />
 
-        <v-alert v-if="error" type="error" variant="tonal" class="mt-4">{{ error }}</v-alert>
-      </div>
+        <v-alert v-if="error" type="error" variant="tonal" class="mt-4" closable @click:close="error = ''">{{ error }}</v-alert>
+        </div>
+      </section>
     </div>
+
+    <v-snackbar v-model="toastOpen" :color="toastColor" timeout="3000" location="bottom right">
+      {{ toastMsg }}
+    </v-snackbar>
   </div>
 </template>
 
@@ -154,6 +178,13 @@ const selectedSeqId = ref<string | null>(null);
 const search = ref('');
 const error = ref('');
 const saving = ref(false);
+
+const toastOpen = ref(false);
+const toastMsg = ref('');
+const toastColor = ref<'success' | 'error' | 'info'>('info');
+function showToast(msg: string, color: 'success' | 'error' | 'info' = 'info') {
+  toastMsg.value = msg; toastColor.value = color; toastOpen.value = true;
+}
 
 interface DraftSequence {
   id: string | null;
@@ -269,6 +300,7 @@ async function saveSequence() {
     }
     await loadAll();
     selectSequence(saved.id);
+    showToast('Đã lưu sequence', 'success');
   } catch (err: any) {
     error.value = err?.response?.data?.detail || err?.response?.data?.error || err?.message || 'Lỗi không xác định';
   } finally {
@@ -309,8 +341,99 @@ async function onDelete() {
 </script>
 
 <style scoped>
-.seq-list {
-  max-height: calc(100vh - 240px);
+.sequences-view { max-width: 1280px; }
+.page-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+}
+.page-title { font-size: 22px; font-weight: 700; margin: 0 0 4px; color: rgb(var(--v-theme-on-surface)); }
+.page-subtitle { margin: 0; font-size: 13px; color: rgba(var(--v-theme-on-surface), 0.6); }
+
+.seq-layout {
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  gap: 24px;
+  align-items: start;
+}
+
+.seq-sidebar {
+  background: rgb(var(--v-theme-surface));
+  border: 1px solid rgba(var(--v-theme-on-surface), 0.06);
+  border-radius: 12px;
+  padding: 12px;
+  position: sticky;
+  top: 12px;
+  max-height: calc(100vh - 160px);
   overflow-y: auto;
+}
+
+.seq-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 4px; }
+.seq-item {
+  width: 100%;
+  background: transparent;
+  border: 0;
+  border-radius: 10px;
+  padding: 10px 12px;
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.12s;
+}
+.seq-item:hover { background: rgba(var(--v-theme-on-surface), 0.04); }
+.seq-item.is-active {
+  background: rgba(var(--v-theme-primary), 0.1);
+}
+.seq-item__title {
+  display: flex; align-items: center; justify-content: space-between;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: rgb(var(--v-theme-on-surface));
+}
+.seq-item.is-active .seq-item__title { color: rgb(var(--v-theme-primary)); }
+.seq-item__off-badge {
+  font-size: 10px;
+  background: rgba(var(--v-theme-on-surface), 0.08);
+  padding: 2px 6px;
+  border-radius: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  font-weight: 600;
+  color: rgba(var(--v-theme-on-surface), 0.55);
+}
+.seq-item__meta {
+  display: flex;
+  gap: 12px;
+  font-size: 11.5px;
+  color: rgba(var(--v-theme-on-surface), 0.55);
+  margin-top: 4px;
+}
+.seq-item__meta span { display: inline-flex; align-items: center; gap: 3px; }
+
+.empty-seq-list {
+  text-align: center;
+  padding: 24px 12px;
+  color: rgba(var(--v-theme-on-surface), 0.5);
+}
+
+.seq-editor {
+  background: rgb(var(--v-theme-surface));
+  border: 1px solid rgba(var(--v-theme-on-surface), 0.06);
+  border-radius: 12px;
+  padding: 20px 24px;
+  min-height: calc(100vh - 160px);
+}
+.seq-empty {
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  text-align: center;
+  height: 60vh;
+  color: rgba(var(--v-theme-on-surface), 0.55);
+}
+.seq-empty h3 { font-size: 16px; font-weight: 600; margin: 8px 0 4px; }
+
+@media (max-width: 900px) {
+  .seq-layout { grid-template-columns: 1fr; }
+  .seq-sidebar { position: relative; max-height: none; }
 }
 </style>

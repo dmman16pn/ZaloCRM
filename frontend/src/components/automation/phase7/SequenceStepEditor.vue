@@ -1,74 +1,95 @@
 <template>
   <div class="sequence-step-editor">
     <!-- START node -->
-    <div class="step-node start-node mb-1">
-      <v-icon class="mr-2" color="success">mdi-play-circle</v-icon>
-      <span class="text-subtitle-2">Bắt đầu (KH được enroll)</span>
+    <div class="flow-node start-node">
+      <v-icon size="20" color="success">mdi-play-circle</v-icon>
+      <span>Bắt đầu khi KH được enroll</span>
     </div>
 
     <!-- Steps with delay arrows -->
     <template v-for="(step, idx) in steps" :key="step.stepId">
-      <!-- Delay arrow above this step (delay BEFORE this step runs) -->
-      <div class="delay-arrow d-flex align-center justify-center">
-        <v-icon size="small" class="mr-1">mdi-clock-outline</v-icon>
-        <v-text-field
-          :model-value="step.delayMinutes"
-          @update:model-value="updateDelay(idx, $event)"
-          variant="plain"
-          density="compact"
-          type="number"
-          min="0"
-          hide-details
-          style="max-width: 90px;"
-        />
-        <span class="text-caption ml-1">phút</span>
+      <!-- Delay pill between previous node and this step -->
+      <div class="flow-connector">
+        <div class="flow-line" />
+        <div class="delay-pill">
+          <v-icon size="14">mdi-timer-sand</v-icon>
+          <v-text-field
+            :model-value="step.delayMinutes"
+            @update:model-value="updateDelay(idx, $event)"
+            variant="plain"
+            density="compact"
+            type="number"
+            min="0"
+            hide-details
+            class="delay-input"
+          />
+          <span class="delay-unit">phút</span>
+        </div>
       </div>
 
       <!-- Step card -->
-      <v-card class="step-card" variant="outlined">
-        <v-card-text class="d-flex align-center py-2">
-          <v-icon class="mr-3">{{ blockIcon(step.blockId) }}</v-icon>
-          <div class="flex-grow-1">
-            <div class="text-caption text-medium-emphasis">Bước {{ idx + 1 }}</div>
-            <div class="text-body-2 font-weight-medium">{{ blockName(step.blockId) }}</div>
-            <div class="text-caption text-medium-emphasis">
-              {{ ACTION_TYPE_LABELS[blockActionType(step.blockId)] }}
-              <span v-if="blockArchived(step.blockId)" class="text-error ml-1">(archived — sẽ skip)</span>
-            </div>
+      <div
+        class="step-card"
+        :style="cardStyleFor(step.blockId)"
+        :class="{ 'is-broken': blockArchived(step.blockId) }"
+      >
+        <div class="step-card__num">{{ idx + 1 }}</div>
+        <div class="step-card__icon">
+          <v-icon size="22">{{ blockIcon(step.blockId) }}</v-icon>
+        </div>
+        <div class="step-card__body">
+          <div class="step-card__label">Bước {{ idx + 1 }} · {{ blockActionLabel(step.blockId) }}</div>
+          <div class="step-card__title">{{ blockName(step.blockId) }}</div>
+          <div v-if="blockArchived(step.blockId)" class="step-card__warn">
+            <v-icon size="12">mdi-alert-circle</v-icon>
+            Block đã archive — engine sẽ skip
           </div>
-          <v-btn icon size="small" variant="text" :disabled="idx === 0" @click="moveUp(idx)">
-            <v-icon size="small">mdi-arrow-up</v-icon>
+        </div>
+        <div class="step-card__actions">
+          <v-btn icon size="x-small" variant="text" :disabled="idx === 0" @click="moveUp(idx)" title="Lên">
+            <v-icon size="16">mdi-arrow-up</v-icon>
           </v-btn>
-          <v-btn icon size="small" variant="text" :disabled="idx === steps.length - 1" @click="moveDown(idx)">
-            <v-icon size="small">mdi-arrow-down</v-icon>
+          <v-btn icon size="x-small" variant="text" :disabled="idx === steps.length - 1" @click="moveDown(idx)" title="Xuống">
+            <v-icon size="16">mdi-arrow-down</v-icon>
           </v-btn>
-          <v-btn icon size="small" variant="text" @click="editStep(idx)">
-            <v-icon size="small">mdi-pencil</v-icon>
+          <v-btn icon size="x-small" variant="text" @click="editStep(idx)" title="Đổi block">
+            <v-icon size="16">mdi-swap-horizontal</v-icon>
           </v-btn>
-          <v-btn icon size="small" variant="text" color="error" @click="removeStep(idx)">
-            <v-icon size="small">mdi-close</v-icon>
+          <v-btn icon size="x-small" variant="text" color="error" @click="removeStep(idx)" title="Xoá">
+            <v-icon size="16">mdi-close</v-icon>
           </v-btn>
-        </v-card-text>
-      </v-card>
+        </div>
+      </div>
     </template>
 
-    <!-- END node -->
-    <div v-if="steps.length > 0" class="step-node end-node mt-1">
-      <v-icon class="mr-2" color="grey">mdi-stop-circle</v-icon>
-      <span class="text-caption text-medium-emphasis">Kết thúc flow</span>
+    <!-- END + Add button -->
+    <div v-if="steps.length > 0" class="flow-connector">
+      <div class="flow-line" />
+    </div>
+    <div v-if="steps.length > 0" class="flow-node end-node">
+      <v-icon size="18" color="grey">mdi-flag-checkered</v-icon>
+      <span>Kết thúc flow</span>
     </div>
 
-    <!-- Add step button -->
-    <div class="text-center mt-3">
-      <v-btn variant="tonal" prepend-icon="mdi-plus" @click="addStep">Thêm bước</v-btn>
+    <div class="add-step-wrap">
+      <v-btn color="primary" variant="tonal" rounded prepend-icon="mdi-plus" @click="addStep">
+        Thêm bước
+      </v-btn>
     </div>
 
     <!-- Block picker dialog -->
-    <v-dialog v-model="pickerOpen" max-width="600">
+    <v-dialog v-model="pickerOpen" max-width="640">
       <v-card>
-        <v-card-title>Chọn block cho bước {{ pickerStepIdx !== null ? pickerStepIdx + 1 : '' }}</v-card-title>
+        <v-card-title class="d-flex align-center">
+          <v-icon class="mr-2">mdi-puzzle</v-icon>
+          <span>Chọn block cho bước {{ pickerStepIdx !== null ? pickerStepIdx + 1 : 'mới' }}</span>
+          <v-spacer />
+          <v-btn icon variant="text" size="small" @click="pickerOpen = false"><v-icon>mdi-close</v-icon></v-btn>
+        </v-card-title>
+        <v-divider />
         <v-card-text>
-          <v-text-field v-model="pickerSearch" placeholder="Tìm block..." variant="outlined" density="compact" prepend-inner-icon="mdi-magnify" clearable />
+          <v-text-field v-model="pickerSearch" placeholder="Tìm block theo tên / loại action..." variant="solo-filled" flat density="comfortable" prepend-inner-icon="mdi-magnify" clearable hide-details class="mb-3" />
+
           <v-text-field
             v-if="pickerStepIdx !== null"
             :model-value="steps[pickerStepIdx].delayMinutes"
@@ -76,27 +97,34 @@
             type="number" min="0"
             label="Delay trước bước này (phút)"
             variant="outlined" density="compact"
-            class="mt-2"
+            prepend-inner-icon="mdi-timer-sand"
+            class="mb-3"
           />
-          <v-list density="compact" class="block-picker-list" style="max-height: 360px; overflow-y: auto;">
-            <v-list-item
+
+          <div v-if="filteredPickerBlocks.length === 0" class="text-center pa-6 text-medium-emphasis">
+            <v-icon size="36" color="grey-lighten-1">mdi-puzzle-outline</v-icon>
+            <div class="mt-2 text-caption">Không tìm thấy block. Tạo block ở tab "Thư viện block" trước.</div>
+          </div>
+
+          <div v-else class="block-picker-grid">
+            <button
               v-for="block in filteredPickerBlocks"
               :key="block.id"
+              class="picker-item"
+              :style="pickerItemStyle(block.actionType)"
               @click="pickBlock(block.id)"
-              rounded="lg"
             >
-              <template #prepend>
-                <v-icon :icon="ACTION_TYPE_ICONS[block.actionType]" />
-              </template>
-              <v-list-item-title>{{ block.name }}</v-list-item-title>
-              <v-list-item-subtitle>{{ ACTION_TYPE_LABELS[block.actionType] }}</v-list-item-subtitle>
-            </v-list-item>
-          </v-list>
+              <div class="picker-item__icon">
+                <v-icon size="18">{{ ACTION_TYPE_ICONS[block.actionType] }}</v-icon>
+              </div>
+              <div class="picker-item__body">
+                <div class="picker-item__name">{{ block.name }}</div>
+                <div class="picker-item__type">{{ ACTION_TYPE_LABELS[block.actionType] }}</div>
+              </div>
+              <v-icon size="16" color="grey">mdi-chevron-right</v-icon>
+            </button>
+          </div>
         </v-card-text>
-        <v-card-actions>
-          <v-spacer />
-          <v-btn @click="pickerOpen = false">Huỷ</v-btn>
-        </v-card-actions>
       </v-card>
     </v-dialog>
   </div>
@@ -105,6 +133,7 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue';
 import { ACTION_TYPE_LABELS, ACTION_TYPE_ICONS, type SequenceStep, type Block, type BlockActionType } from '@/api/automation/types';
+import { ACTION_TYPE_COLOR } from './design-tokens';
 
 const props = defineProps<{
   steps: SequenceStep[];
@@ -130,8 +159,19 @@ function blockIcon(id: string): string {
 function blockActionType(id: string): BlockActionType {
   return blockMap.value.get(id)?.actionType ?? 'send_message';
 }
+function blockActionLabel(id: string): string {
+  return ACTION_TYPE_LABELS[blockActionType(id)];
+}
 function blockArchived(id: string): boolean {
   return Boolean(blockMap.value.get(id)?.archivedAt);
+}
+function cardStyleFor(blockId: string): Record<string, string> {
+  const c = ACTION_TYPE_COLOR[blockActionType(blockId)];
+  return { '--card-accent': c.bg, '--card-tint': c.tint, '--card-text': c.text };
+}
+function pickerItemStyle(actionType: BlockActionType): Record<string, string> {
+  const c = ACTION_TYPE_COLOR[actionType];
+  return { '--pick-bg': c.tint, '--pick-text': c.text };
 }
 
 const filteredPickerBlocks = computed(() => {
@@ -155,7 +195,6 @@ function editStep(idx: number) {
 }
 function pickBlock(blockId: string) {
   if (pickerStepIdx.value === null) {
-    // Adding new step at end
     const newStep: SequenceStep = {
       stepId: `s${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       blockId,
@@ -163,7 +202,6 @@ function pickBlock(blockId: string) {
     };
     emitSteps([...props.steps, newStep]);
   } else {
-    // Editing existing step's block
     const newSteps = [...props.steps];
     newSteps[pickerStepIdx.value] = { ...newSteps[pickerStepIdx.value], blockId };
     emitSteps(newSteps);
@@ -195,40 +233,205 @@ function removeStep(idx: number) {
 </script>
 
 <style scoped>
-.step-node {
+.sequence-step-editor {
+  max-width: 640px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.flow-node {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 18px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 500;
+}
+.start-node {
+  background: rgba(16, 185, 129, 0.12);
+  color: rgb(16, 185, 129);
+}
+.end-node {
+  background: rgba(var(--v-theme-on-surface), 0.06);
+  color: rgba(var(--v-theme-on-surface), 0.55);
+}
+
+.flow-connector {
+  position: relative;
+  height: 56px;
+  width: 100%;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 8px 16px;
-  border-radius: 8px;
-  background: rgba(var(--v-theme-on-surface), 0.04);
-  max-width: 320px;
-  margin: 0 auto;
 }
-.delay-arrow {
-  height: 40px;
-  position: relative;
-  color: rgba(var(--v-theme-on-surface), 0.6);
-}
-.delay-arrow::before {
-  content: '';
+.flow-line {
   position: absolute;
-  left: 50%;
   top: 0;
   bottom: 0;
+  left: 50%;
   width: 2px;
-  background: rgba(var(--v-theme-on-surface), 0.15);
+  background: linear-gradient(180deg, rgba(var(--v-theme-on-surface), 0.2) 0%, rgba(var(--v-theme-on-surface), 0.1) 100%);
   transform: translateX(-50%);
-  z-index: 0;
 }
-.delay-arrow > * {
+.delay-pill {
   position: relative;
-  z-index: 1;
   background: rgb(var(--v-theme-surface));
-  padding: 0 4px;
+  border: 1px solid rgba(var(--v-theme-on-surface), 0.12);
+  padding: 4px 12px 4px 8px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: rgba(var(--v-theme-on-surface), 0.75);
+  box-shadow: 0 1px 2px rgba(0,0,0,0.04);
 }
+.delay-input {
+  width: 56px !important;
+  font-size: 12px !important;
+}
+.delay-input :deep(input) {
+  text-align: center;
+  padding: 0 !important;
+  min-height: unset !important;
+  height: 20px !important;
+}
+.delay-unit { color: rgba(var(--v-theme-on-surface), 0.55); }
+
 .step-card {
-  max-width: 560px;
-  margin: 0 auto;
+  width: 100%;
+  background: rgb(var(--v-theme-surface));
+  border: 1px solid rgba(var(--v-theme-on-surface), 0.1);
+  border-radius: 14px;
+  padding: 14px 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  position: relative;
+  transition: all 0.15s;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+}
+.step-card::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 12px; bottom: 12px;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--card-accent);
+}
+.step-card:hover {
+  border-color: var(--card-accent);
+  box-shadow: 0 6px 16px -6px rgba(0,0,0,0.1);
+}
+.step-card.is-broken {
+  opacity: 0.7;
+  background: rgba(244, 67, 54, 0.04);
+}
+
+.step-card__num {
+  width: 28px; height: 28px;
+  border-radius: 8px;
+  background: var(--card-tint);
+  color: var(--card-text);
+  font-weight: 700;
+  font-size: 13px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.step-card__icon {
+  width: 40px; height: 40px;
+  border-radius: 10px;
+  background: var(--card-accent);
+  color: white;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.step-card__body { flex: 1; min-width: 0; }
+.step-card__label {
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: rgba(var(--v-theme-on-surface), 0.5);
+}
+.step-card__title {
+  font-size: 14.5px;
+  font-weight: 600;
+  color: rgb(var(--v-theme-on-surface));
+  margin-top: 1px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.step-card__warn {
+  font-size: 11.5px;
+  color: rgb(244, 67, 54);
+  margin-top: 4px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.step-card__actions {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  flex-shrink: 0;
+}
+
+.add-step-wrap {
+  margin-top: 16px;
+}
+
+.block-picker-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 400px;
+  overflow-y: auto;
+}
+.picker-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  background: rgb(var(--v-theme-surface));
+  border: 1px solid rgba(var(--v-theme-on-surface), 0.08);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 0.1s;
+  text-align: left;
+  width: 100%;
+}
+.picker-item:hover {
+  background: var(--pick-bg);
+  border-color: var(--pick-text);
+}
+.picker-item__icon {
+  width: 32px; height: 32px;
+  border-radius: 8px;
+  background: var(--pick-bg);
+  color: var(--pick-text);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.picker-item__body { flex: 1; min-width: 0; }
+.picker-item__name {
+  font-size: 13.5px;
+  font-weight: 500;
+  color: rgb(var(--v-theme-on-surface));
+}
+.picker-item__type {
+  font-size: 11px;
+  color: rgba(var(--v-theme-on-surface), 0.55);
+  margin-top: 1px;
 }
 </style>
