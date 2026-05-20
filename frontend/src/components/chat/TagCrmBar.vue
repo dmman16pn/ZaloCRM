@@ -3,6 +3,17 @@
     <!-- Label prefix -->
     <span class="bar-label">🏷</span>
 
+    <!-- Phase 6 polish — Auto-tag chips (read-only, system-generated từ scoring engine) -->
+    <span
+      v-for="t in autoTagList"
+      :key="'auto-' + t"
+      class="tag-pill tag-auto"
+      :style="{ '--tag-color': autoTagDef(t).color }"
+      :title="`Auto: ${autoTagDef(t).label} (hệ thống tự gắn theo activity/score)`"
+    >
+      <span class="tag-emoji">{{ autoTagDef(t).icon }}</span>{{ autoTagDef(t).label }}
+    </span>
+
     <!-- Assigned pills — Zalo-managed FIRST (theo managedBy), sau đó CrmTag.order.
          Zalo-managed: monochromatic chip (icon + bg + border + text cùng tone từ ZaloLabel.color
          qua color-mix). CRM tag: chip gray neutral hoặc tinted theo CrmTag.color. -->
@@ -115,6 +126,8 @@ interface CrmTagDef {
 const props = defineProps<{
   contactId: string | null;
   modelValue: string[];
+  /** Phase 6 polish — auto-tags từ scoring engine (active/cold/stuck/ready/...) — read-only, render đầu */
+  autoTags?: string[];
 }>();
 
 const emit = defineEmits<{
@@ -143,6 +156,25 @@ async function loadTagDefs() {
 }
 
 const tags = computed(() => props.modelValue || []);
+
+// Phase 6 polish — Auto-tag display map (icon + label + color tint)
+const AUTO_TAG_DISPLAY: Record<string, { icon: string; label: string; color: string }> = {
+  active:   { icon: '🔥', label: 'Hoạt động',    color: '#10B981' },
+  cooling:  { icon: '❄️', label: 'Đang nguội',  color: '#60A5FA' },
+  cold:     { icon: '🧊', label: 'Nguội',        color: '#3B82F6' },
+  frozen:   { icon: '🥶', label: 'Đóng băng',    color: '#1E40AF' },
+  rewarmed: { icon: '🔄', label: 'Ấm trở lại',   color: '#F59E0B' },
+  stuck:    { icon: '⏰', label: 'Đình trệ',     color: '#EF4444' },
+  ready:    { icon: '💯', label: 'Sẵn sàng chốt', color: '#059669' },
+  atrisk:   { icon: '🚧', label: 'Có nguy cơ',   color: '#DC2626' },
+};
+const autoTagList = computed(() => {
+  const list = props.autoTags ?? [];
+  return list.filter(t => AUTO_TAG_DISPLAY[t]);
+});
+function autoTagDef(t: string) {
+  return AUTO_TAG_DISPLAY[t] ?? { icon: '🏷', label: t, color: '#9CA3AF' };
+}
 
 // Sort: Zalo-managed tags FIRST, sau đó theo priority CrmTag.order, cuối là alphabetical
 const sortedTags = computed(() => {
@@ -338,6 +370,33 @@ onMounted(() => { void loadTagDefs(); });
   background: color-mix(in srgb, var(--tag-color) 8%, white);
   border-color: color-mix(in srgb, var(--tag-color) 70%, white);
   color: color-mix(in srgb, var(--tag-color) 80%, black);
+}
+
+/* Phase 6 polish — Auto-tag chip (system-generated, read-only). Tonal theo --tag-color. */
+.tag-pill.tag-auto {
+  --tag-color: #6B7280;
+  background: color-mix(in srgb, var(--tag-color) 10%, white);
+  border-color: color-mix(in srgb, var(--tag-color) 60%, white);
+  color: color-mix(in srgb, var(--tag-color) 85%, black);
+  cursor: help;
+  font-weight: 600;
+  padding: 3px 9px;
+  position: relative;
+}
+.tag-pill.tag-auto .tag-emoji { margin-right: 2px; }
+.tag-pill.tag-auto::before {
+  content: 'AUTO';
+  position: absolute;
+  top: -7px;
+  right: -4px;
+  background: var(--tag-color);
+  color: white;
+  font-size: 7.5px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  padding: 1px 4px;
+  border-radius: 99px;
+  line-height: 1;
 }
 .tag-x {
   background: none;

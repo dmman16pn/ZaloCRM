@@ -117,10 +117,12 @@
           :density="state.density.value"
           :selected="selected"
           :visible-cols="visibleCols"
+          :sort-by="sortBy"
           @update:selected="selected = $event"
           @open-detail="onOpenDetail"
           @open-chat="onOpenChat"
           @open-contact="onOpenContact"
+          @sort-by="setSortBy"
         />
 
         <div class="pag">
@@ -325,6 +327,7 @@ async function fetch() {
       page: pagination.page,
       limit: pagination.limit,
       search: searchInput.value || undefined,
+      sortBy: sortBy.value,
     });
     return;
   }
@@ -333,7 +336,19 @@ async function fetch() {
     page: pagination.page,
     limit: pagination.limit,
     search: searchInput.value || undefined,
+    sortBy: sortBy.value,
   });
+}
+
+// Phase 6 polish — sort theo Score header click. Persist localStorage.
+type SortBy = 'recent' | 'score-desc' | 'score-asc' | 'stuck';
+const SORT_LS_KEY = 'friendsview.sortBy.v1';
+const sortBy = ref<SortBy>((localStorage.getItem(SORT_LS_KEY) as SortBy) || 'recent');
+function setSortBy(v: SortBy) {
+  sortBy.value = v;
+  try { localStorage.setItem(SORT_LS_KEY, v); } catch { /* ignore */ }
+  pagination.page = 1;
+  fetch();
 }
 
 function goPage(p: number) {

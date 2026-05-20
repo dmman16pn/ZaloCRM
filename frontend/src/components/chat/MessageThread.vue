@@ -271,6 +271,7 @@
           v-if="conversation.contact && conversation.threadType === 'user'"
           :contact-id="conversation.contact.id"
           :model-value="contactTags"
+          :auto-tags="conversationAutoTags"
           @update:model-value="onUpdateTags"
         />
 
@@ -763,6 +764,15 @@ function goToLabelsSettings() {
 // CRM tags = merge Contact.tags + Friend.crmTagsPerNick (Zalo-mirrored "🔵 X").
 // Source of truth: 2 fields khác nhau. Dedup, Zalo tags lên trước.
 const contactTags = ref<string[]>([]);
+
+// Phase 6 polish — auto-tags từ Friend (đính kèm conversation.friendship khi BE trả)
+const conversationAutoTags = computed<string[]>(() => {
+  const conv = props.conversation as any;
+  const fromFriendship = conv?.friendship?.autoTags;
+  const fromContact = conv?.contact?.autoTags;
+  const list = (fromFriendship ?? fromContact ?? []) as unknown;
+  return Array.isArray(list) ? (list as string[]) : [];
+});
 function recomputeTags() {
   const ct = Array.isArray(props.conversation?.contact?.tags)
     ? (props.conversation!.contact!.tags as string[])

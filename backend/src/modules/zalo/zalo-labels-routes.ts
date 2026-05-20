@@ -217,10 +217,16 @@ export async function syncLabelsForAccount(
         where: { sourceZaloLabelId: l.zaloLabelId },
       });
       if (bySource) {
-        await prisma.crmTag.update({
-          where: { id: bySource.id },
-          data: { name: tagName, ...baseData },
-        });
+        try {
+          await prisma.crmTag.update({
+            where: { id: bySource.id },
+            data: { name: tagName, ...baseData },
+          });
+        } catch (err: any) {
+          // Race: another sync claimed (orgId, name) trong khi mình tính update
+          // → skip, row đã được đồng bộ bởi caller khác.
+          if (err?.code !== 'P2002') throw err;
+        }
         continue;
       }
 
@@ -229,10 +235,15 @@ export async function syncLabelsForAccount(
       });
       if (byName) {
         // Claim legacy row (sourceZaloLabelId=null từ PR2) → upgrade managedBy
-        await prisma.crmTag.update({
-          where: { id: byName.id },
-          data: baseData,
-        });
+        try {
+          await prisma.crmTag.update({
+            where: { id: byName.id },
+            data: baseData,
+          });
+        } catch (err: any) {
+          // Race: another sync vừa set sourceZaloLabelId cho row này → skip
+          if (err?.code !== 'P2002') throw err;
+        }
         continue;
       }
 

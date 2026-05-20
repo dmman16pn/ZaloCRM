@@ -20,7 +20,12 @@
           <th title="Auto tag system (active/cold/stuck/ready) + CRM tag manual">🤖 Tag</th>
           <th>Tag CRM</th>
           <th title="Ngày kết bạn Zalo">🕒 KB từ</th>
-          <th class="stuck-col" title="KH bị flag stuck — sale priority chăm lại">⚠ Stuck</th>
+          <th
+            class="stuck-col sortable"
+            :class="{ 'sort-active': sortBy === 'stuck' }"
+            title="KH bị flag stuck — click để sort theo stuck trước"
+            @click="toggleStuckSort"
+          >⚠ Stuck<span class="sort-arrow">{{ sortBy === 'stuck' ? ' ↑' : '' }}</span></th>
           <!-- Tier 2 optional cols (conditional v-if) -->
           <th v-if="visibleCols.zaloGlobalId" title="Zalo global identity">🌐 Global ID</th>
           <th v-if="visibleCols.zaloUsername" title="Zalo username handle">@ Username</th>
@@ -32,7 +37,12 @@
           <th v-if="visibleCols.replyRate" class="reply-col" title="Tỷ lệ sale/KH messages">📨 Reply</th>
           <th v-if="visibleCols.healthBars" class="health-col" title="Score 4 chiều (engage/intent/fit/velocity)">🌡 Health</th>
           <th>Tương tác cuối</th>
-          <th>Score</th>
+          <th
+            class="sortable"
+            :class="{ 'sort-active': sortBy === 'score-desc' || sortBy === 'score-asc' }"
+            title="Click để sort theo Score (desc → asc → off)"
+            @click="toggleScoreSort"
+          >Score<span class="sort-arrow">{{ sortBy === 'score-desc' ? ' ↓' : sortBy === 'score-asc' ? ' ↑' : '' }}</span></th>
           <th>Tin (in/out)</th>
           <th class="action-col">Action</th>
         </tr>
@@ -266,6 +276,8 @@ interface VisibleColsMap {
   healthBars: boolean;
 }
 
+type SortBy = 'recent' | 'score-desc' | 'score-asc' | 'stuck';
+
 const props = defineProps<{
   friends: DbFriend[];
   loading: boolean;
@@ -273,6 +285,8 @@ const props = defineProps<{
   selected: Set<string>;
   /** Tier 2 column toggle state (Tier 1 luôn show, không trong map này) */
   visibleCols: VisibleColsMap;
+  /** Phase 6 — sort theo Score / Stuck header click */
+  sortBy?: SortBy;
 }>();
 
 const emit = defineEmits<{
@@ -280,7 +294,20 @@ const emit = defineEmits<{
   (e: 'open-chat', f: DbFriend): void;
   (e: 'open-contact', f: DbFriend): void;
   (e: 'update:selected', s: Set<string>): void;
+  (e: 'sort-by', v: SortBy): void;
 }>();
+
+/** Click Score header: cycle recent → score-desc → score-asc → recent */
+function toggleScoreSort() {
+  const cur = props.sortBy ?? 'recent';
+  const next: SortBy = cur === 'score-desc' ? 'score-asc' : cur === 'score-asc' ? 'recent' : 'score-desc';
+  emit('sort-by', next);
+}
+/** Click Stuck header: toggle stuck ↔ recent */
+function toggleStuckSort() {
+  const cur = props.sortBy ?? 'recent';
+  emit('sort-by', cur === 'stuck' ? 'recent' : 'stuck');
+}
 
 const allSelected = computed(() => props.friends.length > 0 && props.friends.every(f => props.selected.has(f.id)));
 const someSelected = computed(() => props.friends.some(f => props.selected.has(f.id)));
@@ -613,6 +640,27 @@ function healthTooltip(f: DbFriend): string {
   border-collapse: separate;
   border-spacing: 0;
   font-size: 12.5px;
+}
+
+/* Phase 6 polish — sortable header với hover + active state */
+.ftable thead th.sortable {
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.12s, color 0.12s;
+}
+.ftable thead th.sortable:hover {
+  background: #EEF2FF;
+  color: #4338CA;
+}
+.ftable thead th.sort-active {
+  background: #E0E7FF;
+  color: #4F46E5;
+}
+.ftable thead th .sort-arrow {
+  font-size: 11px;
+  color: #6366F1;
+  margin-left: 2px;
+  font-weight: 700;
 }
 
 /* Phase 3 — Freeze 2 cột đầu (checkbox + Khách hàng) khi scroll ngang */

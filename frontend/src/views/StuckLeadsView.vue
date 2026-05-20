@@ -6,6 +6,15 @@
         🚨 Khách hàng đình trệ
         <span v-if="data && data.totalStuck > 0" class="count-badge">{{ data.totalStuck }}</span>
       </h1>
+      <div class="stuck-search">
+        <input
+          v-model="searchQuery"
+          type="search"
+          placeholder="🔍 Tìm theo tên KH, SĐT, stage..."
+          class="search-input"
+        />
+        <button v-if="searchQuery" class="clear-search" @click="searchQuery = ''" title="Xoá tìm kiếm">✕</button>
+      </div>
       <div class="stuck-actions">
         <button class="refresh-btn" :disabled="loading" @click="loadData">
           {{ loading ? '⏳' : '🔄' }} Làm mới
@@ -33,8 +42,14 @@
       </div>
     </div>
 
-    <div v-if="data && data.byStage.length > 0" class="stage-groups">
-      <section v-for="group in data.byStage" :key="group.stage" class="stage-group">
+    <div v-if="data && filteredByStage.length === 0 && searchQuery" class="empty">
+      <div class="empty-icon">🔎</div>
+      <h2>Không tìm thấy KH phù hợp</h2>
+      <p>Thử từ khoá khác hoặc bấm ✕ để xoá tìm kiếm.</p>
+    </div>
+
+    <div v-if="data && filteredByStage.length > 0" class="stage-groups">
+      <section v-for="group in filteredByStage" :key="group.stage" class="stage-group">
         <header class="stage-header" :style="{ borderLeftColor: group.color || '#6B7280' }">
           <span class="stage-chip" :style="{ backgroundColor: group.color || '#6B7280' }">
             {{ group.stage }}
@@ -115,15 +130,37 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { useScoring, type StuckLeadsResponse, type StuckStageGroup, type StuckFriend } from '@/composables/use-scoring';
+import { api } from '@/api/index';
 
 const router = useRouter();
 const scoring = useScoring();
 
 const data = ref<StuckLeadsResponse | null>(null);
 const loading = ref(false);
+
+// Phase 6 polish P2 quick win — Search box trong Stuck Dashboard
+// Filter client-side qua contactName / phone / stage. Search rỗng → show all.
+const searchQuery = ref('');
+const filteredByStage = computed<StuckStageGroup[]>(() => {
+  if (!data.value) return [];
+  const q = searchQuery.value.trim().toLowerCase();
+  if (!q) return data.value.byStage;
+  return data.value.byStage
+    .map((group) => {
+      const stageMatch = group.stage.toLowerCase().includes(q);
+      const matchedFriends = group.friends.filter((f) => {
+        if (stageMatch) return true;
+        const name = (f.contactName || '').toLowerCase();
+        const phone = (f.phone || '').toLowerCase();
+        return name.includes(q) || phone.includes(q);
+      });
+      return { ...group, friends: matchedFriends };
+    })
+    .filter((g) => g.friends.length > 0);
+});
 const scanning = ref(false);
 const error = ref<string | null>(null);
 const toast = ref<{ type: 'success' | 'error'; message: string } | null>(null);
@@ -222,16 +259,47 @@ function sendNbaTemplate(friend: StuckFriend, group: StuckStageGroup) {
   previewContent.value = content;
 }
 
-function confirmSendTemplate() {
+async function confirmSendTemplate() {
   if (!previewTemplate.value) return;
   const friendId = previewTemplate.value.friend.friendId;
-  // Copy to clipboard + open chat
-  if (navigator.clipboard) {
-    navigator.clipboard.writeText(previewContent.value).catch(() => {});
+  const templateKey = previewTemplate.value.group.nbaTemplate?.key ?? null;
+  const content = previewContent.value.trim();
+  if (!content) { showToast('error', 'Nội dung rỗng'); return; }
+
+  // Phase 6 polish P1 — gửi trực tiếp qua API thay copy clipboard.
+  // BE: POST /leads/stuck/send-template { friendId, templateKey, overrideContent }
+  //     → resolve conversation → render variables + markdown → sendMessage Zalo
+  try {
+    const res = await api.post('/leads/stuck/send-template', {
+      friendId,
+      templateKey,
+      overrideContent: content,
+    });
+    if (res?.data?.ok) {
+      previewTemplate.value = null;
+      showToast('success', '✅ Đã gửi tin nhắn cho KH');
+      // Optional: open chat để sale theo dõi rep
+      router.push(`/chat?friendId=${friendId}`);
+    } else {
+      showToast('error', 'Gửi thất bại — kiểm tra connection nick Zalo');
+    }
+  } catch (err: any) {
+    const msg = err?.response?.data?.error || err?.message || 'unknown';
+    const detail = err?.response?.data?.message;
+    if (msg === 'no_conversation') {
+      // KH chưa từng chat — fallback clipboard + open chat
+      if (navigator.clipboard) navigator.clipboard.writeText(content).catch(() => {});
+      previewTemplate.value = null;
+      showToast('success', 'KH chưa có hội thoại. Đã copy nội dung — mở chat để gửi.');
+      router.push(`/chat?friendId=${friendId}`);
+    } else if (msg === 'rate_limited') {
+      showToast('error', `🚫 ${detail || 'Đã đạt giới hạn nhắn tin hôm nay'}`);
+    } else if (msg === 'nick_disconnected') {
+      showToast('error', '⚠ Nick Zalo của KH đang ngắt kết nối — reconnect lại trước');
+    } else {
+      showToast('error', `Lỗi: ${msg}`);
+    }
   }
-  previewTemplate.value = null;
-  showToast('success', 'Đã copy vào clipboard. Mở chat để dán.');
-  router.push(`/chat?friendId=${friendId}`);
 }
 
 function openChat(f: StuckFriend) {
@@ -312,6 +380,45 @@ onMounted(loadData);
   display: flex;
   gap: 8px;
 }
+
+/* Phase 6 polish — Search box trong Stuck Dashboard */
+.stuck-search {
+  position: relative;
+  flex: 1;
+  max-width: 360px;
+  margin: 0 12px;
+}
+.search-input {
+  width: 100%;
+  height: 36px;
+  padding: 0 32px 0 12px;
+  border: 1px solid #E5E7EB;
+  border-radius: 8px;
+  font-size: 13px;
+  background: #fff;
+  color: #111827;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.search-input:focus {
+  border-color: #6366F1;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
+}
+.search-input::placeholder { color: #9CA3AF; }
+.clear-search {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: transparent;
+  border: none;
+  font-size: 16px;
+  color: #6B7280;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+.clear-search:hover { color: #111827; background: #F3F4F6; }
 
 .loading,
 .error,

@@ -583,7 +583,7 @@ export async function scoringRoutes(app: FastifyInstance): Promise<void> {
         action: 'nba_template_sent',
         entityType: 'friend',
         entityId: friendId,
-        category: 'engagement',
+        category: 'automation',
         details: { templateKey, contentPreview: rendered.slice(0, 120) },
       });
 
