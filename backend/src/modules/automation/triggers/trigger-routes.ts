@@ -28,6 +28,7 @@ import {
   TRIGGER_CATALOG,
   type TriggerBindingKind,
 } from './types.js';
+import { automationEventBus } from '../engine/event-bus.js';
 
 const BASE = '/api/v1/automation/triggers';
 
@@ -223,6 +224,44 @@ export async function triggerRoutes(app: FastifyInstance): Promise<void> {
   });
   app.post(`${BASE}/:id/disable`, async (request: FastifyRequest, reply: FastifyReply) => {
     return toggleEnabled(request, reply, false);
+  });
+
+  // Manual run — emits an AutomationEvent of the trigger's eventType.
+  // Engine materializer picks it up, creates Campaign + Tasks for resolved contacts.
+  // Body: optional { contactId, segmentHint, payload } to override trigger.segmentSpec.
+  app.post(`${BASE}/:id/run`, { preHandler: requireRole('owner', 'admin') }, async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const user = request.user!;
+      const { id } = request.params as { id: string };
+      const body = (request.body || {}) as Record<string, any>;
+
+      const trigger = await prisma.automationTrigger.findFirst({
+        where: { id, orgId: user.orgId },
+        select: { id: true, eventType: true, enabled: true },
+      });
+      if (!trigger) return reply.status(404).send({ error: 'trigger not found' });
+      if (!trigger.enabled) return reply.status(409).send({ error: 'trigger is disabled' });
+
+      // Emit event — async, returns immediately. Engine handles enrollment.
+      automationEventBus.emit({
+        type: trigger.eventType as never, // narrowed: eventType column constrained at trigger create
+        orgId: user.orgId,
+        occurredAt: new Date(),
+        contactId: typeof body.contactId === 'string' ? body.contactId : undefined,
+        segmentHint: body.segmentHint && typeof body.segmentHint === 'object' ? body.segmentHint : undefined,
+        payload: body.payload,
+      });
+
+      return reply.status(202).send({
+        accepted: true,
+        triggerId: id,
+        eventType: trigger.eventType,
+        note: 'Event emitted; engine will materialize tasks asynchronously',
+      });
+    } catch (error) {
+      logger.error('[trigger] manual run error:', error);
+      return reply.status(500).send({ error: 'Failed to emit trigger event' });
+    }
   });
 
   // Hard delete — disallow if active campaigns exist (state machine integrity)

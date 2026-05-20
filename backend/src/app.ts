@@ -243,6 +243,11 @@ async function bootstrap() {
     const { startScoringScheduler } = await import('./modules/scoring/scoring-scheduler.js');
     startScoringScheduler({ enabled: config.nodeEnv !== 'test' });
     await eventBuffer.start(io);
+    // Phase 7 — Automation engine (event bus + materializer + task worker + 3 action handlers)
+    if (config.nodeEnv !== 'test') {
+      const { startAutomationEngine } = await import('./modules/automation/engine/index.js');
+      startAutomationEngine();
+    }
   } catch (err) {
     logger.error('Failed to start server:', err);
     process.exit(1);

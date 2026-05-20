@@ -1,0 +1,232 @@
+// Phase 7 Engine — Campaign materializer.
+//
+// Bridges the gap between Trigger event firing and AutomationTask creation.
+//
+// Flow:
+//   1. AutomationEvent arrives via event-bus
+//   2. Find enabled triggers matching eventType in this org
+//   3. For each trigger:
+//      a. Pass eventFilter (loose equality on payload keys for now)
+//      b. Resolve contactIds (single contactId from event, OR segment query)
+//      c. For each contact: pass segmentSpec match → materialize Campaign + Task
+//   4. Reuse existing active Campaign if same (triggerId, sequenceId) exists
+//      to avoid spawning duplicate state machines per contact (idempotent on
+//      double-fire). 1 contact may be in 1 active campaign per sequence.
+
+import { randomUUID } from 'node:crypto';
+import { prisma } from '../../../shared/database/prisma-client.js';
+import { logger } from '../../../shared/utils/logger.js';
+import { DEFAULT_RUNTIME_RULES, type SequenceStep } from '../sequences/types.js';
+import type { AutomationEvent } from './types.js';
+
+export interface MaterializeResult {
+  campaignsCreated: number;
+  tasksEnqueued: number;
+  skipped: number;
+  reasons: string[];
+}
+
+// Loose event filter: every key in `filter` must equal (or includes for arrays)
+// the value in payload at that key. Missing keys = no match.
+function matchesEventFilter(
+  filter: Record<string, unknown> | null,
+  payload: unknown,
+): boolean {
+  if (!filter) return true;
+  if (typeof payload !== 'object' || payload === null) return false;
+  const p = payload as Record<string, unknown>;
+  for (const [k, expected] of Object.entries(filter)) {
+    const actual = p[k];
+    if (Array.isArray(expected)) {
+      if (!expected.includes(actual)) return false;
+    } else if (actual !== expected) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// segmentSpec evaluation. Phase 7 supports 'manual' (contactIds list) and
+// 'filter' (Prisma where clause subset). 'import-batch' requires the import
+// phase to ship a ContactImportBatch table — soft-checked here.
+async function resolveSegmentContactIds(
+  orgId: string,
+  spec: unknown,
+  hintContactId: string | null,
+): Promise<string[]> {
+  if (hintContactId) return [hintContactId]; // event already names the contact
+
+  if (!spec || typeof spec !== 'object') return [];
+  const s = spec as Record<string, unknown>;
+
+  if (s.kind === 'manual' && Array.isArray(s.contactIds)) {
+    return s.contactIds.filter((id): id is string => typeof id === 'string');
+  }
+
+  if (s.kind === 'filter' && typeof s.criteria === 'object' && s.criteria !== null) {
+    const where: Record<string, unknown> = { orgId, ...(s.criteria as Record<string, unknown>) };
+    const rows = await prisma.contact.findMany({
+      where,
+      select: { id: true },
+      take: 10000, // hard cap defensive
+    });
+    return rows.map((r) => r.id);
+  }
+
+  // import-batch: soft reference (table ships later) — skip silently for now
+  return [];
+}
+
+export async function materializeFromEvent(
+  event: AutomationEvent,
+): Promise<MaterializeResult> {
+  const result: MaterializeResult = { campaignsCreated: 0, tasksEnqueued: 0, skipped: 0, reasons: [] };
+
+  // Find enabled triggers matching eventType in this org
+  const triggers = await prisma.automationTrigger.findMany({
+    where: { orgId: event.orgId, eventType: event.type, enabled: true },
+    include: {
+      sequence: { select: { id: true, enabled: true, steps: true, runtimeRules: true } },
+    },
+  });
+
+  if (triggers.length === 0) return result;
+
+  for (const trigger of triggers) {
+    // 1. eventFilter check
+    if (!matchesEventFilter(trigger.eventFilter as Record<string, unknown> | null, event.payload)) {
+      result.skipped++;
+      result.reasons.push(`trigger ${trigger.id}: eventFilter mismatch`);
+      continue;
+    }
+
+    // 2. Currently only sequence-bound triggers handled in this materializer.
+    //    Block-bound and broadcast-bound triggers ship in Phase F (broadcast)
+    //    and Phase E2 (block) respectively.
+    if (trigger.bindingKind !== 'sequence' || !trigger.sequenceId || !trigger.sequence) {
+      result.skipped++;
+      result.reasons.push(`trigger ${trigger.id}: bindingKind '${trigger.bindingKind}' not yet handled`);
+      continue;
+    }
+    if (!trigger.sequence.enabled) {
+      result.skipped++;
+      result.reasons.push(`trigger ${trigger.id}: sequence disabled`);
+      continue;
+    }
+
+    const steps = Array.isArray(trigger.sequence.steps)
+      ? (trigger.sequence.steps as unknown as SequenceStep[])
+      : [];
+    if (steps.length === 0) {
+      result.skipped++;
+      result.reasons.push(`trigger ${trigger.id}: sequence has no steps`);
+      continue;
+    }
+
+    // 3. Resolve contacts
+    const contactIds = await resolveSegmentContactIds(
+      event.orgId,
+      trigger.segmentSpec ?? event.segmentHint,
+      event.contactId ?? null,
+    );
+    if (contactIds.length === 0) {
+      result.skipped++;
+      result.reasons.push(`trigger ${trigger.id}: no contacts resolved`);
+      continue;
+    }
+
+    // 4. Merge runtime rules: sequence defaults + sequence override + trigger override
+    const rulesSnapshot = {
+      ...DEFAULT_RUNTIME_RULES,
+      ...(trigger.sequence.runtimeRules as object),
+      ...((trigger.ruleOverrides as object) ?? {}),
+    };
+
+    // 5. Find or create active campaign for this trigger + sequence
+    // (1 campaign per trigger × sequence; tasks span all contacts under it)
+    let campaign = await prisma.automationCampaign.findFirst({
+      where: {
+        orgId: event.orgId,
+        triggerId: trigger.id,
+        sequenceId: trigger.sequenceId,
+        state: 'active',
+      },
+      select: { id: true },
+    });
+    if (!campaign) {
+      campaign = await prisma.automationCampaign.create({
+        data: {
+          id: randomUUID(),
+          orgId: event.orgId,
+          triggerId: trigger.id,
+          executionKind: 'sequence',
+          sequenceId: trigger.sequenceId,
+          segmentSnapshot: { contactIds } as object,
+          rulesSnapshot: rulesSnapshot as object,
+          state: 'active',
+        },
+        select: { id: true },
+      });
+      result.campaignsCreated++;
+    }
+
+    // 6. Load the first step's block to snapshot content
+    const firstStep = steps[0];
+    const firstBlock = await prisma.block.findFirst({
+      where: { id: firstStep.blockId, orgId: event.orgId },
+      select: { id: true, content: true, archivedAt: true },
+    });
+    if (!firstBlock || firstBlock.archivedAt) {
+      result.skipped++;
+      result.reasons.push(`trigger ${trigger.id}: first block missing or archived`);
+      continue;
+    }
+
+    // 7. For each contact: idempotent enrollment — skip if already has task for this campaign
+    const now = Date.now();
+    for (const contactId of contactIds) {
+      const existing = await prisma.automationTask.findFirst({
+        where: { campaignId: campaign.id, contactId },
+        select: { id: true },
+      });
+      if (existing) {
+        result.skipped++;
+        result.reasons.push(`contact ${contactId}: already enrolled in campaign ${campaign.id}`);
+        continue;
+      }
+
+      // Schedule first step. delayMinutes from step + jitter from runtime rule.
+      const jitterMin = (rulesSnapshot.randomDelayPerSend?.min ?? 0) * 60 * 1000;
+      const jitterMax = (rulesSnapshot.randomDelayPerSend?.max ?? 0) * 60 * 1000;
+      const jitter = jitterMin + Math.random() * Math.max(0, jitterMax - jitterMin);
+      const scheduledAt = new Date(now + firstStep.delayMinutes * 60 * 1000 + jitter);
+
+      await prisma.automationTask.create({
+        data: {
+          id: randomUUID(),
+          orgId: event.orgId,
+          campaignId: campaign.id,
+          contactId,
+          sequenceId: trigger.sequenceId,
+          currentStepIdx: 0,
+          currentBlockId: firstBlock.id,
+          blockSnapshot: firstBlock.content as object, // SNAPSHOT — frozen content
+          scheduledAt,
+          state: 'queued',
+        },
+      });
+      result.tasksEnqueued++;
+    }
+  }
+
+  if (result.tasksEnqueued > 0 || result.campaignsCreated > 0) {
+    logger.info('[materializer] event handled', {
+      type: event.type,
+      campaigns: result.campaignsCreated,
+      tasks: result.tasksEnqueued,
+      skipped: result.skipped,
+    });
+  }
+
+  return result;
+}
