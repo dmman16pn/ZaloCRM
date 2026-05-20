@@ -21,7 +21,7 @@ export async function friendRoutes(app: FastifyInstance) {
 
   // ── DB-backed friend list (preferred over live for /friends UI) ───────────
 
-  // GET .../friends-db?kind=friend|pending_friend|chatting_stranger|ghost|all&page=1&limit=25&search=...
+  // GET .../friends-db?kind=...&page=1&limit=25&search=...&sortBy=recent|score-desc|score-asc|stuck
   app.get(`${BASE}-db`, async (request: FastifyRequest, reply: FastifyReply) => {
     const { accountId } = request.params as { accountId: string };
     const {
@@ -29,7 +29,8 @@ export async function friendRoutes(app: FastifyInstance) {
       page = '1',
       limit = '25',
       search = '',
-    } = request.query as { kind?: string; page?: string; limit?: string; search?: string };
+      sortBy = 'recent',
+    } = request.query as { kind?: string; page?: string; limit?: string; search?: string; sortBy?: string };
     const user = request.user!;
     if (!await checkAccess(request, reply, accountId, 'read')) return;
     try {
@@ -63,11 +64,13 @@ export async function friendRoutes(app: FastifyInstance) {
         ];
       }
 
+      const orderBy = buildFriendOrderBy(sortBy);
+
       const [friends, total, countsRaw] = await Promise.all([
         prisma.friend.findMany({
           where,
           include: FRIEND_INCLUDE_WITH_CONTACT,
-          orderBy: [{ lastInboundAt: 'desc' }, { lastOutboundAt: 'desc' }, { createdAt: 'desc' }],
+          orderBy,
           skip: (pageNum - 1) * limitNum,
           take: limitNum,
         }),
@@ -101,7 +104,8 @@ export async function friendRoutes(app: FastifyInstance) {
       page = '1',
       limit = '25',
       search = '',
-    } = request.query as { kind?: string; page?: string; limit?: string; search?: string };
+      sortBy = 'recent',
+    } = request.query as { kind?: string; page?: string; limit?: string; search?: string; sortBy?: string };
     try {
       // B3 fix — Resolve accessible accounts via shared helper (cùng hierarchy với
       // checkAccess): owner/admin → tất cả nick org; non-admin → ACL + owned.
@@ -144,18 +148,13 @@ export async function friendRoutes(app: FastifyInstance) {
         ];
       }
 
+      const orderBy = buildFriendOrderBy(sortBy);
+
       const [friends, total, countsRaw] = await Promise.all([
         prisma.friend.findMany({
           where,
           include: FRIEND_INCLUDE_WITH_CONTACT,
-          // Stable cross-nick sort: theo activity, tie-break createdAt rồi id để
-          // pagination deterministic giữa các page (cùng row không hiện 2 lần).
-          orderBy: [
-            { lastInboundAt: { sort: 'desc', nulls: 'last' } },
-            { lastOutboundAt: { sort: 'desc', nulls: 'last' } },
-            { createdAt: 'desc' },
-            { id: 'asc' },
-          ],
+          orderBy,
           skip: (pageNum - 1) * limitNum,
           take: limitNum,
         }),
@@ -528,4 +527,30 @@ export async function friendRoutes(app: FastifyInstance) {
       return handleError(reply, err, 'friend-op');
     }
   });
+}
+
+/**
+ * Map sortBy query param → Prisma orderBy clause. Stable tie-break luôn cuối
+ * (createdAt + id) để pagination không dao động giữa các page.
+ *
+ * Phase 6: thêm sort theo leadScore + stuckSince để FriendsView Score column sort được.
+ */
+function buildFriendOrderBy(sortBy: string): any[] {
+  const tieBreak = [{ createdAt: 'desc' as const }, { id: 'asc' as const }];
+  switch (sortBy) {
+    case 'score-desc':
+      return [{ leadScore: 'desc' as const }, ...tieBreak];
+    case 'score-asc':
+      return [{ leadScore: 'asc' as const }, ...tieBreak];
+    case 'stuck':
+      // Stuck KH lên đầu (oldest stuck first), KH không stuck xuống cuối.
+      return [{ stuckSince: { sort: 'asc' as const, nulls: 'last' as const } }, ...tieBreak];
+    case 'recent':
+    default:
+      return [
+        { lastInboundAt: { sort: 'desc' as const, nulls: 'last' as const } },
+        { lastOutboundAt: { sort: 'desc' as const, nulls: 'last' as const } },
+        ...tieBreak,
+      ];
+  }
 }

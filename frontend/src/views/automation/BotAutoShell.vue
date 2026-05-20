@@ -57,7 +57,7 @@ const navItems = [
 .bot-auto-shell {
   display: flex;
   height: calc(100vh - 64px);
-  background: rgb(var(--v-theme-background));
+  background: #F6F8FC;
 }
 
 .bot-auto-sidebar {
@@ -165,7 +165,7 @@ const navItems = [
   flex: 1;
   padding: 24px 32px;
   overflow-y: auto;
-  background: rgb(var(--v-theme-background));
+  background: #F6F8FC;
 }
 
 @media (max-width: 900px) {

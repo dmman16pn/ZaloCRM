@@ -288,6 +288,67 @@ export async function handleIncomingMessage(
           : null,
         message: { id: message.id, content: message.content, contentType: message.contentType, senderType: message.senderType },
       });
+
+      // Phase 7 — emit AutomationEvent for engine triggers.
+      // Detect first_message_received (contact has 0 prior inbound msgs from this nick)
+      // and emit text-content payload so keyword_match triggers can filter.
+      void (async () => {
+        try {
+          const { automationEventBus } = await import('../automation/engine/event-bus.js');
+          // Count prior inbound messages from this contact to determine "first message"
+          const priorInbound = contactId
+            ? await prisma.message.count({
+                where: {
+                  conversationId: conversation.id,
+                  senderType: 'contact',
+                  id: { not: message.id },
+                },
+              })
+            : 1;
+          const isFirstMessage = priorInbound === 0;
+
+          const basePayload = {
+            messageId: message.id,
+            conversationId: conversation.id,
+            content: message.content ?? '',
+            contentType: message.contentType,
+            zaloAccountId: msg.accountId,
+          };
+
+          // Always emit generic message_received
+          automationEventBus.emit({
+            type: 'message_received',
+            orgId: account.orgId,
+            occurredAt: new Date(),
+            contactId: contactId ?? undefined,
+            payload: basePayload,
+          });
+
+          // Emit first_message_received only on the actual first inbound
+          if (isFirstMessage && contactId) {
+            automationEventBus.emit({
+              type: 'first_message_received',
+              orgId: account.orgId,
+              occurredAt: new Date(),
+              contactId,
+              payload: basePayload,
+            });
+          }
+
+          // Emit keyword_match if content non-empty (engine's eventFilter handles keyword matching)
+          if (message.content && message.contentType === 'text' && contactId) {
+            automationEventBus.emit({
+              type: 'keyword_match',
+              orgId: account.orgId,
+              occurredAt: new Date(),
+              contactId,
+              payload: basePayload,
+            });
+          }
+        } catch {
+          // engine not loaded — silent
+        }
+      })();
     }
 
     return {

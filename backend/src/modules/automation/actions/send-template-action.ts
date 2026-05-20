@@ -4,6 +4,7 @@ import { renderMessageTemplate } from '../template-renderer.js';
 import { zaloPool } from '../../zalo/zalo-pool.js';
 import { zaloRateLimiter } from '../../zalo/zalo-rate-limiter.js';
 import { applyContactAggregateFromMessage, applyFriendAggregate } from '../../contacts/contact-aggregate.js';
+import { formatMessage } from '../../../shared/text-formatter.js';
 
 export async function sendTemplateAction(input: {
   templateId: string;
@@ -37,7 +38,15 @@ export async function sendTemplateAction(input: {
 
   zaloRateLimiter.recordSend(input.zaloAccountId);
   const threadType = input.threadType === 'group' ? 1 : 0;
-  const sendResult = await instance.api.sendMessage({ msg: content }, input.threadId, threadType);
+
+  // Phase 6 polish — convert markdown trong template (**bold**, *italic*, {red}...{/red})
+  // → Zalo style ranges. Trước fix này, KH nhận `**Bold**` plain text.
+  const formatted = formatMessage(content);
+  const sendPayload: Record<string, unknown> = { msg: formatted.text };
+  if (formatted.styles?.length) sendPayload.styles = formatted.styles;
+  if (formatted.mentions?.length) sendPayload.mentions = formatted.mentions;
+
+  const sendResult = await instance.api.sendMessage(sendPayload, input.threadId, threadType);
   const zaloMsgId = String(sendResult?.msgId || sendResult?.data?.msgId || '');
 
   const created = await prisma.message.create({

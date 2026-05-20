@@ -149,6 +149,100 @@ export function onRefuseMeeting(orgId: string, friendId: string): void {
   fireActionHook(orgId, friendId, 'refuse_meeting');
 }
 
+// ── Phase 6 polish P2 quick wins — Tag + Note signals ─────────────────────
+
+/**
+ * CRM Tag → intent signal.
+ * Khi sale gắn tag chứa keyword "VIP" / "vip" / "tiềm năng cao" / "ưu tiên" cho Contact,
+ * apply +intent signal cho TẤT CẢ Friend của Contact đó. Score push lên ngay → KH
+ * có tag VIP nhảy lên đầu danh sách Hot.
+ *
+ * Tags không trigger: tag Zalo-managed (🔵 prefix), tag system auto (active/cold/...).
+ */
+const VIP_TAG_KEYWORDS = ['vip', 'tiềm năng cao', 'ưu tiên', 'hot lead', 'priority'];
+function isVipTag(tag: string): boolean {
+  if (tag.startsWith('🔵')) return false; // skip Zalo-managed
+  const norm = tag.toLowerCase().trim();
+  return VIP_TAG_KEYWORDS.some(kw => norm.includes(kw));
+}
+
+export function onCrmTagsAdded(orgId: string, contactId: string, addedTags: string[]): void {
+  const vipTags = addedTags.filter(isVipTag);
+  if (vipTags.length === 0) return;
+  void (async () => {
+    try {
+      const friends = await prisma.friend.findMany({
+        where: { orgId, contactId },
+        select: { id: true },
+      });
+      const signal: DetectedSignal = {
+        signalKey: 'crm_tag_vip',
+        dimension: 'intent',
+        delta: 8,
+        label: `Gắn tag VIP: ${vipTags.join(', ')}`,
+        rule: {
+          signalKey: 'crm_tag_vip',
+          dimension: 'intent',
+          delta: 8,
+          label: 'CRM tag VIP',
+          ruleType: 'action',
+          capPerDay: 1, // 1 lần/ngày/friend đủ — tránh apply lặp khi tag flip
+          capTotal: null,
+          keywords: [],
+          applicableStages: [],
+        } as any,
+      };
+      for (const f of friends) {
+        await applySignalsToFriend(f.id, orgId, [signal], 'crm_tag_vip');
+      }
+      logger.info({ orgId, contactId, vipTags, friends: friends.length }, '[hook] VIP tag → +intent');
+    } catch (err) {
+      logger.error({ orgId, contactId, err }, 'onCrmTagsAdded scoring hook failed');
+    }
+  })();
+}
+
+/**
+ * Note dài → engagement signal.
+ * Khi sale viết note dài >100 chars cho Contact (suy luận sale đã thực sự nghiên cứu KH,
+ * không phải note 1 dòng cho có), apply +engagement signal cho mọi Friend.
+ * Threshold 100 chars để loại note trivial ("ok", "đã call", "xem sau").
+ */
+export function onNoteAdded(orgId: string, contactId: string, noteContent: string): void {
+  if (!noteContent || noteContent.trim().length < 100) return;
+  void (async () => {
+    try {
+      const friends = await prisma.friend.findMany({
+        where: { orgId, contactId },
+        select: { id: true },
+      });
+      const signal: DetectedSignal = {
+        signalKey: 'sale_note_long',
+        dimension: 'engagement',
+        delta: 5,
+        label: `Sale viết note dài (${noteContent.trim().length} ký tự)`,
+        rule: {
+          signalKey: 'sale_note_long',
+          dimension: 'engagement',
+          delta: 5,
+          label: 'Sale note dài',
+          ruleType: 'action',
+          capPerDay: 2, // max 2 long-note/day để tránh inflate
+          capTotal: null,
+          keywords: [],
+          applicableStages: [],
+        } as any,
+      };
+      for (const f of friends) {
+        await applySignalsToFriend(f.id, orgId, [signal], 'sale_note_long');
+      }
+      logger.info({ orgId, contactId, noteLen: noteContent.length, friends: friends.length }, '[hook] long note → +engagement');
+    } catch (err) {
+      logger.error({ orgId, contactId, err }, 'onNoteAdded scoring hook failed');
+    }
+  })();
+}
+
 function fireActionHook(orgId: string, friendId: string, action: ActionEventKey): void {
   void (async () => {
     try {

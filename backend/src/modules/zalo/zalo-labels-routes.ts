@@ -236,9 +236,33 @@ export async function syncLabelsForAccount(
         continue;
       }
 
-      await prisma.crmTag.create({
-        data: { orgId, name: tagName, ...baseData },
-      });
+      // Race-condition safe: 2 concurrent sync requests cho cùng 1 label
+      // có thể cả 2 cùng pass bySource=null + byName=null. Khi create lần 2
+      // sẽ hit P2002 unique(orgId, name) hoặc unique(sourceZaloLabelId).
+      // Fix: catch P2002 → retry find + update thay vì error toàn bộ sync.
+      try {
+        await prisma.crmTag.create({
+          data: { orgId, name: tagName, ...baseData },
+        });
+      } catch (err: any) {
+        if (err?.code === 'P2002') {
+          const winnerBySrc = await prisma.crmTag.findUnique({
+            where: { sourceZaloLabelId: l.zaloLabelId },
+          });
+          const winnerByName = winnerBySrc
+            ? null
+            : await prisma.crmTag.findUnique({ where: { orgId_name: { orgId, name: tagName } } });
+          const winner = winnerBySrc ?? winnerByName;
+          if (winner) {
+            await prisma.crmTag.update({
+              where: { id: winner.id },
+              data: { name: tagName, ...baseData },
+            });
+          }
+        } else {
+          throw err;
+        }
+      }
     }
 
     // Archive CrmTag tương ứng với label bị xoá (không còn trong upserted set)

@@ -10,6 +10,19 @@ import {
   login,
   getProfile,
 } from './auth-service.js';
+import { seedScoringDefaults } from '../scoring/seed-defaults.js';
+import { logger } from '../../shared/utils/logger.js';
+
+/**
+ * Fire-and-forget auto-seed Phase 6 scoring config + rules nếu org chưa có.
+ * Idempotent — seedScoringDefaults() tự skip khi config đã tồn tại.
+ * KHÔNG await để không chặn login/setup response.
+ */
+function autoSeedScoringIfNeeded(orgId: string): void {
+  seedScoringDefaults(orgId).catch((err) => {
+    logger.warn({ orgId, err: err?.message }, '[auto-seed-scoring] failed silently');
+  });
+}
 
 export async function authRoutes(app: FastifyInstance): Promise<void> {
   // GET /api/v1/setup/status — check if first-run setup is needed
@@ -27,6 +40,8 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     }
     const payload = await setup(orgName, fullName, email, password);
     const token = app.jwt.sign(payload, { expiresIn: '7d' });
+    // Phase 6 polish — auto-seed scoring defaults cho org mới tạo
+    autoSeedScoringIfNeeded(payload.orgId);
     return { token, user: payload };
   });
 
@@ -40,6 +55,9 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     }
     const payload = await login(email, password);
     const token = app.jwt.sign(payload, { expiresIn: '7d' });
+    // Phase 6 polish — fire-and-forget seed nếu org cũ chưa có scoring config.
+    // Idempotent — skip nếu đã tồn tại. Không await.
+    autoSeedScoringIfNeeded(payload.orgId);
     return { token, user: payload };
   });
 

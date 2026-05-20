@@ -27,6 +27,11 @@ import { getScoringConfig, invalidateCache } from './config-cache.js';
 import { manualPromote, evaluateAndPromote } from './stage-promotion.js';
 import { seedScoringDefaults } from './seed-defaults.js';
 import { recomputeFriendFinalScore } from './scoring-hooks.js';
+import { zaloPool } from '../zalo/zalo-pool.js';
+import { zaloRateLimiter } from '../zalo/zalo-rate-limiter.js';
+import { formatMessage } from '../../shared/text-formatter.js';
+import { renderMessageTemplate } from '../automation/template-renderer.js';
+import { randomUUID } from 'node:crypto';
 
 export async function scoringRoutes(app: FastifyInstance): Promise<void> {
   app.addHook('preHandler', authMiddleware);
@@ -464,7 +469,139 @@ export async function scoringRoutes(app: FastifyInstance): Promise<void> {
     }
   });
 
+  /**
+   * POST /api/v1/leads/stuck/send-template
+   * Phase 6 polish P1 — Gửi NBA template trực tiếp từ Stuck Dashboard thay vì
+   * copy-paste clipboard. Server-side: lookup Friend → Conversation → render template
+   * (qua template-renderer + org config promo) → formatMessage markdown → send Zalo.
+   *
+   * Body: { friendId, templateKey, overrideContent? }
+   */
+  app.post<{
+    Body: { friendId: string; templateKey?: string; overrideContent?: string };
+  }>('/api/v1/leads/stuck/send-template', async (request, reply) => {
+    const user = request.user!;
+    const { friendId, templateKey, overrideContent } = request.body;
+    if (!friendId) return reply.status(400).send({ error: 'friendId required' });
+
+    try {
+      const friend = await prisma.friend.findFirst({
+        where: { id: friendId, orgId: user.orgId },
+        include: {
+          contact: { select: { id: true, fullName: true, crmName: true, phone: true, email: true, status: true, tags: true } },
+          zaloAccount: { select: { id: true, displayName: true } },
+        },
+      });
+      if (!friend) return reply.status(404).send({ error: 'friend_not_found' });
+
+      // Lookup conversation theo (zaloAccountId, contactId)
+      const conv = await prisma.conversation.findFirst({
+        where: {
+          orgId: user.orgId,
+          zaloAccountId: friend.zaloAccountId,
+          contactId: friend.contactId,
+        },
+        select: { id: true, externalThreadId: true, threadType: true },
+      });
+      if (!conv?.externalThreadId) {
+        return reply.status(400).send({ error: 'no_conversation', message: 'KH chưa có cuộc hội thoại — mở chat trước.' });
+      }
+
+      // Resolve raw content: either explicit override (preview text user đã edit) or load template
+      let raw = overrideContent ?? '';
+      if (!raw && templateKey) {
+        const tpl = await prisma.nbaTemplate.findFirst({
+          where: { orgId: user.orgId, key: templateKey, enabled: true },
+        });
+        if (!tpl) return reply.status(404).send({ error: 'template_not_found' });
+        raw = tpl.contentTemplate;
+      }
+      if (!raw?.trim()) return reply.status(400).send({ error: 'empty_content' });
+
+      // Phase 6 polish P1 #2 — substitute variables qua template-renderer (đã có cho automation)
+      // + thêm context org-level (promo/project) qua getOrgPromoContext()
+      const promoCtx = await getOrgPromoContext(user.orgId);
+      const rendered = renderMessageTemplate(raw, {
+        org: { id: user.orgId, name: promoCtx.orgName },
+        contact: friend.contact ? { ...friend.contact, zaloName: friend.zaloDisplayName } : null,
+        conversation: { id: conv.id },
+      })
+        // Extra variables specific to NBA template — projectName + promoMonth từ org config
+        .replace(/\{\{projectName\}\}/g, promoCtx.projectName)
+        .replace(/\{\{promoMonth\}\}/g, promoCtx.promoMonth)
+        .replace(/\{\{customerName\}\}/g, friend.contact?.crmName || friend.contact?.fullName || friend.zaloDisplayName || 'Anh/chị')
+        .replace(/\{\{viewingLink\}\}/g, promoCtx.viewingLink)
+        .replace(/\{\{callTime\}\}/g, promoCtx.callTime)
+        .replace(/\{\{progressUpdate\}\}/g, '')
+        .replace(/\{\{unitInfo\}\}/g, '')
+        .replace(/\{\{priceInfo\}\}/g, '')
+        .trim();
+      if (!rendered) return reply.status(400).send({ error: 'empty_after_render' });
+
+      const instance = zaloPool.getInstance(friend.zaloAccountId);
+      if (!instance?.api) return reply.status(400).send({ error: 'nick_disconnected' });
+
+      const limits = await zaloRateLimiter.checkLimits(friend.zaloAccountId);
+      if (!limits.allowed) return reply.status(429).send({ error: 'rate_limited', message: limits.reason });
+
+      // Format markdown → Zalo styles (bold/italic/color/etc)
+      const formatted = formatMessage(rendered);
+      zaloRateLimiter.recordSend(friend.zaloAccountId);
+
+      const threadType = conv.threadType === 'group' ? 1 : 0;
+      const sendPayload: Record<string, unknown> = { msg: formatted.text };
+      if (formatted.styles?.length) sendPayload.styles = formatted.styles;
+      if (formatted.mentions?.length) sendPayload.mentions = formatted.mentions;
+
+      const sendResult = await instance.api.sendMessage(sendPayload, conv.externalThreadId, threadType);
+      const sr = sendResult as unknown as { message?: { msgId?: number | string } | null };
+      const zaloMsgId = String(sr?.message?.msgId ?? '');
+
+      const message = await prisma.message.create({
+        data: {
+          id: randomUUID(),
+          conversationId: conv.id,
+          zaloMsgId: zaloMsgId || null,
+          senderType: 'self',
+          senderUid: null,
+          senderName: 'NBA',
+          content: rendered,
+          contentType: 'text',
+          sentAt: new Date(),
+          repliedByUserId: user.id,
+        },
+      });
+
+      await prisma.conversation.update({
+        where: { id: conv.id },
+        data: { lastMessageAt: new Date(), isReplied: true, unreadCount: 0 },
+      });
+
+      logActivity({
+        orgId: user.orgId,
+        userId: user.id,
+        action: 'nba_template_sent',
+        entityType: 'friend',
+        entityId: friendId,
+        category: 'engagement',
+        details: { templateKey, contentPreview: rendered.slice(0, 120) },
+      });
+
+      return { ok: true, messageId: message.id, conversationId: conv.id, content: rendered };
+    } catch (err) {
+      logger.error({ err, friendId }, 'send-template failed');
+      return reply.status(500).send({ error: 'internal_error' });
+    }
+  });
+
   // ──── Recompute final scores (after weights change) ───────────────────
+
+  /**
+   * Org-level promo/project context — Phase 6 polish P1 #2.
+   * Hiện chưa có Org.promoSettings table; v1 hardcode fallback với org name.
+   * Future: extend `Organization` model với `promoSettings` JSON field, hoặc tách
+   * `OrgPromoSettings` table (project list, current promo month, viewing link, ...).
+   */
 
   app.post('/api/v1/scoring/recompute-all', async (request, reply) => {
     const user = request.user!;
@@ -494,4 +631,38 @@ export async function scoringRoutes(app: FastifyInstance): Promise<void> {
       return reply.status(500).send({ error: 'internal_error' });
     }
   });
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────
+
+interface OrgPromoContext {
+  orgName: string;
+  projectName: string;
+  promoMonth: string;
+  viewingLink: string;
+  callTime: string;
+}
+
+/**
+ * Resolve org-level promo context cho NBA template substitution.
+ *
+ * v1: lookup Organization + tự derive promoMonth từ tháng hiện tại (vi-VN).
+ * Defer table OrgPromoSettings tách riêng (Phase 6+ P2) khi org admin cần
+ * config nhiều variable hơn (projectList, scriptLibrary, viewingLink dynamic).
+ */
+async function getOrgPromoContext(orgId: string): Promise<OrgPromoContext> {
+  const org = await prisma.organization.findUnique({
+    where: { id: orgId },
+    select: { name: true },
+  });
+  const now = new Date();
+  const month = now.getMonth() + 1;
+  const year = now.getFullYear();
+  return {
+    orgName: org?.name ?? 'Công ty',
+    projectName: 'dự án', // TODO: bind Org.promoSettings.currentProject khi có table
+    promoMonth: `ưu đãi tháng ${month}/${year}`,
+    viewingLink: '',
+    callTime: '',
+  };
 }

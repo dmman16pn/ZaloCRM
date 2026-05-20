@@ -216,6 +216,23 @@ export async function applyFriendTransition(args: {
       });
     }
   });
+
+  // Phase 7 — emit AutomationEvent so engine can fire triggers bound to this
+  // event. Imported lazily to avoid circular dep (engine imports prisma helpers).
+  if (newFriendshipStatus === 'accepted' || newFriendshipStatus === 'pending_received') {
+    try {
+      const { automationEventBus } = await import('../automation/engine/event-bus.js');
+      automationEventBus.emit({
+        type: newFriendshipStatus === 'accepted' ? 'friendship_accepted' : 'friendship_received',
+        orgId,
+        occurredAt: new Date(),
+        contactId,
+        payload: { zaloAccountId, zaloUidInNick },
+      });
+    } catch (err) {
+      // Engine not loaded (e.g. in tests) — silent fail
+    }
+  }
 }
 
 /**

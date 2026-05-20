@@ -13,6 +13,7 @@ import { logger } from '../../shared/utils/logger.js';
 import { runDecayAllOrgs } from './decay-cron.js';
 import { runStuckDetectionAllOrgs } from './stuck-detection.js';
 import { runAutoTagsAllOrgs } from './auto-tag.js';
+import { startBackfillCron, stopBackfillCron } from './backfill-cron.js';
 
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
@@ -76,6 +77,10 @@ export function startScoringScheduler(opts?: {
     }, DAY_MS);
   }, autoTagMs);
   logger.info({ firstRunInMs: autoTagMs }, 'Auto-tag scheduler started');
+
+  // ── Phase 6 polish — Backfill cron: tick mỗi 5 phút, chunk 100 friend/tick ──
+  // Tự stop khi không còn Friend nào scoreUpdatedAt=null trong 90 ngày qua.
+  startBackfillCron();
 }
 
 export function stopScoringScheduler(): void {
@@ -91,6 +96,7 @@ export function stopScoringScheduler(): void {
     clearInterval(autoTagTimer);
     autoTagTimer = null;
   }
+  stopBackfillCron();
 }
 
 async function runAutoTagJob(): Promise<void> {
