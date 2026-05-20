@@ -10,6 +10,13 @@
  *   - No hover state on solid CTAs (spec policy); pressed-state only.
  */
 
+/* ── Breakpoints (matches DESIGN.md responsive table) ─────────────────────
+ *   Mobile  < 768px   : single-column, drawer nav, touch targets ≥44
+ *   Tablet  768-1023  : 2-up grids, icon-only sidebar rail
+ *   Desktop 1024-1439 : 3-up grids, full sidebar 240px
+ *   Wide    ≥ 1440px  : max-width 1280px, outer margin grows
+ */
+
 .airtable-scope {
   /* Colors */
   --at-primary: #181d26;
@@ -247,3 +254,54 @@
 .airtable-scope .v-snackbar__content {
   font-weight: 500;
 }
+
+/* ────────────────────────────────────────────────────────────────────────
+ * RESPONSIVE
+ * Mobile < 768 / Tablet 768-1023 / Desktop ≥1024 / Wide ≥1440
+ * ──────────────────────────────────────────────────────────────────────── */
+
+/* Visibility helpers */
+.at-hide-mobile  { /* show on tablet+ */ }
+.at-only-mobile  { display: none; }
+.at-only-tablet  { display: none; }
+.at-only-desktop { display: initial; }
+
+@media (max-width: 767px) {
+  .at-hide-mobile  { display: none !important; }
+  .at-only-mobile  { display: initial; }
+  .at-only-desktop { display: none; }
+}
+@media (min-width: 768px) and (max-width: 1023px) {
+  .at-only-tablet { display: initial; }
+}
+
+/* Touch targets ≥44px on mobile (WCAG AAA recommendation) */
+@media (max-width: 767px) {
+  .airtable-scope .at-btn { min-height: 44px; padding: 10px 18px; }
+  .airtable-scope .at-btn--sm { min-height: 44px; padding: 10px 16px; }
+  .airtable-scope .at-btn--xs { min-height: 44px; padding: 10px 12px; }
+  .airtable-scope .at-input  { height: 48px; padding: 12px 16px; }
+  .airtable-scope .filter-chip { min-height: 36px; padding: 8px 14px; }
+}
+
+/* Page-level layout adjustments */
+@media (max-width: 1023px) {
+  .airtable-scope .at-page-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--at-s-md);
+  }
+  .airtable-scope .at-page-title { font-size: 24px; }
+}
+
+@media (max-width: 767px) {
+  .airtable-scope .at-page-title { font-size: 22px; }
+  .airtable-scope .at-page-subtitle { font-size: 13px; }
+}
+
+/* Container helpers used across views */
+.at-container { max-width: 1280px; margin: 0 auto; }
+@media (min-width: 1440px) {
+  .at-container { max-width: 1280px; }
+}
+

@@ -106,6 +106,13 @@
   max-width: 480px;
   margin: 0 auto;
 }
+
+@media (max-width: 767px) {
+  .placeholder-card { padding: var(--at-s-xl) var(--at-s-md); }
+  .placeholder-grid { grid-template-columns: 1fr; }
+  .placeholder-title { font-size: 18px; }
+  .placeholder-desc { font-size: 13px; }
+}
 .placeholder-item {
   display: flex;
   align-items: center;

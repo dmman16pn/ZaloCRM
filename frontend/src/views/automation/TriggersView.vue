@@ -603,7 +603,7 @@ async function onDelete(trig: AutomationTrigger) {
   min-height: 36px;
 }
 
-/* Configured table */
+/* Configured table — desktop grid, mobile card list */
 .configured-table {
   background: var(--at-canvas);
   border: 1px solid var(--at-hairline);
@@ -628,7 +628,7 @@ async function onDelete(trig: AutomationTrigger) {
   letter-spacing: 0.5px;
   color: var(--at-muted);
 }
-.cell-trig { display: flex; align-items: center; gap: var(--at-s-sm); }
+.cell-trig { display: flex; align-items: center; gap: var(--at-s-sm); min-width: 0; }
 .trig-avatar {
   width: 36px;
   height: 36px;
@@ -638,13 +638,77 @@ async function onDelete(trig: AutomationTrigger) {
   justify-content: center;
   flex-shrink: 0;
 }
-.trig-name { font-weight: 500; color: var(--at-ink); }
+.trig-name {
+  font-weight: 500;
+  color: var(--at-ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .trig-meta { font-size: 12px; color: var(--at-muted); margin-top: 2px; }
-.binding-link { color: var(--at-body); }
+.binding-link {
+  color: var(--at-body);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: block;
+}
 .binding-link--error { color: var(--at-coral); font-size: 13px; }
 .cell-center { text-align: center; }
 .cell-right { text-align: right; }
 .cell-actions { display: flex; justify-content: flex-end; gap: 2px; }
+
+/* Tablet: tighten table */
+@media (min-width: 768px) and (max-width: 1023px) {
+  .configured-row {
+    grid-template-columns: 1.8fr 1fr 1.2fr 64px 140px;
+    padding: var(--at-s-sm);
+    font-size: 13px;
+  }
+  .trig-avatar { width: 32px; height: 32px; }
+}
+
+/* Mobile: convert table to vertical card list */
+@media (max-width: 767px) {
+  .configured-row--head { display: none; }
+  .configured-row {
+    grid-template-columns: 1fr;
+    gap: var(--at-s-xs);
+    padding: var(--at-s-md);
+    grid-template-areas:
+      "trig"
+      "event"
+      "binding"
+      "footer";
+  }
+  .configured-row > div:nth-child(1) { grid-area: trig; }
+  .configured-row > div:nth-child(2) { grid-area: event; }
+  .configured-row > div:nth-child(3) { grid-area: binding; }
+  .configured-row > div:nth-child(4) {
+    /* Switch cell: move into footer row */
+    grid-area: footer;
+    justify-self: flex-start;
+    text-align: left;
+    display: flex;
+    align-items: center;
+    gap: var(--at-s-xs);
+  }
+  .configured-row > div:nth-child(4)::before {
+    content: 'Bật';
+    font-size: 12px;
+    color: var(--at-muted);
+    font-weight: 500;
+  }
+  .configured-row > div:nth-child(5) {
+    /* Actions: same footer row, right-aligned */
+    grid-area: footer;
+    justify-self: flex-end;
+    margin-left: auto;
+  }
+  .cell-trig { padding-bottom: 4px; border-bottom: 1px dashed var(--at-hairline); }
+  .trig-avatar { width: 40px; height: 40px; }
+  .binding-link { white-space: normal; }
+}
 
 /* Editor dialog */
 .editor-card {

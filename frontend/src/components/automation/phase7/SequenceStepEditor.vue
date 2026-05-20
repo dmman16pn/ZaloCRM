@@ -239,6 +239,11 @@ function removeStep(idx: number) {
   display: flex;
   flex-direction: column;
   align-items: center;
+  width: 100%;
+}
+
+@media (max-width: 767px) {
+  .sequence-step-editor { max-width: 100%; }
 }
 
 .flow-node {
