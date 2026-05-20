@@ -62,6 +62,7 @@ import { templateRoutes } from './modules/automation/template-routes.js';
 // Phase 7 — Automation framework (Block / Sequence / Trigger / Broadcast)
 import { blockRoutes } from './modules/automation/blocks/block-routes.js';
 import { blockFolderRoutes } from './modules/automation/blocks/block-folder-routes.js';
+import { sequenceRoutes } from './modules/automation/sequences/sequence-routes.js';
 import { aiRoutes } from './modules/ai/ai-routes.js';
 import { chatOperationsRoutes, registerChatSocketHandlers } from './modules/chat/chat-operations-routes.js';
 import { groupRoutes } from './modules/zalo/group-routes.js';
@@ -178,6 +179,7 @@ async function bootstrap() {
   // Phase 7 — Block authoring layer (must register BEFORE sequence/trigger/broadcast in later phases)
   await app.register(blockRoutes);
   await app.register(blockFolderRoutes);
+  await app.register(sequenceRoutes);
   await app.register(aiRoutes);
   await app.register(chatOperationsRoutes);
   await app.register(groupRoutes);
