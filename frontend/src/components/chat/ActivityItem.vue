@@ -42,6 +42,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import type { ActivityLogItem } from '@/composables/use-timeline';
+import { formatInOrgTz, getOrgParts } from '@/composables/use-org-timezone';
 import { CATEGORY_META, ACTION_META, categoryOf, type ActivityCategory } from '@/constants/activity-types';
 import { CARE_STATUSES } from '@/constants/care-status';
 import MentionPopover from './MentionPopover.vue';
@@ -108,11 +109,12 @@ const relTime = computed(() => {
   if (h < 24) return `${h}h`;
   const days = Math.floor(h / 24);
   if (days < 7) return `${days}n`;
-  const dt = new Date(props.item.createdAt);
-  return `${String(dt.getDate()).padStart(2, '0')}/${String(dt.getMonth() + 1).padStart(2, '0')}`;
+  const p = getOrgParts(props.item.createdAt);
+  if (!p) return '';
+  return `${String(p.day).padStart(2, '0')}/${String(p.month).padStart(2, '0')}`;
 });
 
-const absTime = computed(() => new Date(props.item.createdAt).toLocaleString('vi-VN'));
+const absTime = computed(() => formatInOrgTz(props.item.createdAt));
 
 /* Details rendering — pick out common fields based on action type */
 const detailsLine = computed(() => {
@@ -140,12 +142,11 @@ const detailsLine = computed(() => {
   }
   // Appointment: show date
   if (action === 'appointment_create' && d.appointmentDate) {
-    const dt = new Date(String(d.appointmentDate));
     const time = d.appointmentTime ? ` lúc ${escape(String(d.appointmentTime))}` : '';
-    return `: <strong>${dt.toLocaleDateString('vi-VN')}${time}</strong>`;
+    return `: <strong>${formatInOrgTz(String(d.appointmentDate), undefined, { dateOnly: true })}${time}</strong>`;
   }
   if (action === 'appointment_reschedule' && d.oldDate && d.newDate) {
-    return `: ${new Date(String(d.oldDate)).toLocaleDateString('vi-VN')} → ${new Date(String(d.newDate)).toLocaleDateString('vi-VN')}`;
+    return `: ${formatInOrgTz(String(d.oldDate), undefined, { dateOnly: true })} → ${formatInOrgTz(String(d.newDate), undefined, { dateOnly: true })}`;
   }
   // Customer update: KHÔNG show inline ở đây — render qua diff-block 2-line bên dưới
   // Friend alias change
@@ -175,8 +176,7 @@ function formatVal(field: string, val: unknown): string {
   if (val === null || val === undefined) return '';
   if (field === 'birthDate' && typeof val === 'string') {
     try {
-      const d = new Date(val);
-      return d.toLocaleDateString('vi-VN');
+      return formatInOrgTz(val, undefined, { dateOnly: true });
     } catch { return String(val); }
   }
   if (field === 'gender') {

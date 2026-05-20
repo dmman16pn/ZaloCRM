@@ -6,6 +6,7 @@
 import { ref, computed } from 'vue';
 import { api } from '@/api/index';
 import { useZaloAccounts } from './use-zalo-accounts';
+import { formatInOrgTz } from './use-org-timezone';
 
 export interface CrewMember {
   accessId: string;
@@ -255,7 +256,7 @@ export function useZaloAccountsDashboard() {
     if (h < 24) return `${h} giờ trước`;
     const d = Math.floor(h / 24);
     if (d < 7) return `${d} ngày trước`;
-    return date.toLocaleDateString('vi-VN');
+    return formatInOrgTz(date, undefined, { dateOnly: true });
   }
 
   function statusLabel(live: string): { label: string; color: string } {

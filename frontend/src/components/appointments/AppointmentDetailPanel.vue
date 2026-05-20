@@ -129,6 +129,7 @@ import {
   appointmentEnd,
   type AppointmentEx as Appointment,
 } from '@/composables/appointment-helpers';
+import { formatInOrgTz } from '@/composables/use-org-timezone';
 
 const props = defineProps<{
   appointment: Appointment | null;
@@ -166,7 +167,7 @@ function formatRelative(iso: string): string {
   if (diffH < 24) return `${diffH} giờ trước`;
   const diffD = Math.floor(diffH / 24);
   if (diffD < 7) return `${diffD} ngày trước`;
-  return new Date(iso).toLocaleDateString('vi-VN');
+  return formatInOrgTz(iso, undefined, { dateOnly: true });
 }
 </script>
 

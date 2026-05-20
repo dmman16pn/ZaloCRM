@@ -123,15 +123,21 @@
 
         <div class="ch-actions">
           <!-- Smart friendship button: state-aware -->
-          <button
-            v-if="friendshipState === 'friend'"
-            class="btn-action btn-friend-already"
-            :title="friendshipTitle"
-            disabled
-          >
-            <span class="ic">✓</span> Đã KB
-            <span v-if="friendDaysLabel" class="sub-meta">{{ friendDaysLabel }}</span>
-          </button>
+          <!-- Đã kết bạn: hover hiện thêm nút Huỷ kết bạn (destructive secondary) -->
+          <div v-if="friendshipState === 'friend'" class="friend-hover-group">
+            <button class="btn-action btn-friend-already" :title="friendshipTitle" disabled>
+              <span class="ic">✓</span> Đã KB
+              <span v-if="friendDaysLabel" class="sub-meta">{{ friendDaysLabel }}</span>
+            </button>
+            <button
+              class="btn-action btn-remove-friend"
+              title="Huỷ kết bạn với KH (Zalo unfriend)"
+              :disabled="actionLoading"
+              @click="onRemoveFriend"
+            >
+              <span class="ic">✗</span> Huỷ KB
+            </button>
+          </div>
           <!-- Sale đã gửi mời, đợi KH accept: primary "Đã mời" + secondary "Thu hồi" -->
           <template v-else-if="friendshipState === 'pending_sent' || friendshipState === 'pending_friend'">
             <button
@@ -493,6 +499,7 @@
 <script setup lang="ts">
 import { ref, watch, nextTick, computed, onMounted } from 'vue';
 import type { Conversation, Message } from '@/composables/use-chat';
+import { formatInOrgTz, weekdayInOrgTz, getOrgParts } from '@/composables/use-org-timezone';
 import { api } from '@/api/index';
 import AISuggestBar from '@/components/chat/AISuggestBar.vue';
 import CareStatusBadge from '@/components/ui/CareStatusBadge.vue';
@@ -514,6 +521,7 @@ import FriendInviteDialog from '@/components/chat/FriendInviteDialog.vue';
 import { useToast } from '@/composables/use-toast';
 import { useZaloPresence } from '@/composables/use-zalo-presence';
 import { useZaloFriendStatus } from '@/composables/use-zalo-friend-status';
+import { useFriendSocket } from '@/composables/use-friend-socket';
 import { groupAvatarStore } from '@/composables/use-group-avatar-cache';
 import { registerPendingTags, clearPendingTags } from '@/composables/use-pending-mutations';
 
@@ -934,9 +942,11 @@ function reminderNoticeTime(msg: Message): string {
     const hl = Array.isArray(params?.highLightsV2) ? params.highLightsV2 : [];
     for (const h of hl) {
       if (Number(h.ts) > 1e12) {
-        return new Date(Number(h.ts)).toLocaleString('vi-VN', {
-          weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit',
-        });
+        const ts = Number(h.ts);
+        const p = getOrgParts(ts);
+        if (!p) return '';
+        const dow = weekdayInOrgTz(ts, undefined, 'short');
+        return `${dow}, ${String(p.day).padStart(2, '0')}/${String(p.month).padStart(2, '0')} ${String(p.hour).padStart(2, '0')}:${String(p.minute).padStart(2, '0')}`;
       }
     }
   } catch {}
@@ -962,12 +972,79 @@ const zaloFriend = useZaloFriendStatus(
   },
 );
 
+// ── Real-time friendship sync ─────────────────────────────────────────────
+// Backend emit 'friend:updated' khi friend_event listener nhận từ Zalo SDK:
+//  - ADD (accept lời mời) → 'accepted'
+//  - REMOVE (huỷ kết bạn) → 'removed' / ghost
+//  - REQUEST (KH gửi mời) → 'pending_received'
+//  - UNDO_REQUEST (huỷ mời) → 'none'
+//  - REJECT_REQUEST → 'rejected'
+//  - BLOCK / UNBLOCK
+//
+// Per-account UID trap: 1 KH có thể có NHIỀU Friend rows cùng nick (UID cũ +
+// UID mới qua re-invite). Backend payload include zaloUidInNick → frontend
+// chỉ apply patch nếu UID khớp conv binding HOẶC nếu patch chuyển state về
+// pending_received/accepted (ưu tiên invite mới hơn friendship cũ).
+const recentlyUnfriended = ref(false);
+useFriendSocket((payload) => {
+  const acc = props.conversation?.zaloAccount?.id;
+  const contactId = props.conversation?.contact?.id;
+  const convUid = props.conversation?.externalThreadId;
+  if (!acc || !contactId) return;
+  if (payload.zaloAccountId !== acc || payload.contactId !== contactId) return;
+
+  const status = payload.patch?.friendshipStatus as string | undefined;
+  if (!status) return;
+
+  // UID filter logic — tránh override "Đã KB" của Friend cũ bằng event của
+  // Friend mới (vd: KH thu hồi pending invite trên UID mới, nhưng UID cũ vẫn friend).
+  const payloadUid = payload.zaloUidInNick;
+  const isSameUid = !payloadUid || !convUid || payloadUid === convUid;
+
+  // Map server-side status → Zalo SDK status shape cho zaloFriend.setStatus()
+  if (status === 'accepted') {
+    // Ưu tiên áp dụng — friendship dương luôn relevant
+    zaloFriend.setStatus({ isFriend: true, isRequested: false, isRequesting: false });
+    recentlyUnfriended.value = false;
+  } else if (status === 'pending_sent') {
+    // pending_sent với UID khác = sale gửi mời mới với UID khác → áp dụng
+    zaloFriend.setStatus({ isFriend: false, isRequested: true, isRequesting: false });
+    recentlyUnfriended.value = false;
+  } else if (status === 'pending_received') {
+    // pending_received với UID khác = KH gửi mời mới với UID khác (sau khi old UID
+    // đã unfriend hoặc state khác) → vẫn ưu tiên hiện "Chấp nhận?" để sale xử lý
+    zaloFriend.setStatus({ isFriend: false, isRequested: false, isRequesting: true });
+    recentlyUnfriended.value = false;
+  } else if (status === 'removed' || status === 'blocked') {
+    // CHỈ apply REMOVE/BLOCK nếu UID khớp conv (tránh huỷ state friend của UID cũ
+    // khi event là cho UID khác trong cùng nick).
+    if (isSameUid) {
+      zaloFriend.setStatus({ isFriend: false, isRequested: false, isRequesting: false });
+      recentlyUnfriended.value = true;
+    }
+  } else if (status === 'rejected' || status === 'none') {
+    // UNDO_REQUEST hoặc REJECT — chỉ apply nếu UID khớp HOẶC current state không phải friend
+    // (tránh xoá "Đã KB" của UID cũ khi UID mới bị huỷ mời).
+    const currentIsFriend = zaloFriend.status.value?.isFriend === true;
+    if (isSameUid || !currentIsFriend) {
+      zaloFriend.setStatus({ isFriend: false, isRequested: false, isRequesting: false });
+      if (status === 'rejected' && isSameUid) recentlyUnfriended.value = true;
+    }
+  }
+});
+
+// Reset local override khi user switch conv
+watch(() => props.conversation?.id, () => {
+  recentlyUnfriended.value = false;
+});
+
 const friendshipState = computed<FriendshipState>(() => {
   if (props.conversation?.threadType !== 'user') return null;
 
   const fs = props.conversation?.friendship;
-  // "Was once friend" = có becameFriendAt hoặc friendshipStatus đã từng 'accepted'/'removed'
-  const wasOnceFriend = !!(
+  // "Was once friend" = có becameFriendAt hoặc friendshipStatus đã từng 'accepted'/'removed'.
+  // recentlyUnfriended = socket vừa báo REMOVE event (DB chưa kịp emit qua list refresh).
+  const wasOnceFriend = recentlyUnfriended.value || !!(
     fs && (fs.becameFriendAt
       || fs.friendshipStatus === 'removed'
       || fs.friendshipStatus === 'blocked'
@@ -1115,8 +1192,7 @@ async function onSendInviteSubmit(message: string) {
     zaloFriend.setStatus({ isFriend: false, isRequested: true, isRequesting: false });
     showInviteDialog.value = false;
   } catch (err: any) {
-    const msg = err?.response?.data?.error || err?.message || 'Không thể gửi lời mời';
-    toast.error(msg);
+    toast.error(formatFriendOpError(err, 'Không thể gửi lời mời'));
     console.error('[send-invite] failed', { accountId, uid, err: err?.response?.data || err });
   } finally {
     actionLoading.value = false;
@@ -1136,8 +1212,7 @@ async function onCancelInvite() {
     // Reset về chatting_stranger (no pending) — UI sẽ hiện nút "Kết bạn" lại
     zaloFriend.setStatus({ isFriend: false, isRequested: false, isRequesting: false });
   } catch (err: any) {
-    const msg = err?.response?.data?.error || err?.message || 'Không thể thu hồi';
-    toast.error(msg);
+    toast.error(formatFriendOpError(err, 'Không thể thu hồi'));
     console.error('[cancel-invite] failed', { accountId, uid, err: err?.response?.data || err });
   } finally {
     actionLoading.value = false;
@@ -1156,9 +1231,44 @@ async function onRejectInvite() {
     toast.success('Đã từ chối lời mời kết bạn');
     zaloFriend.setStatus({ isFriend: false, isRequested: false, isRequesting: false });
   } catch (err: any) {
-    const msg = err?.response?.data?.error || err?.message || 'Không thể từ chối lời mời';
-    toast.error(msg);
+    toast.error(formatFriendOpError(err, 'Không thể từ chối lời mời'));
     console.error('[reject-invite] failed', { accountId, uid, err: err?.response?.data || err });
+  } finally {
+    actionLoading.value = false;
+  }
+}
+
+/** Format axios error → user-friendly Vietnamese message. */
+function formatFriendOpError(err: any, fallback: string): string {
+  const serverMsg = err?.response?.data?.error;
+  if (serverMsg) return serverMsg;
+  const code = err?.code || err?.response?.data?.code;
+  if (code === 'ERR_NETWORK' || err?.message === 'Network Error') {
+    return 'Lỗi mạng — server đang khởi động lại hoặc mất kết nối. Thử lại sau 5s.';
+  }
+  if (code === 'ECONNABORTED' || err?.message?.includes('timeout')) {
+    return 'Hết thời gian chờ Zalo phản hồi. Thử lại sau.';
+  }
+  return err?.message || fallback;
+}
+
+async function onRemoveFriend() {
+  const { accountId, uid } = getActionContext();
+  if (!accountId || !uid) {
+    toast.error('Thiếu thông tin nick hoặc KH');
+    return;
+  }
+  if (!confirm('Huỷ kết bạn với KH này? Sau đó muốn nhắn lại sẽ phải gửi lời mời kết bạn lại.')) return;
+  actionLoading.value = true;
+  try {
+    await api.delete(`/zalo-accounts/${accountId}/friends/${uid}`);
+    toast.success('Đã huỷ kết bạn với KH');
+    // Reset local state — Zalo unfriend = KH thành chatting_stranger / ghost
+    zaloFriend.setStatus({ isFriend: false, isRequested: false, isRequesting: false });
+    recentlyUnfriended.value = true; // force ghost UI
+  } catch (err: any) {
+    toast.error(formatFriendOpError(err, 'Không thể huỷ kết bạn'));
+    console.error('[remove-friend] failed', { accountId, uid, err: err?.response?.data || err });
   } finally {
     actionLoading.value = false;
   }
@@ -1181,9 +1291,7 @@ async function onAcceptInvite() {
     // accept-resolved nhắm UID khác conv binding (multiple Friend rows cùng nick).
     zaloFriend.setStatus({ isFriend: true, isRequested: false, isRequesting: false });
   } catch (err: any) {
-    const msg = err?.response?.data?.error || err?.message || 'Không thể chấp nhận lời mời';
-    const code = err?.response?.data?.code;
-    toast.error(code ? `${msg} (code: ${code})` : msg);
+    toast.error(formatFriendOpError(err, 'Không thể chấp nhận lời mời'));
     console.error('[accept-friend] failed', { accountId, uid, err: err?.response?.data || err });
   } finally {
     actionLoading.value = false;
@@ -1523,7 +1631,7 @@ async function applySuggestion(text?: string) {
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 function formatMessageTime(d: string) {
-  return new Date(d).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
+  return formatInOrgTz(d, undefined, { timeOnly: true });
 }
 
 function getImageUrl(msg: Message): string | null {
@@ -1814,6 +1922,39 @@ watch(() => props.editingMessage?.id, async (id) => {
   font-weight: 500;
 }
 .btn-reject-invite:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.22);
+  border-color: rgba(239, 68, 68, 0.6);
+  color: #991b1b;
+}
+/* Hover group: hover bất kỳ chỗ nào trong group → reveal nút Huỷ KB */
+.friend-hover-group {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+}
+.btn-remove-friend {
+  background: rgba(239, 68, 68, 0.10);
+  color: #b91c1c;
+  border-color: rgba(239, 68, 68, 0.35);
+  font-weight: 500;
+  opacity: 0;
+  max-width: 0;
+  padding-left: 0;
+  padding-right: 0;
+  border-width: 0;
+  overflow: hidden;
+  transition: opacity 0.18s ease, max-width 0.22s ease, padding 0.18s ease, border-width 0.18s ease;
+  white-space: nowrap;
+}
+.friend-hover-group:hover .btn-remove-friend,
+.btn-remove-friend:focus-visible {
+  opacity: 1;
+  max-width: 140px;
+  padding-left: 8px;
+  padding-right: 8px;
+  border-width: 1px;
+}
+.btn-remove-friend:hover:not(:disabled) {
   background: rgba(239, 68, 68, 0.22);
   border-color: rgba(239, 68, 68, 0.6);
   color: #991b1b;

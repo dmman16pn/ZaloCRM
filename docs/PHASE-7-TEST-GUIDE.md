@@ -288,7 +288,201 @@ Log expected:
 
 ---
 
-## Bước 8 — Dọn dẹp
+## Bước 8 — Broadcast (mass send)
+
+Test mass-send qua nick pool với pacing.
+
+### 8.1 Tạo Block send_message với 2-3 variant
+Đã có ở Bước 4 (Block B).
+
+### 8.2 Tạo Broadcast
+
+`/automation/bot/broadcasts` → click **Broadcast mới**.
+
+| Field | Value test |
+|---|---|
+| Tên | `TEST broadcast` |
+| Block | Pick Block B (TEST gửi tin) |
+| Segment kind | `manual` |
+| Contact IDs | Paste 1-3 contactId mà nick test đã `accepted` (1 dòng 1 ID) |
+| Schedule | `Chạy ngay` |
+| Max msg/giờ/nick | `5` (cap thấp cho test) |
+| Giờ start-end | `0` → `23` (test ngoài 6-22 cũng được) |
+
+**Lưu nháp** → broadcast vào list state=`draft`.
+
+### 8.3 Preview + Start
+
+```bash
+# Preview dry-run
+curl -X POST http://localhost:3080/api/v1/automation/broadcasts/<id>/preview \
+  -H "Authorization: Bearer $TOKEN"
+# Expect: { totalResolved: N, friendableRecipients: M, nonFriendableSkipped: ... }
+```
+
+UI: click **▶ Chạy** → confirm. Log:
+```
+[broadcast] fired <id> — M recipients enqueued
+[task-worker] processing 1 tasks
+[send-message STUB] would send ... (or REAL if stub off)
+```
+
+### 8.4 Verify DB
+
+```bash
+docker exec zalo-crm-db psql -U crmuser -d zalocrm -c \
+"SELECT id, name, state, total_recipients, sent_count, failed_count
+ FROM automation_broadcasts ORDER BY created_at DESC LIMIT 3"
+
+# Tasks linked to broadcast
+docker exec zalo-crm-db psql -U crmuser -d zalocrm -c \
+"SELECT t.state, t.scheduled_at, t.executed_at
+ FROM automation_tasks t JOIN automation_campaigns c ON c.id=t.campaign_id
+ WHERE c.broadcast_id='<bc-id>' ORDER BY t.scheduled_at LIMIT 10"
+```
+
+### 8.5 Pause/Resume/Cancel
+
+UI: click **Tạm dừng** trên broadcast running → state=`paused`, queued tasks stay queued but worker skips them (Campaign state='paused').
+
+Click **Tiếp tục** → resume.
+
+Click **Huỷ** → confirm → state=`cancelled`, all queued tasks → skipped with `skip_reason='broadcast_cancelled'`.
+
+### 8.6 Scheduled broadcast
+
+Tạo broadcast mới, chọn **Lên lịch chạy 1 lần**, set `scheduledAt` = thời điểm 2-3 phút trong tương lai → Lưu nháp → **Start** (state → `scheduled`).
+
+Watch log: scheduler poll mỗi 60s, fire khi due:
+```
+[broadcast-scheduler] firing 1 due broadcasts
+[broadcast] fired ... — N recipients enqueued
+```
+
+---
+
+## Bước 9 — Cron triggers (birthday + scheduled_cron)
+
+### 9.1 Birthday — chuẩn bị test
+
+Pick 1 KH có birthDate = hôm nay (test):
+```bash
+# Set 1 KH bất kỳ có sinh nhật hôm nay
+docker exec zalo-crm-db psql -U crmuser -d zalocrm -c \
+"UPDATE contacts SET birth_date = CURRENT_DATE WHERE id='<test-contact>'"
+```
+
+### 9.2 Tạo trigger birthday
+
+`/triggers` Catalog → **"Sinh nhật khách hàng"** → Khởi tạo:
+- Bind sequence = chỉ chứa block update_status (an toàn)
+- Bật → Lưu
+
+### 9.3 Fire manual (không đợi 8am)
+
+Vì birthday job chỉ chạy 8am, để test ngay anh phải gọi trực tiếp:
+
+```bash
+# Method 1: exec vào container và import module (dev only)
+docker exec -it zalo-crm-app node -e "
+  import('./dist/modules/automation/engine/cron-event-scheduler.js')
+    .then(m => m.fireBirthdayNowForTesting())
+    .then(r => console.log(r))
+"
+```
+
+Hoặc đơn giản hơn: chờ 8am next day. 
+
+### 9.4 Verify
+
+Sau 8am hoặc fire manual:
+```
+[cron-scheduler] birthday tick — N contacts have birthday today
+[materializer] event handled { type: 'birthday', ... }
+[update-status] contact <id>: ... → ...
+```
+
+### 9.5 Scheduled cron
+
+Tạo trigger:
+- Catalog → **"Theo lịch định kỳ"** → Khởi tạo
+- **Cron expression**: `* * * * *` (mỗi phút — test) hoặc preset có sẵn
+- Bind sequence → bật → Lưu
+
+Log expected sau ~1 phút:
+```
+[cron-scheduler] registered trigger <id> with cron '* * * * *'
+[cron-scheduler] fired scheduled_cron trigger <id>
+[materializer] event handled
+```
+
+**Quan trọng:** sau khi test, sửa cron về `0 9 * * 1` để không spam mỗi phút.
+
+---
+
+## Bước 10 — Webhook order_success
+
+External system (POS, e-commerce) bắn webhook khi đơn thành công → engine fire trigger.
+
+### 10.1 Tạo trigger order_success
+
+`/triggers` Catalog → **"Đơn hàng thành công"** → Khởi tạo:
+- Bind sequence chứa block send_message "🎉 Cảm ơn anh/chị đã đặt hàng..."
+- Bật → Lưu
+
+### 10.2 Bắn webhook giả
+
+```bash
+# Get JWT token first (login as service account)
+TOKEN=$(curl -s -X POST http://localhost:3080/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"<admin>","password":"<pwd>"}' | jq -r .token)
+
+# Fire webhook (by contactId)
+curl -X POST http://localhost:3080/api/v1/automation/webhooks/order \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "contactId": "<test-contact>",
+    "orderId": "TEST-001",
+    "amount": 1500000,
+    "currency": "VND",
+    "productName": "Khoá học online",
+    "items": [{"name":"Khoá A","qty":1,"price":1500000}]
+  }'
+
+# Or by phone (server resolves contactId via phoneNormalized)
+curl -X POST http://localhost:3080/api/v1/automation/webhooks/order \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"phone":"0912345678","orderId":"TEST-002","amount":500000}'
+```
+
+Expected response: `202 Accepted` + idempotencyKey.
+
+Log:
+```
+[webhook] order_success emitted — order=TEST-001 contact=<id>
+[materializer] event handled { type: 'order_success' }
+[task-worker] processing 1 tasks
+```
+
+### 10.3 Trigger filter by orderAmount
+
+UI chưa có field filter — phải curl:
+```bash
+# Set trigger to only fire for orders ≥ 1M
+curl -X PUT http://localhost:3080/api/v1/automation/triggers/<id> \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"eventFilter":{"amount":{"$gte":1000000}}}'
+```
+
+(Materializer hiện chỉ support exact-match filter — phức tạp hơn cần defer.)
+
+---
+
+## Bước 11 — Dọn dẹp
 
 ```bash
 # Disable test triggers (KHÔNG xoá để giữ history)

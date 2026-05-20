@@ -192,6 +192,7 @@
 import { onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { useCustomerLists, type CustomerListSummary, type ListStatusFilter } from '@/composables/use-customer-lists';
+import { formatInOrgTz } from '@/composables/use-org-timezone';
 import CreateListModal from '@/components/automation/lists/CreateListModal.vue';
 import '@/components/automation/phase7/airtable.css';
 
@@ -256,8 +257,7 @@ async function onDelete(id: string) {
 
 // ───────── Helpers ─────────
 function formatDate(iso: string): string {
-  const d = new Date(iso);
-  return d.toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  return formatInOrgTz(iso);
 }
 
 function sourceLabel(s: string): string {

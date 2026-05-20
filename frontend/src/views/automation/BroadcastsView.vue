@@ -219,6 +219,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
 import { blocksApi, broadcastsApi } from '@/api/automation';
+import { getOrgParts } from '@/composables/use-org-timezone';
 import type { Broadcast, BroadcastState, SegmentSpec } from '@/api/automation/broadcasts';
 import type { Block } from '@/api/automation/types';
 
@@ -299,8 +300,9 @@ function showToast(msg: string, color: 'success' | 'error' | 'info' = 'info') {
 }
 
 function formatDate(iso: string): string {
-  const d = new Date(iso);
-  return `${d.getDate().toString().padStart(2,'0')}/${(d.getMonth()+1).toString().padStart(2,'0')} ${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}`;
+  const p = getOrgParts(iso);
+  if (!p) return '';
+  return `${String(p.day).padStart(2, '0')}/${String(p.month).padStart(2, '0')} ${String(p.hour).padStart(2, '0')}:${String(p.minute).padStart(2, '0')}`;
 }
 
 async function loadAll() {

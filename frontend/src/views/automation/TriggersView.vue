@@ -226,6 +226,24 @@
             </select>
           </div>
 
+          <!-- Cron expression field — only for scheduled_cron event type -->
+          <div v-if="draft.eventType === 'scheduled_cron'" class="form-field">
+            <label class="form-label">Cron expression (TZ Asia/Ho_Chi_Minh)</label>
+            <input v-model="draft.cronExpr" class="at-input" placeholder="0 9 * * 1   (9h sáng thứ 2 hàng tuần)" />
+            <p class="at-caption form-hint">
+              Format: <code>phút giờ ngày tháng thứ</code>. Ví dụ:
+              <code>0 9 * * 1</code> = 9h sáng T2,
+              <code>0 8 1 * *</code> = 8h sáng ngày 1 mỗi tháng,
+              <code>0 */2 * * *</code> = mỗi 2 tiếng.
+            </p>
+            <div class="cron-presets">
+              <button type="button" class="filter-chip" @click="draft.cronExpr = '0 9 * * 1'">T2 9h</button>
+              <button type="button" class="filter-chip" @click="draft.cronExpr = '0 8 1 * *'">Ngày 1 mỗi tháng 8h</button>
+              <button type="button" class="filter-chip" @click="draft.cronExpr = '0 9 * * *'">Daily 9h</button>
+              <button type="button" class="filter-chip" @click="draft.cronExpr = '0 18 * * 5'">T6 18h</button>
+            </div>
+          </div>
+
           <label class="form-toggle">
             <input type="checkbox" v-model="draft.enabled" />
             <span>Bật trigger ngay sau khi lưu</span>
@@ -286,6 +304,7 @@ interface Draft {
   blockId: string | null;
   broadcastId: string | null;
   enabled: boolean;
+  cronExpr: string; // packed into eventFilter.cron when eventType=scheduled_cron
 }
 const draft = ref<Draft | null>(null);
 
@@ -358,6 +377,7 @@ function openCreateFromCatalog(entry: TriggerCatalogEntry) {
     blockId: null,
     broadcastId: null,
     enabled: false,
+    cronExpr: entry.eventType === 'scheduled_cron' ? '0 9 * * 1' : '',
   };
   error.value = '';
   editorOpen.value = true;
@@ -374,9 +394,16 @@ function openEdit(trig: AutomationTrigger) {
     blockId: trig.blockId,
     broadcastId: trig.broadcastId,
     enabled: trig.enabled,
+    cronExpr: extractCronFromFilter(trig.eventFilter),
   };
   error.value = '';
   editorOpen.value = true;
+}
+
+function extractCronFromFilter(filter: Record<string, unknown> | null): string {
+  if (!filter || typeof filter !== 'object') return '';
+  const c = (filter as Record<string, unknown>).cron;
+  return typeof c === 'string' ? c : '';
 }
 
 function showToast(msg: string, color: 'success' | 'error' | 'info' = 'info') {
@@ -387,9 +414,16 @@ async function saveTrigger() {
   if (!draft.value) return;
   error.value = '';
   if (!draft.value.name.trim()) { error.value = 'Tên không được rỗng'; return; }
+
+  // For scheduled_cron, cron expression is mandatory
+  if (draft.value.eventType === 'scheduled_cron' && !draft.value.cronExpr.trim()) {
+    error.value = 'Cron expression không được rỗng cho scheduled_cron';
+    return;
+  }
+
   saving.value = true;
   try {
-    const payload = {
+    const payload: Record<string, unknown> = {
       name: draft.value.name.trim(),
       eventType: draft.value.eventType,
       bindingKind: draft.value.bindingKind,
@@ -398,8 +432,12 @@ async function saveTrigger() {
       broadcastId: draft.value.bindingKind === 'broadcast' ? draft.value.broadcastId : null,
       enabled: draft.value.enabled,
     };
-    if (draft.value.id) await triggersApi.updateTrigger(draft.value.id, payload);
-    else                await triggersApi.createTrigger(payload);
+    // Pack cron into eventFilter (backend cron-event-scheduler reads from here)
+    if (draft.value.eventType === 'scheduled_cron') {
+      payload.eventFilter = { cron: draft.value.cronExpr.trim() };
+    }
+    if (draft.value.id) await triggersApi.updateTrigger(draft.value.id, payload as any);
+    else                await triggersApi.createTrigger(payload as any);
     editorOpen.value = false;
     tab.value = 'configured';
     await loadAll();
@@ -762,6 +800,22 @@ async function onDelete(trig: AutomationTrigger) {
   margin-top: var(--at-s-xs);
 }
 .form-toggle input { width: 16px; height: 16px; }
+
+.form-hint code {
+  background: var(--at-surface-soft);
+  padding: 1px 6px;
+  border-radius: var(--at-r-xs);
+  font-size: 12px;
+  border: 1px solid var(--at-hairline);
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+}
+.cron-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+.cron-presets .filter-chip { padding: 4px 10px; font-size: 12px; }
 
 .form-error {
   padding: 10px 12px;

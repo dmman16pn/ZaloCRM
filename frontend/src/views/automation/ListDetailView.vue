@@ -459,6 +459,7 @@
 import { onMounted, computed, watch, ref, nextTick, onBeforeUnmount } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useCustomerLists, type CustomerListSummary, type CustomerListEntry } from '@/composables/use-customer-lists';
+import { formatInOrgTz } from '@/composables/use-org-timezone';
 import '@/components/automation/phase7/airtable.css';
 
 const route = useRoute();
@@ -773,8 +774,7 @@ onBeforeUnmount(() => {
 
 // ───────── Helpers ─────────
 function formatDate(iso: string): string {
-  const d = new Date(iso);
-  return d.toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  return formatInOrgTz(iso);
 }
 
 function sourceLabel(s: string): string {
@@ -855,8 +855,10 @@ function sortedMessages(messages: { ts: string; type: string; text: string }[]):
 }
 
 function formatMsgTs(ts: string): string {
-  const d = new Date(ts);
-  return d.toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+  // formatInOrgTz mặc định "dd/MM/yyyy HH:mm" — bỏ year để gọn (chỉ dùng cho stack message timeline)
+  const full = formatInOrgTz(ts);
+  // "21/05/2026 09:30" → "21/05 09:30"
+  return full === '—' ? '—' : full.replace(/^(\d{2}\/\d{2})\/\d{4}/, '$1');
 }
 
 // ───────── Column visibility (persist localStorage) ─────────

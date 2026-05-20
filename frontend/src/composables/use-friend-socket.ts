@@ -22,6 +22,8 @@ export interface FriendUpdatedPayload {
   friendId: string;
   contactId: string;
   zaloAccountId: string;
+  /** Per-nick UID — FE phân biệt nhiều Friend rows cùng nick (per-account UID rule). */
+  zaloUidInNick?: string;
   /** Subset fields đã đổi — merge vào row trong cache để live update. */
   patch: Record<string, unknown>;
 }

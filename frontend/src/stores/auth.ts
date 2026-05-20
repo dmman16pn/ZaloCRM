@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
 import { api } from '@/api/index';
+import { refreshOrgTimezone } from '@/composables/use-org-timezone';
 
 interface User {
   id: string;
@@ -9,6 +10,7 @@ interface User {
   role: string;
   orgId: string;
   orgName: string;
+  orgTimezone?: string;
 }
 
 export const useAuthStore = defineStore('auth', () => {
@@ -43,7 +45,18 @@ export const useAuthStore = defineStore('auth', () => {
   async function fetchProfile() {
     try {
       const res = await api.get('/profile');
-      user.value = res.data;
+      const data = res.data;
+      const tz = data.org?.timezone ?? '+07:00';
+      user.value = {
+        id: data.id,
+        email: data.email,
+        fullName: data.fullName,
+        role: data.role,
+        orgId: data.orgId,
+        orgName: data.org?.name ?? '',
+        orgTimezone: tz,
+      };
+      refreshOrgTimezone(tz);
     } catch {
       logout();
     }

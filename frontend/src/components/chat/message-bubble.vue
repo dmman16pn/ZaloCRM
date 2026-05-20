@@ -208,6 +208,7 @@
 <script setup lang="ts">
 import type { Message } from '@/composables/use-chat';
 import { computed, ref, watch } from 'vue';
+import { formatInOrgTz, weekdayInOrgTz } from '@/composables/use-org-timezone';
 import SpecialMessageRenderer from '@/components/chat/special-message-renderer.vue';
 import ReactionDisplay from '@/components/chat/reaction-display.vue';
 import ReactionPicker from '@/components/chat/reaction-picker.vue';
@@ -549,7 +550,7 @@ function getReminderTime(msg: Message): string | null {
     const params = typeof p.params === 'string' ? JSON.parse(p.params) : p.params;
     // 1. highLightsV2 (notice variant) — có ts ms
     for (const h of (params?.highLightsV2 || [])) {
-      if (h.ts > 1e12) return new Date(h.ts).toLocaleString('vi-VN', { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+      if (h.ts > 1e12) return `${weekdayInOrgTz(h.ts, undefined, 'long')}, ${formatInOrgTz(h.ts)}`;
     }
     // 2. Reminder card variant — description có sẵn time string ("Thứ Ba, 12 tháng 5 lúc 09:55")
     const desc = String(p.description || '').trim();
@@ -559,7 +560,7 @@ function getReminderTime(msg: Message): string | null {
 }
 
 function formatTime(d: string): string {
-  return new Date(d).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
+  return formatInOrgTz(d, undefined, { timeOnly: true });
 }
 
 function onPickerReact(key: string) {

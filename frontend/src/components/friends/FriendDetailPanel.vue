@@ -114,6 +114,7 @@
 import { computed } from 'vue';
 import type { DbFriend } from '@/composables/use-friends';
 import { displayCustomerName, customerInitials } from '@/composables/use-friend-display';
+import { formatInOrgTz } from '@/composables/use-org-timezone';
 
 const props = defineProps<{
   friend: DbFriend | null;
@@ -205,8 +206,7 @@ function tagColor(tag: string): string {
 }
 
 function formatDate(iso: string): string {
-  const d = new Date(iso);
-  return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`;
+  return formatInOrgTz(iso, undefined, { dateOnly: true });
 }
 function daysSince(iso: string): number {
   const diff = Date.now() - new Date(iso).getTime();

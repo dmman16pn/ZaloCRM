@@ -132,6 +132,7 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue';
 import { useScoring } from '@/composables/use-scoring';
+import { formatInOrgTz } from '@/composables/use-org-timezone';
 
 const props = defineProps<{
   open: boolean;
@@ -204,11 +205,11 @@ function dimensionAbbr(d: string): string {
 }
 function formatDate(d: string | Date | null): string {
   if (!d) return '';
-  return new Date(d).toLocaleDateString('vi-VN');
+  return formatInOrgTz(d, undefined, { dateOnly: true });
 }
 function formatDateTime(d: string | Date | null): string {
   if (!d) return '';
-  return new Date(d).toLocaleString('vi-VN');
+  return formatInOrgTz(d);
 }
 function daysSince(d: string | Date): number {
   return Math.floor((Date.now() - new Date(d).getTime()) / (24 * 3600 * 1000));

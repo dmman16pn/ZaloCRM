@@ -70,6 +70,7 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue';
 import { useScoring, type ScoreBreakdown } from '@/composables/use-scoring';
+import { formatInOrgTz } from '@/composables/use-org-timezone';
 
 const props = defineProps<{
   modelValue: boolean;
@@ -152,7 +153,7 @@ function relativeTime(iso: string | null): string {
 
 function formatFull(iso: string | null): string {
   if (!iso) return '';
-  return new Date(iso).toLocaleString('vi-VN');
+  return formatInOrgTz(iso);
 }
 </script>
 

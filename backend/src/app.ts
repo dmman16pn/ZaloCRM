@@ -65,6 +65,7 @@ import { blockFolderRoutes } from './modules/automation/blocks/block-folder-rout
 import { sequenceRoutes } from './modules/automation/sequences/sequence-routes.js';
 import { triggerRoutes } from './modules/automation/triggers/trigger-routes.js';
 import { broadcastRoutes } from './modules/automation/broadcasts/broadcast-routes.js';
+import { webhookRoutes as automationWebhookRoutes } from './modules/automation/webhooks/webhook-routes.js';
 // Tệp khách hàng (CustomerList) — Phase 7 audience layer
 import { customerListRoutes } from './modules/automation/lists/list-routes.js';
 import { customerListEntryRoutes } from './modules/automation/lists/list-entry-routes.js';
@@ -192,6 +193,7 @@ async function bootstrap() {
   await app.register(sequenceRoutes);
   await app.register(triggerRoutes);
   await app.register(broadcastRoutes);
+  await app.register(automationWebhookRoutes);
   // Tệp khách hàng — CustomerList CRUD + entries + enrichment + event handlers
   await app.register(customerListRoutes);
   await app.register(customerListEntryRoutes);

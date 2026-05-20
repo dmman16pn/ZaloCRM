@@ -30,7 +30,7 @@
 
           <v-card-text>
             <div class="text-body-2 mb-2">
-              Đồng bộ lần cuối: {{ item.lastSyncAt ? new Date(item.lastSyncAt).toLocaleString('vi-VN') : 'Chưa có' }}
+              Đồng bộ lần cuối: {{ item.lastSyncAt ? formatInOrgTz(item.lastSyncAt) : 'Chưa có' }}
             </div>
 
             <!-- Recent sync logs -->
@@ -134,6 +134,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue';
 import { api } from '@/api';
+import { formatInOrgTz } from '@/composables/use-org-timezone';
 
 interface SyncLog {
   id: string;

@@ -116,6 +116,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue';
+import { formatInOrgTz } from '@/composables/use-org-timezone';
 
 interface PollOption {
   id?: number;
@@ -177,7 +178,7 @@ const expiresText = computed(() => {
   const now = Date.now();
   if (d.getTime() < now) return 'Đã hết hạn';
   const diffH = Math.round((d.getTime() - now) / 3_600_000);
-  return diffH < 24 ? `Còn ${diffH}h` : `HH ${d.toLocaleDateString('vi-VN')}`;
+  return diffH < 24 ? `Còn ${diffH}h` : `HH ${formatInOrgTz(d, undefined, { dateOnly: true })}`;
 });
 
 // Selection state

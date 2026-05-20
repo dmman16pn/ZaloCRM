@@ -216,6 +216,7 @@ import { ref, computed, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { api } from '@/api/index';
 import { useToast } from '@/composables/use-toast';
+import { formatInOrgTz } from '@/composables/use-org-timezone';
 
 const router = useRouter();
 const toast = useToast();
@@ -412,13 +413,13 @@ function formatDob(d: string | number | null): string {
   const s = String(d);
   if (/^\d{2}\/\d{2}\/\d{4}$/.test(s)) return s;
   const ts = Number(d);
-  if (ts > 1e9) return new Date(ts * (ts < 1e12 ? 1000 : 1)).toLocaleDateString('vi-VN');
+  if (ts > 1e9) return formatInOrgTz(ts * (ts < 1e12 ? 1000 : 1), undefined, { dateOnly: true });
   return s;
 }
 
 function formatDate(ts: number): string {
   if (!ts) return '';
-  return new Date(ts).toLocaleDateString('vi-VN');
+  return formatInOrgTz(ts, undefined, { dateOnly: true });
 }
 
 function formatRelativeTime(ts: number): string {
@@ -431,7 +432,7 @@ function formatRelativeTime(ts: number): string {
   if (h < 24) return `${h} giờ trước`;
   const d = Math.floor(h / 24);
   if (d < 30) return `${d} ngày trước`;
-  return new Date(ts).toLocaleDateString('vi-VN');
+  return formatInOrgTz(ts, undefined, { dateOnly: true });
 }
 
 function copy(text: string) {

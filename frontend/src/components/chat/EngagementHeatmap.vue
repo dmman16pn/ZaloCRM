@@ -79,6 +79,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue';
 import { api } from '@/api/index';
+import { getOrgParts } from '@/composables/use-org-timezone';
 
 const props = defineProps<{
   contactId: string;
@@ -171,8 +172,8 @@ function intensityLevel(intensity: number): number {
 }
 
 function cellTooltip(cell: TimelineCell): string {
-  const date = new Date(cell.date);
-  const dateStr = date.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' });
+  const p = getOrgParts(cell.date);
+  const dateStr = p ? `${String(p.day).padStart(2, '0')}/${String(p.month).padStart(2, '0')}` : '';
   if (cell.dailyIntensity === 0) return `${dateStr} · Không có tương tác`;
   const parts: string[] = [`${dateStr} · Điểm ${cell.dailyIntensity}/100`];
   if (cell.reactionCount > 0) parts.push(`❤️ ${cell.reactionCount}`);

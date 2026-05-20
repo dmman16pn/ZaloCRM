@@ -80,6 +80,7 @@
 import { ref, computed } from 'vue';
 import { useRouter } from 'vue-router';
 import { api } from '@/api/index';
+import { getOrgParts } from '@/composables/use-org-timezone';
 
 interface ContactResult {
   id: string;
@@ -154,6 +155,8 @@ function truncate(s: string | null, len: number): string {
 }
 
 function formatDate(d: string): string {
-  return new Date(d).toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' });
+  const p = getOrgParts(d);
+  if (!p) return '';
+  return `${String(p.day).padStart(2, '0')}/${String(p.month).padStart(2, '0')}`;
 }
 </script>

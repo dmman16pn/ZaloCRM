@@ -695,6 +695,7 @@ import { useRouter } from 'vue-router';
 import { api } from '@/api/index';
 import { useToast } from '@/composables/use-toast';
 import type { Contact } from '@/composables/use-contacts';
+import { formatInOrgTz } from '@/composables/use-org-timezone';
 import AppointmentQuickDialog from '@/components/chat/AppointmentQuickDialog.vue';
 import {
   SOURCE_OPTIONS,
@@ -1063,7 +1064,7 @@ function attemptStateColor(state: string) {
 }
 
 function formatDateTime(iso: string) {
-  return new Date(iso).toLocaleString('vi-VN');
+  return formatInOrgTz(iso);
 }
 
 function required(v: string) {
