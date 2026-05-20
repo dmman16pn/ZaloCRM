@@ -108,7 +108,7 @@
           :class="{ active: entryTab === 'invalid' }"
           @click="setTab('invalid')"
         >
-          <div class="l">Lỗi format</div>
+          <div class="l">Số không hợp lệ</div>
           <div class="v">{{ currentList.invalidEntries.toLocaleString('vi-VN') }}</div>
           <div class="pct">{{ pct(currentList.invalidEntries, currentList.totalEntries) }}%</div>
         </div>
@@ -127,7 +127,7 @@
           @click="setTab('has_zalo')"
           title="Đã match Friend table hoặc SDK lookup xác nhận có Zalo"
         >
-          <div class="l">Có Zalo</div>
+          <div class="l">Đã có Zalo</div>
           <div class="v">{{ currentList.hasZaloEntries.toLocaleString('vi-VN') }}</div>
           <div class="pct">{{ pct(currentList.hasZaloEntries, currentList.validEntries) }}% / hợp lệ</div>
         </div>
@@ -135,9 +135,9 @@
           class="hero-stat"
           :class="{ active: entryTab === 'no_zalo' }"
           @click="setTab('no_zalo')"
-          title="Đã check Friend table xong nhưng không match. Chưa biết chắc — cần Campaign SDK scan."
+          title="Số hợp lệ nhưng chưa rõ có Zalo. Đưa vào Campaign để quét xác minh."
         >
-          <div class="l">Chưa quét SDK</div>
+          <div class="l">Đang chờ CRM</div>
           <div class="v">{{ notScannedSdk.toLocaleString('vi-VN') }}</div>
           <div class="pct">cần Campaign quét xác nhận</div>
         </div>
@@ -153,25 +153,25 @@
         ✓ Hợp lệ <span class="count">{{ currentList?.validEntries.toLocaleString('vi-VN') ?? 0 }}</span>
       </button>
       <button class="subtab" :class="{ active: entryTab === 'invalid' }" @click="setTab('invalid')">
-        ✗ Lỗi format <span class="count">{{ currentList?.invalidEntries.toLocaleString('vi-VN') ?? 0 }}</span>
+        ⚫ Số không hợp lệ <span class="count">{{ currentList?.invalidEntries.toLocaleString('vi-VN') ?? 0 }}</span>
       </button>
       <button class="subtab" :class="{ active: entryTab === 'dup' }" @click="setTab('dup')">
-        ⚠ Trùng <span class="count">{{ dupTotal(currentList).toLocaleString('vi-VN') }}</span>
+        🟠 Trùng <span class="count">{{ dupTotal(currentList).toLocaleString('vi-VN') }}</span>
       </button>
       <button class="subtab" :class="{ active: entryTab === 'dup_in_list' }" @click="setTab('dup_in_list')">
-        ↺ Trùng list này <span class="count">{{ currentList?.dupInListEntries ?? 0 }}</span>
+        🟠 Trùng trong tệp <span class="count">{{ currentList?.dupInListEntries ?? 0 }}</span>
       </button>
       <button class="subtab" :class="{ active: entryTab === 'dup_cross_list' }" @click="setTab('dup_cross_list')">
-        ↔ Trùng list khác <span class="count">{{ currentList?.dupCrossListEntries ?? 0 }}</span>
+        🟠 Trùng tệp khác <span class="count">{{ currentList?.dupCrossListEntries ?? 0 }}</span>
       </button>
       <button class="subtab" :class="{ active: entryTab === 'dup_with_crm' }" @click="setTab('dup_with_crm')">
-        ⚷ Trùng CRM <span class="count">{{ currentList?.dupWithContactEntries ?? 0 }}</span>
+        🔒 Đã là khách CRM <span class="count">{{ currentList?.dupWithContactEntries ?? 0 }}</span>
       </button>
       <button class="subtab" :class="{ active: entryTab === 'has_zalo' }" @click="setTab('has_zalo')">
-        📱 Có Zalo <span class="count">{{ currentList?.hasZaloEntries ?? 0 }}</span>
+        🟢 Đã có Zalo <span class="count">{{ currentList?.hasZaloEntries ?? 0 }}</span>
       </button>
-      <button class="subtab" :class="{ active: entryTab === 'no_zalo' }" @click="setTab('no_zalo')" title="Đã check Friend xong, chưa biết Zalo — cần Campaign SDK scan">
-        ❓ Chưa quét SDK <span class="count">{{ notScannedSdk }}</span>
+      <button class="subtab" :class="{ active: entryTab === 'no_zalo' }" @click="setTab('no_zalo')" title="Số hợp lệ, chưa rõ có Zalo — cần Campaign quét xác nhận">
+        🟡 Đang chờ CRM <span class="count">{{ notScannedSdk }}</span>
       </button>
     </div>
 
@@ -296,7 +296,7 @@
             </td>
             <td>
               <span class="status-pill" :class="statusPillClass(entry.status, entry.hasZalo)">
-                {{ statusPillLabel(entry.status, entry.hasZalo) }}
+                {{ statusPillLabel(entry.status, entry.hasZalo, entry.dupWithListName) }}
               </span>
             </td>
             <td class="uid-cell" :class="{ empty: !entry.zaloUid }">
@@ -597,13 +597,13 @@ async function commitEdit() {
   // Toast cảnh báo dup nếu phoneRaw đổi sang số trùng
   if (field === 'phoneRaw' && result.conflictWarn) {
     if (result.entry.status === 'invalid') {
-      flashToast(`⚠️ Số mới không hợp lệ — đã đánh dấu "Lỗi format"`);
+      flashToast(`⚠️ Số mới không hợp lệ — đã đánh dấu "Số không hợp lệ"`);
     } else if (result.entry.status === 'dup_in_list') {
-      flashToast(`⚠️ Số mới TRÙNG entry khác trong list này`);
+      flashToast(`⚠️ Số mới đã có dòng khác trong tệp này`);
     } else if (result.entry.status === 'dup_cross_list') {
-      flashToast(`⚠️ Số mới đã có ở list "${result.dupWithListName ?? 'khác'}"`);
+      flashToast(`⚠️ Số mới đã có ở tệp "${result.dupWithListName ?? 'khác'}"`);
     } else if (result.entry.status === 'dup_with_crm') {
-      flashToast(`⚠️ Số mới đã có Contact trong CRM`);
+      flashToast(`⚠️ Số mới đã là khách CRM (có Contact)`);
     }
   }
 }
@@ -744,26 +744,45 @@ function dupTotal(l: CustomerListSummary | null): number {
   return l.dupInListEntries + l.dupCrossListEntries + l.dupWithContactEntries;
 }
 
+/**
+ * Trạng thái entry — vocabulary chuẩn cho sale (chốt 2026-05-20):
+ *   🟢 Đã có Zalo        — match Friend table HOẶC Campaign SDK xác nhận
+ *   🟡 Đang chờ CRM      — số valid, chưa rõ có Zalo, cần Campaign quét
+ *   🔴 Không có Zalo     — Campaign SDK trả 404
+ *   ⏳ Đang quét         — worker chưa xử lý (mới import)
+ *   ⚫ Số không hợp lệ   — parse fail
+ *   🟠 Trùng trong tệp   — dup cùng list
+ *   🟠 Đã có ở tệp "X"   — dup cross-list, inline tên tệp
+ *   🔒 Đã là khách CRM   — đã có Contact
+ *   ⏭ Sale loại         — sale bulk-skip
+ */
 function statusPillClass(status: string, hasZalo: boolean | null): string {
-  if (status === 'invalid') return 'error';
-  if (status.startsWith('dup_')) return 'dup';
+  if (status === 'invalid') return 'invalid';
+  if (status === 'dup_in_list' || status === 'dup_cross_list') return 'dup';
+  if (status === 'dup_with_crm') return 'crm';
+  if (status === 'skipped') return 'skipped';
   if (hasZalo === true) return 'has-zalo';
   if (hasZalo === false) return 'no-zalo';
-  // hasZalo=null + status=enriched → "Chưa quét SDK" (worker đã check Friend nhưng không match)
-  if (status === 'enriched' && hasZalo === null) return 'pending';
+  if (status === 'enriched' && hasZalo === null) return 'awaiting';
   return 'pending';
 }
 
-function statusPillLabel(status: string, hasZalo: boolean | null): string {
-  if (status === 'invalid') return '✗ Lỗi format';
-  if (status === 'dup_in_list') return '↺ Trùng list này';
-  if (status === 'dup_cross_list') return '↔ Trùng list khác';
-  if (status === 'dup_with_crm') return '⚷ Trùng CRM';
-  if (status === 'skipped') return '⏭ Đã skip';
-  if (hasZalo === true) return '✓ Có Zalo';
-  if (hasZalo === false) return '⊘ Không Zalo';
+function statusPillLabel(
+  status: string,
+  hasZalo: boolean | null,
+  dupWithListName?: string | null,
+): string {
+  if (status === 'invalid') return '⚫ Số không hợp lệ';
+  if (status === 'dup_in_list') return '🟠 Trùng trong tệp';
+  if (status === 'dup_cross_list') {
+    return dupWithListName ? `🟠 Đã có ở tệp "${dupWithListName}"` : '🟠 Trùng tệp khác';
+  }
+  if (status === 'dup_with_crm') return '🔒 Đã là khách CRM';
+  if (status === 'skipped') return '⏭ Sale loại';
+  if (hasZalo === true) return '🟢 Đã có Zalo';
+  if (hasZalo === false) return '🔴 Không có Zalo';
   // hasZalo=null branch
-  if (status === 'enriched') return '❓ Chưa quét SDK';
+  if (status === 'enriched') return '🟡 Đang chờ CRM';
   return '⏳ Đang quét';
 }
 
@@ -1069,11 +1088,24 @@ function nickAvatarStyle(name: string): Record<string, string> {
   padding: 2px 7px; border-radius: 99px;
   font-size: 10.5px; font-weight: 600; white-space: nowrap;
 }
-.status-pill.has-zalo { background: #DBEAFE; color: #1D4ED8; }
-.status-pill.no-zalo { background: #F4F5F8; color: #6B7280; }
-.status-pill.error { background: #FEE2E2; color: #B91C1C; }
-.status-pill.dup { background: #FEF3C7; color: #B45309; }
+/* 🟢 Đã có Zalo */
+.status-pill.has-zalo { background: #D1FAE5; color: #047857; }
+/* 🔴 Không có Zalo (Campaign SDK confirm) */
+.status-pill.no-zalo { background: #FEE2E2; color: #B91C1C; }
+/* ⚫ Số không hợp lệ */
+.status-pill.invalid { background: #E5E7EB; color: #1F2937; }
+/* 🟠 Trùng (in list / cross list) */
+.status-pill.dup { background: #FFEDD5; color: #C2410C; }
+/* 🔒 Đã là khách CRM */
+.status-pill.crm { background: #EDE9FE; color: #6D28D9; }
+/* 🟡 Đang chờ CRM (validated valid, chưa Campaign) */
+.status-pill.awaiting { background: #FEF3C7; color: #B45309; }
+/* ⏳ Đang quét (worker chưa xử lý) */
 .status-pill.pending { background: #F4F5F8; color: #6B7280; }
+/* ⏭ Sale loại */
+.status-pill.skipped { background: #F4F5F8; color: #6B7280; text-decoration: line-through; }
+/* Legacy fallback */
+.status-pill.error { background: #FEE2E2; color: #B91C1C; }
 
 .uid-cell {
   font-family: "JetBrains Mono", monospace;
