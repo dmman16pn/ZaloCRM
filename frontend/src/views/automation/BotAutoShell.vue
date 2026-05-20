@@ -1,13 +1,13 @@
 <template>
-  <div class="bot-auto-shell">
+  <div class="airtable-scope bot-auto-shell">
     <aside class="bot-auto-sidebar">
       <div class="sidebar-header">
         <div class="sidebar-logo">
-          <v-icon size="20" color="primary">mdi-robot-outline</v-icon>
+          <v-icon size="20">mdi-robot-outline</v-icon>
         </div>
         <div>
           <div class="sidebar-title">Bot-Auto</div>
-          <div class="sidebar-subtitle">Phase 7 framework</div>
+          <div class="sidebar-subtitle">Automation framework</div>
         </div>
       </div>
 
@@ -19,21 +19,18 @@
           class="sidebar-link"
           active-class="is-active"
         >
-          <div class="sidebar-link__icon" :style="{ '--icon-color': item.color }">
-            <v-icon size="18">{{ item.icon }}</v-icon>
-          </div>
+          <v-icon size="18" class="sidebar-link__icon">{{ item.icon }}</v-icon>
           <span class="sidebar-link__label">{{ item.label }}</span>
         </RouterLink>
       </nav>
 
       <div class="sidebar-footer">
-        <div class="footer-card">
-          <v-icon size="16" color="primary">mdi-information-outline</v-icon>
-          <div class="footer-card__body">
-            <div class="footer-card__title">Phase 7 đang phát triển</div>
-            <div class="footer-card__desc">Channel: Zalo cá nhân (per-nick).
-              Block / Sequence / Trigger / Broadcast.</div>
-          </div>
+        <div class="sidebar-foot-card">
+          <div class="sidebar-foot-card__title">Phase 7 đang phát triển</div>
+          <p class="sidebar-foot-card__desc">
+            Block · Sequence · Trigger · Broadcast.
+            Channel: Zalo cá nhân (per-nick).
+          </p>
         </div>
       </div>
     </aside>
@@ -45,11 +42,13 @@
 </template>
 
 <script setup lang="ts">
+import '@/components/automation/phase7/airtable.css';
+
 const navItems = [
-  { to: '/automation/bot/triggers',   label: 'Kịch bản',                  icon: 'mdi-lightning-bolt',          color: '#0EA5E9' },
-  { to: '/automation/bot/blocks',     label: 'Thư viện block',            icon: 'mdi-puzzle',                  color: '#8B5CF6' },
-  { to: '/automation/bot/sequences',  label: 'Kịch bản chăm sóc',         icon: 'mdi-format-list-numbered',    color: '#10B981' },
-  { to: '/automation/bot/broadcasts', label: 'Broadcast & Re-marketing',  icon: 'mdi-bullhorn',                color: '#F59E0B' },
+  { to: '/automation/bot/triggers',   label: 'Kịch bản',                  icon: 'mdi-lightning-bolt' },
+  { to: '/automation/bot/blocks',     label: 'Thư viện block',            icon: 'mdi-puzzle' },
+  { to: '/automation/bot/sequences',  label: 'Kịch bản chăm sóc',         icon: 'mdi-format-list-numbered' },
+  { to: '/automation/bot/broadcasts', label: 'Broadcast & Re-marketing',  icon: 'mdi-bullhorn' },
 ];
 </script>
 
@@ -57,45 +56,47 @@ const navItems = [
 .bot-auto-shell {
   display: flex;
   height: calc(100vh - 64px);
-  background: #F6F8FC;
 }
 
 .bot-auto-sidebar {
-  width: 248px;
+  width: 240px;
   flex-shrink: 0;
-  background: rgb(var(--v-theme-surface));
-  border-right: 1px solid rgba(var(--v-theme-on-surface), 0.06);
+  background: var(--at-canvas);
+  border-right: 1px solid var(--at-hairline);
   display: flex;
   flex-direction: column;
-  padding: 18px 14px;
-  gap: 18px;
+  padding: var(--at-s-lg) var(--at-s-md);
+  gap: var(--at-s-lg);
   overflow-y: auto;
 }
 
 .sidebar-header {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 4px 6px;
+  gap: var(--at-s-sm);
+  padding: 0 var(--at-s-xxs);
 }
 .sidebar-logo {
-  width: 36px; height: 36px;
-  border-radius: 10px;
-  background: rgba(var(--v-theme-primary), 0.1);
+  width: 40px;
+  height: 40px;
+  border-radius: var(--at-r-md);
+  background: var(--at-ink);
+  color: var(--at-on-primary);
   display: inline-flex;
   align-items: center;
   justify-content: center;
 }
 .sidebar-title {
-  font-size: 15px;
-  font-weight: 700;
-  color: rgb(var(--v-theme-on-surface));
+  font-size: 18px;
+  font-weight: 500;
   line-height: 1.2;
+  color: var(--at-ink);
 }
 .sidebar-subtitle {
-  font-size: 11px;
-  color: rgba(var(--v-theme-on-surface), 0.55);
-  margin-top: 1px;
+  font-size: 12px;
+  color: var(--at-muted);
+  margin-top: 2px;
+  letter-spacing: 0.16px;
 }
 
 .sidebar-nav {
@@ -106,70 +107,57 @@ const navItems = [
 .sidebar-link {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 9px 12px;
-  border-radius: 10px;
-  color: rgba(var(--v-theme-on-surface), 0.78);
-  font-size: 13.5px;
+  gap: var(--at-s-sm);
+  padding: 10px 12px;
+  border-radius: var(--at-r-sm);
+  color: var(--at-body);
+  font-size: 14px;
   font-weight: 500;
   text-decoration: none;
-  transition: all 0.12s;
+  border: 1px solid transparent;
 }
-.sidebar-link:hover {
-  background: rgba(var(--v-theme-on-surface), 0.04);
-  color: rgb(var(--v-theme-on-surface));
+.sidebar-link:active {
+  background: var(--at-surface-soft);
 }
 .sidebar-link.is-active {
-  background: rgba(var(--v-theme-primary), 0.08);
-  color: rgb(var(--v-theme-primary));
-  font-weight: 600;
+  background: var(--at-ink);
+  color: var(--at-on-primary);
+  border-color: var(--at-ink);
 }
 .sidebar-link__icon {
-  width: 28px; height: 28px;
-  border-radius: 8px;
-  background: rgba(var(--icon-color, 100, 100, 100), 0.12);
-  color: var(--icon-color);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
   flex-shrink: 0;
-}
-.sidebar-link.is-active .sidebar-link__icon {
-  background: var(--icon-color);
-  color: white;
 }
 
 .sidebar-footer {
   margin-top: auto;
 }
-.footer-card {
-  display: flex;
-  gap: 8px;
-  padding: 12px;
-  background: rgba(var(--v-theme-primary), 0.05);
-  border: 1px solid rgba(var(--v-theme-primary), 0.12);
-  border-radius: 10px;
-  font-size: 11.5px;
+.sidebar-foot-card {
+  padding: var(--at-s-md);
+  background: var(--at-cream);
+  border-radius: var(--at-r-md);
 }
-.footer-card__title {
-  font-weight: 600;
-  color: rgba(var(--v-theme-on-surface), 0.85);
-  margin-bottom: 2px;
+.sidebar-foot-card__title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--at-ink);
+  margin-bottom: 4px;
 }
-.footer-card__desc {
-  color: rgba(var(--v-theme-on-surface), 0.6);
-  line-height: 1.4;
+.sidebar-foot-card__desc {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--at-body);
+  margin: 0;
 }
 
 .bot-auto-content {
   flex: 1;
-  padding: 24px 32px;
+  padding: var(--at-s-xxl) var(--at-s-xxl);
   overflow-y: auto;
-  background: #F6F8FC;
+  background: var(--at-canvas);
 }
 
 @media (max-width: 900px) {
-  .bot-auto-sidebar { width: 200px; padding: 12px 8px; }
-  .bot-auto-content { padding: 16px; }
+  .bot-auto-sidebar { width: 200px; padding: var(--at-s-md) var(--at-s-sm); }
+  .bot-auto-content { padding: var(--at-s-md); }
 }
 </style>

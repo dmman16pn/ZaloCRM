@@ -57,13 +57,23 @@
               <span class="ic">⚙</span>Cài đặt<span class="caret">▾</span>
             </button>
           </template>
-          <v-list density="compact" min-width="220">
-            <v-list-item to="/zalo-accounts" title="Tài khoản Zalo" prepend-icon="mdi-cellphone-link" />
-            <v-list-item to="/api-settings" title="API &amp; Webhook" prepend-icon="mdi-api" />
-            <v-list-item to="/integrations" title="Tích hợp" prepend-icon="mdi-connection" />
+          <v-list density="compact" min-width="240">
+            <v-list-item to="/settings/personal/profile" title="Hồ sơ của tôi" prepend-icon="mdi-account-circle-outline" />
             <v-divider />
-            <v-list-item to="/settings" title="Nhân viên" prepend-icon="mdi-account-cog-outline" />
-            <v-list-item to="/settings?tab=roles" title="Phân quyền" prepend-icon="mdi-shield-account-outline" />
+            <v-list-subheader>Tổ chức &amp; Nhân sự</v-list-subheader>
+            <v-list-item to="/settings/team/users" title="Nhân viên" prepend-icon="mdi-account-cog-outline" />
+            <v-list-item to="/settings/team/teams" title="Đội nhóm" prepend-icon="mdi-account-group-outline" />
+            <v-list-item to="/settings/team/roles" title="Vai trò &amp; Phân quyền" prepend-icon="mdi-shield-account-outline" />
+            <v-divider />
+            <v-list-subheader>CRM &amp; Kênh</v-list-subheader>
+            <v-list-item to="/settings/crm/tags" title="Tag CRM" prepend-icon="mdi-tag-multiple-outline" />
+            <v-list-item to="/settings/crm/scoring" title="Lead scoring" prepend-icon="mdi-chart-line" />
+            <v-list-item to="/settings/channels/zalo" title="Tài khoản Zalo" prepend-icon="mdi-cellphone-link" />
+            <v-list-item to="/settings/channels/integrations" title="Tích hợp" prepend-icon="mdi-connection" />
+            <v-divider />
+            <v-list-item to="/settings/dev/api" title="API &amp; Webhook" prepend-icon="mdi-api" />
+            <v-divider />
+            <v-list-item to="/settings" title="📋 Xem tất cả cài đặt" prepend-icon="mdi-cog-outline" />
           </v-list>
         </v-menu>
       </nav>
@@ -166,9 +176,7 @@ function isActive(tab: NavTab): boolean {
   return route.path === tab.path || route.path.startsWith(tab.path + '/');
 }
 const isSettingsActive = computed(() =>
-  ['/settings', '/api-settings', '/integrations', '/zalo-accounts'].some(p =>
-    route.path === p || route.path.startsWith(p + '/'),
-  ),
+  route.path === '/settings' || route.path.startsWith('/settings/'),
 );
 // Highlight legacy Automation dropdown ONLY when on /automation (exact) — do NOT
 // activate when on /automation/bot/* (that's the top-level Bot-Auto tab).

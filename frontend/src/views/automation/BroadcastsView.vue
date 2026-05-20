@@ -1,21 +1,19 @@
 <template>
   <div class="broadcasts-view">
-    <div class="page-header mb-5">
+    <header class="at-page-header">
       <div>
-        <h1 class="page-title">Broadcast & Re-marketing</h1>
-        <p class="page-subtitle">
+        <h1 class="at-page-title">Broadcast &amp; Re-marketing</h1>
+        <p class="at-page-subtitle">
           Mass send qua Zalo cá nhân với pacing per-nick (cap, hour range, throttle, random delay).
+          Mỗi broadcast = 1 block + 1 segment + lịch chạy.
         </p>
       </div>
-      <v-chip color="warning" variant="tonal" size="small">
-        <v-icon start size="small">mdi-progress-wrench</v-icon>
-        Đang phát triển — Phase F
-      </v-chip>
-    </div>
+      <span class="at-chip">Đang phát triển · Phase F</span>
+    </header>
 
-    <div class="placeholder-card">
+    <div class="placeholder-card at-card at-card--lg">
       <div class="placeholder-icon">
-        <v-icon size="40" color="warning">mdi-bullhorn</v-icon>
+        <v-icon size="36">mdi-bullhorn-outline</v-icon>
       </div>
       <h2 class="placeholder-title">Phase F sẽ ship sau</h2>
       <p class="placeholder-desc">
@@ -26,28 +24,28 @@
 
       <div class="placeholder-grid">
         <div class="placeholder-item">
-          <v-icon size="20" color="success">mdi-check-circle</v-icon>
+          <v-icon size="18" color="success">mdi-check-circle</v-icon>
           <div>
             <strong>Schema sẵn</strong>
             <span>7 cột, indexed, ready</span>
           </div>
         </div>
         <div class="placeholder-item">
-          <v-icon size="20" color="success">mdi-check-circle</v-icon>
+          <v-icon size="18" color="success">mdi-check-circle</v-icon>
           <div>
             <strong>Engine hỗ trợ</strong>
             <span>Campaign materializer xử lý broadcastId</span>
           </div>
         </div>
         <div class="placeholder-item">
-          <v-icon size="20" color="warning">mdi-progress-clock</v-icon>
+          <v-icon size="18" style="color: var(--at-mustard)">mdi-progress-clock</v-icon>
           <div>
             <strong>CRUD UI</strong>
             <span>Cần build</span>
           </div>
         </div>
         <div class="placeholder-item">
-          <v-icon size="20" color="warning">mdi-progress-clock</v-icon>
+          <v-icon size="18" style="color: var(--at-mustard)">mdi-progress-clock</v-icon>
           <div>
             <strong>Pacing scheduler</strong>
             <span>Cần build cron + token bucket</span>
@@ -60,57 +58,50 @@
 
 <style scoped>
 .broadcasts-view { max-width: 1080px; }
-.page-header {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 16px;
-}
-.page-title { font-size: 22px; font-weight: 700; margin: 0 0 4px; color: rgb(var(--v-theme-on-surface)); }
-.page-subtitle { margin: 0; font-size: 13px; color: rgba(var(--v-theme-on-surface), 0.6); }
 
 .placeholder-card {
-  background: rgb(var(--v-theme-surface));
-  border: 1px dashed rgba(var(--v-theme-on-surface), 0.15);
-  border-radius: 16px;
-  padding: 48px 32px;
   text-align: center;
+  padding: var(--at-s-xxl) var(--at-s-xl);
   max-width: 720px;
   margin: 0 auto;
+  border-style: dashed;
 }
 .placeholder-icon {
-  width: 72px; height: 72px;
-  border-radius: 16px;
-  background: rgba(245, 158, 11, 0.1);
+  width: 64px;
+  height: 64px;
+  border-radius: var(--at-r-md);
+  background: var(--at-cream);
+  color: var(--at-mustard);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  margin-bottom: 16px;
+  margin-bottom: var(--at-s-md);
 }
 .placeholder-title {
   font-size: 20px;
-  font-weight: 700;
-  margin: 0 0 8px;
-  color: rgb(var(--v-theme-on-surface));
+  font-weight: 500;
+  margin: 0 0 var(--at-s-xs);
+  color: var(--at-ink);
 }
 .placeholder-desc {
   font-size: 14px;
-  color: rgba(var(--v-theme-on-surface), 0.65);
+  color: var(--at-body);
   line-height: 1.5;
   max-width: 520px;
-  margin: 0 auto 24px;
+  margin: 0 auto var(--at-s-lg);
 }
 .placeholder-desc code {
-  background: rgba(var(--v-theme-on-surface), 0.06);
+  background: var(--at-surface-soft);
   padding: 1px 6px;
-  border-radius: 4px;
+  border-radius: var(--at-r-xs);
   font-size: 12px;
+  border: 1px solid var(--at-hairline);
 }
 
 .placeholder-grid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
-  gap: 12px;
+  gap: var(--at-s-sm);
   text-align: left;
   max-width: 480px;
   margin: 0 auto;
@@ -118,20 +109,21 @@
 .placeholder-item {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
-  background: rgba(var(--v-theme-on-surface), 0.03);
-  border-radius: 10px;
+  gap: var(--at-s-sm);
+  padding: var(--at-s-sm);
+  background: var(--at-surface-soft);
+  border-radius: var(--at-r-md);
 }
 .placeholder-item strong {
   display: block;
   font-size: 13px;
-  color: rgb(var(--v-theme-on-surface));
+  font-weight: 500;
+  color: var(--at-ink);
 }
 .placeholder-item span {
   display: block;
-  font-size: 11.5px;
-  color: rgba(var(--v-theme-on-surface), 0.55);
-  margin-top: 1px;
+  font-size: 12px;
+  color: var(--at-muted);
+  margin-top: 2px;
 }
 </style>

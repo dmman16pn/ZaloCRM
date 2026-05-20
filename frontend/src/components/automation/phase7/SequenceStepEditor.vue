@@ -245,23 +245,24 @@ function removeStep(idx: number) {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  padding: 10px 18px;
-  border-radius: 999px;
+  padding: 8px 16px;
+  border-radius: var(--at-r-pill);
   font-size: 13px;
   font-weight: 500;
 }
 .start-node {
-  background: rgba(16, 185, 129, 0.12);
-  color: rgb(16, 185, 129);
+  background: var(--at-cream);
+  color: var(--at-ink);
 }
 .end-node {
-  background: rgba(var(--v-theme-on-surface), 0.06);
-  color: rgba(var(--v-theme-on-surface), 0.55);
+  background: var(--at-surface-soft);
+  color: var(--at-muted);
+  border: 1px solid var(--at-hairline);
 }
 
 .flow-connector {
   position: relative;
-  height: 56px;
+  height: 48px;
   width: 100%;
   display: flex;
   align-items: center;
@@ -272,22 +273,21 @@ function removeStep(idx: number) {
   top: 0;
   bottom: 0;
   left: 50%;
-  width: 2px;
-  background: linear-gradient(180deg, rgba(var(--v-theme-on-surface), 0.2) 0%, rgba(var(--v-theme-on-surface), 0.1) 100%);
-  transform: translateX(-50%);
+  width: 1px;
+  background: var(--at-hairline);
+  transform: translateX(-0.5px);
 }
 .delay-pill {
   position: relative;
-  background: rgb(var(--v-theme-surface));
-  border: 1px solid rgba(var(--v-theme-on-surface), 0.12);
-  padding: 4px 12px 4px 8px;
-  border-radius: 999px;
+  background: var(--at-canvas);
+  border: 1px solid var(--at-hairline);
+  padding: 4px 10px 4px 8px;
+  border-radius: var(--at-r-pill);
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   font-size: 12px;
-  color: rgba(var(--v-theme-on-surface), 0.75);
-  box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+  color: var(--at-body);
 }
 .delay-input {
   width: 56px !important;
@@ -298,21 +298,21 @@ function removeStep(idx: number) {
   padding: 0 !important;
   min-height: unset !important;
   height: 20px !important;
+  color: var(--at-ink);
 }
-.delay-unit { color: rgba(var(--v-theme-on-surface), 0.55); }
+.delay-unit { color: var(--at-muted); }
 
 .step-card {
   width: 100%;
-  background: rgb(var(--v-theme-surface));
-  border: 1px solid rgba(var(--v-theme-on-surface), 0.1);
-  border-radius: 14px;
-  padding: 14px 16px;
+  background: var(--at-canvas);
+  border: 1px solid var(--at-hairline);
+  border-radius: var(--at-r-md);
+  padding: var(--at-s-sm) var(--at-s-md);
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--at-s-sm);
   position: relative;
-  transition: all 0.15s;
-  box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+  transition: border-color 0.1s;
 }
 .step-card::before {
   content: '';
@@ -322,21 +322,18 @@ function removeStep(idx: number) {
   border-radius: 2px;
   background: var(--card-accent);
 }
-.step-card:hover {
-  border-color: var(--card-accent);
-  box-shadow: 0 6px 16px -6px rgba(0,0,0,0.1);
-}
+.step-card:hover { border-color: var(--card-accent); }
 .step-card.is-broken {
-  opacity: 0.7;
-  background: rgba(244, 67, 54, 0.04);
+  opacity: 0.6;
+  background: rgba(170, 45, 0, 0.04);
 }
 
 .step-card__num {
   width: 28px; height: 28px;
-  border-radius: 8px;
+  border-radius: var(--at-r-sm);
   background: var(--card-tint);
   color: var(--card-text);
-  font-weight: 700;
+  font-weight: 500;
   font-size: 13px;
   display: inline-flex;
   align-items: center;
@@ -345,9 +342,9 @@ function removeStep(idx: number) {
 }
 .step-card__icon {
   width: 40px; height: 40px;
-  border-radius: 10px;
+  border-radius: var(--at-r-md);
   background: var(--card-accent);
-  color: white;
+  color: var(--at-on-primary);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -356,23 +353,23 @@ function removeStep(idx: number) {
 .step-card__body { flex: 1; min-width: 0; }
 .step-card__label {
   font-size: 10.5px;
-  font-weight: 600;
+  font-weight: 500;
   text-transform: uppercase;
-  letter-spacing: 0.6px;
-  color: rgba(var(--v-theme-on-surface), 0.5);
+  letter-spacing: 0.5px;
+  color: var(--at-muted);
 }
 .step-card__title {
-  font-size: 14.5px;
-  font-weight: 600;
-  color: rgb(var(--v-theme-on-surface));
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--at-ink);
   margin-top: 1px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .step-card__warn {
-  font-size: 11.5px;
-  color: rgb(244, 67, 54);
+  font-size: 12px;
+  color: var(--at-coral);
   margin-top: 4px;
   display: inline-flex;
   align-items: center;
@@ -386,14 +383,14 @@ function removeStep(idx: number) {
 }
 
 .add-step-wrap {
-  margin-top: 16px;
+  margin-top: var(--at-s-md);
 }
 
 .block-picker-grid {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  max-height: 400px;
+  gap: 4px;
+  max-height: 360px;
   overflow-y: auto;
 }
 .picker-item {
@@ -401,13 +398,13 @@ function removeStep(idx: number) {
   align-items: center;
   gap: 12px;
   padding: 10px 12px;
-  background: rgb(var(--v-theme-surface));
-  border: 1px solid rgba(var(--v-theme-on-surface), 0.08);
-  border-radius: 10px;
+  background: var(--at-canvas);
+  border: 1px solid var(--at-hairline);
+  border-radius: var(--at-r-md);
   cursor: pointer;
-  transition: all 0.1s;
   text-align: left;
   width: 100%;
+  font-family: inherit;
 }
 .picker-item:hover {
   background: var(--pick-bg);
@@ -415,7 +412,7 @@ function removeStep(idx: number) {
 }
 .picker-item__icon {
   width: 32px; height: 32px;
-  border-radius: 8px;
+  border-radius: var(--at-r-sm);
   background: var(--pick-bg);
   color: var(--pick-text);
   display: inline-flex;
@@ -425,13 +422,13 @@ function removeStep(idx: number) {
 }
 .picker-item__body { flex: 1; min-width: 0; }
 .picker-item__name {
-  font-size: 13.5px;
+  font-size: 14px;
   font-weight: 500;
-  color: rgb(var(--v-theme-on-surface));
+  color: var(--at-ink);
 }
 .picker-item__type {
-  font-size: 11px;
-  color: rgba(var(--v-theme-on-surface), 0.55);
+  font-size: 12px;
+  color: var(--at-muted);
   margin-top: 1px;
 }
 </style>

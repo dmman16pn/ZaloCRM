@@ -1,81 +1,95 @@
 <template>
   <div class="blocks-view">
-    <div class="page-header mb-5">
+    <header class="at-page-header">
       <div>
-        <h1 class="page-title">Thư viện block</h1>
-        <p class="page-subtitle">
-          Block là đơn vị action nhỏ nhất (gửi tin, kết bạn, đổi status...). Dùng lại trong nhiều Sequence / Broadcast.
+        <h1 class="at-page-title">Thư viện block</h1>
+        <p class="at-page-subtitle">
+          Block là đơn vị action nhỏ nhất (gửi tin, kết bạn, đổi status...).
+          Tạo 1 lần, tái sử dụng trong nhiều Sequence và Broadcast.
         </p>
       </div>
-      <v-btn color="primary" variant="elevated" prepend-icon="mdi-plus" @click="openCreate">Tạo Block</v-btn>
-    </div>
+      <button class="at-btn at-btn--primary" @click="openCreate">
+        <v-icon size="18">mdi-plus</v-icon>
+        Tạo Block
+      </button>
+    </header>
 
     <div class="layout-2col">
-      <!-- ─── Folder sidebar ─── -->
       <aside class="folder-sidebar">
         <div class="folder-sidebar__head">
           <span class="folder-sidebar__title">Folder</span>
-          <v-btn icon size="small" variant="text" @click="createFolderInline" title="Tạo folder">
-            <v-icon size="18">mdi-folder-plus</v-icon>
-          </v-btn>
+          <button class="at-btn at-btn--ghost at-btn--xs" @click="createFolderInline" title="Tạo folder">
+            <v-icon size="16">mdi-folder-plus-outline</v-icon>
+          </button>
         </div>
-
         <ul class="folder-list">
           <li>
             <button class="folder-item" :class="{ 'is-active': !selectedFolderId && !showArchived }" @click="onSelectAll">
-              <v-icon size="16" class="mr-2">mdi-view-grid-outline</v-icon>
+              <v-icon size="16">mdi-view-grid-outline</v-icon>
               <span class="folder-item__label">Tất cả</span>
               <span class="folder-item__count">{{ allCount }}</span>
             </button>
           </li>
           <li v-for="folder in folders" :key="folder.id">
             <button class="folder-item" :class="{ 'is-active': selectedFolderId === folder.id }" @click="onSelectFolder(folder.id)">
-              <v-icon size="16" class="mr-2">mdi-folder</v-icon>
+              <v-icon size="16">mdi-folder-outline</v-icon>
               <span class="folder-item__label">{{ folder.name }}</span>
               <span class="folder-item__count">{{ folder._count?.blocks ?? 0 }}</span>
             </button>
           </li>
+          <li class="folder-divider"><hr class="at-hairline" /></li>
           <li>
-            <button class="folder-item folder-item--archived" :class="{ 'is-active': showArchived }" @click="onSelectArchived">
-              <v-icon size="16" class="mr-2">mdi-archive-outline</v-icon>
+            <button class="folder-item" :class="{ 'is-active': showArchived }" @click="onSelectArchived">
+              <v-icon size="16">mdi-archive-outline</v-icon>
               <span class="folder-item__label">Đã archive</span>
             </button>
           </li>
         </ul>
       </aside>
 
-      <!-- ─── Block list ─── -->
       <section class="block-list-section">
-        <div class="block-toolbar mb-3">
+        <div class="block-toolbar">
           <div class="block-toolbar__title">
             {{ selectedFolderName }}
-            <span class="block-toolbar__count">{{ filteredBlocks.length }}</span>
+            <span class="at-chip block-toolbar__count">{{ filteredBlocks.length }}</span>
           </div>
-          <v-chip-group v-model="actionTypeFilter" mandatory>
-            <v-chip value="all" size="small" variant="elevated">Tất cả</v-chip>
-            <v-chip
+          <div class="block-toolbar__filters">
+            <button
+              class="filter-chip"
+              :class="{ 'is-active': actionTypeFilter === 'all' }"
+              @click="actionTypeFilter = 'all'"
+            >
+              Tất cả
+            </button>
+            <button
               v-for="type in actionTypeChips"
               :key="type.value"
-              :value="type.value"
-              size="small"
-              variant="elevated"
-              :prepend-icon="type.icon"
+              class="filter-chip"
+              :class="{ 'is-active': actionTypeFilter === type.value }"
+              @click="actionTypeFilter = type.value"
             >
+              <v-icon size="14">{{ type.icon }}</v-icon>
               {{ type.label }}
-            </v-chip>
-          </v-chip-group>
+            </button>
+          </div>
         </div>
 
-        <div v-if="loading" class="loading-state">
+        <div v-if="loading" class="at-empty">
           <v-progress-circular indeterminate size="28" color="primary" />
         </div>
 
-        <div v-else-if="filteredBlocks.length === 0" class="empty-block-state">
-          <v-icon size="48" color="grey-lighten-1">mdi-puzzle-outline</v-icon>
-          <p class="mt-2">{{ showArchived ? 'Không có block nào đã archive' : 'Chưa có block nào ở đây' }}</p>
-          <v-btn v-if="!showArchived" color="primary" variant="tonal" prepend-icon="mdi-plus" @click="openCreate" class="mt-2">
+        <div v-else-if="filteredBlocks.length === 0" class="at-empty">
+          <v-icon size="48">mdi-puzzle-outline</v-icon>
+          <div class="at-empty__title">
+            {{ showArchived ? 'Không có block nào đã archive' : 'Chưa có block nào ở đây' }}
+          </div>
+          <p v-if="!showArchived" class="at-empty__desc">
+            Block là viên gạch của Sequence/Broadcast. Bắt đầu bằng "Gửi tin nhắn" hoặc "Đổi trạng thái".
+          </p>
+          <button v-if="!showArchived" class="at-btn at-btn--primary" @click="openCreate">
+            <v-icon size="18">mdi-plus</v-icon>
             Tạo block đầu tiên
-          </v-btn>
+          </button>
         </div>
 
         <div v-else class="block-grid">
@@ -83,7 +97,11 @@
             v-for="block in filteredBlocks"
             :key="block.id"
             class="block-card"
-            :style="cardStyleFor(block.actionType)"
+            :style="{
+              '--card-accent': ACTION_TYPE_COLOR[block.actionType].bg,
+              '--card-tint': ACTION_TYPE_COLOR[block.actionType].tint,
+              '--card-text': ACTION_TYPE_COLOR[block.actionType].text,
+            }"
             :class="{ 'is-archived': block.archivedAt }"
           >
             <div class="block-card__icon">
@@ -92,26 +110,26 @@
             <div class="block-card__body">
               <div class="block-card__name">{{ block.name }}</div>
               <div class="block-card__meta">
-                <span class="block-card__type">{{ ACTION_TYPE_LABELS[block.actionType] }}</span>
-                <span v-if="block.usageCount > 0" class="block-card__usage">
+                <span>{{ ACTION_TYPE_LABELS[block.actionType] }}</span>
+                <span v-if="block.usageCount > 0" class="meta-usage">
                   <v-icon size="11">mdi-link-variant</v-icon> {{ block.usageCount }}
                 </span>
-                <span v-if="block.archivedAt" class="block-card__archived-badge">archived</span>
+                <span v-if="block.archivedAt" class="meta-archived">archived</span>
               </div>
             </div>
             <div class="block-card__actions">
-              <v-btn icon size="x-small" variant="text" @click="openEdit(block)" title="Sửa">
+              <button class="at-btn at-btn--ghost at-btn--xs" @click="openEdit(block)" title="Sửa">
                 <v-icon size="16">mdi-pencil-outline</v-icon>
-              </v-btn>
-              <v-btn icon size="x-small" variant="text" @click="onDuplicate(block)" title="Nhân bản">
+              </button>
+              <button class="at-btn at-btn--ghost at-btn--xs" @click="onDuplicate(block)" title="Nhân bản">
                 <v-icon size="16">mdi-content-copy</v-icon>
-              </v-btn>
-              <v-btn v-if="!block.archivedAt" icon size="x-small" variant="text" @click="onArchive(block)" title="Archive">
+              </button>
+              <button v-if="!block.archivedAt" class="at-btn at-btn--ghost at-btn--xs" @click="onArchive(block)" title="Archive">
                 <v-icon size="16">mdi-archive-arrow-down-outline</v-icon>
-              </v-btn>
-              <v-btn v-else icon size="x-small" variant="text" color="success" @click="onUnarchive(block)" title="Bỏ archive">
+              </button>
+              <button v-else class="at-btn at-btn--ghost at-btn--xs" @click="onUnarchive(block)" title="Bỏ archive">
                 <v-icon size="16">mdi-archive-arrow-up-outline</v-icon>
-              </v-btn>
+              </button>
             </div>
           </article>
         </div>
@@ -180,11 +198,6 @@ const filteredBlocks = computed(() => {
   });
 });
 
-function cardStyleFor(actionType: BlockActionType): Record<string, string> {
-  const c = ACTION_TYPE_COLOR[actionType];
-  return { '--card-accent': c.bg, '--card-tint': c.tint, '--card-text': c.text };
-}
-
 function onSelectAll() { selectedFolderId.value = null; showArchived.value = false; }
 function onSelectFolder(id: string) { selectedFolderId.value = id; showArchived.value = false; }
 function onSelectArchived() { showArchived.value = true; selectedFolderId.value = null; }
@@ -207,14 +220,8 @@ async function loadAll() {
 
 onMounted(loadAll);
 
-function openCreate() {
-  editingBlock.value = null;
-  editorOpen.value = true;
-}
-function openEdit(block: Block) {
-  editingBlock.value = block;
-  editorOpen.value = true;
-}
+function openCreate() { editingBlock.value = null; editorOpen.value = true; }
+function openEdit(block: Block) { editingBlock.value = block; editorOpen.value = true; }
 
 function showToast(msg: string, color: 'success' | 'error' | 'info' = 'info') {
   toastMsg.value = msg; toastColor.value = color; toastOpen.value = true;
@@ -251,26 +258,17 @@ async function createFolderInline() {
 <style scoped>
 .blocks-view { max-width: 1280px; }
 
-.page-header {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 16px;
-}
-.page-title { font-size: 22px; font-weight: 700; margin: 0 0 4px; color: rgb(var(--v-theme-on-surface)); }
-.page-subtitle { margin: 0; font-size: 13px; color: rgba(var(--v-theme-on-surface), 0.6); }
-
 .layout-2col {
   display: grid;
   grid-template-columns: 240px 1fr;
-  gap: 24px;
+  gap: var(--at-s-lg);
 }
 
 .folder-sidebar {
-  background: rgb(var(--v-theme-surface));
-  border: 1px solid rgba(var(--v-theme-on-surface), 0.06);
-  border-radius: 12px;
-  padding: 14px 12px;
+  background: var(--at-canvas);
+  border: 1px solid var(--at-hairline);
+  border-radius: var(--at-r-md);
+  padding: var(--at-s-sm);
   height: fit-content;
   position: sticky;
   top: 12px;
@@ -279,112 +277,124 @@ async function createFolderInline() {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 8px;
-  padding: 0 4px;
+  margin-bottom: var(--at-s-xs);
+  padding: 0 var(--at-s-xxs);
 }
 .folder-sidebar__title {
   font-size: 11px;
-  font-weight: 700;
+  font-weight: 500;
   text-transform: uppercase;
   letter-spacing: 0.6px;
-  color: rgba(var(--v-theme-on-surface), 0.55);
+  color: var(--at-muted);
 }
 
-.folder-list { list-style: none; padding: 0; margin: 0; }
-.folder-list li { margin: 0; }
+.folder-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 2px; }
+.folder-divider { padding: var(--at-s-xxs) 0; }
 .folder-item {
   width: 100%;
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 10px;
   padding: 8px 10px;
   background: transparent;
   border: 0;
-  border-radius: 8px;
+  border-radius: var(--at-r-sm);
   cursor: pointer;
-  font-size: 13px;
-  color: rgba(var(--v-theme-on-surface), 0.78);
+  font-size: 14px;
+  color: var(--at-body);
   text-align: left;
-  transition: background 0.1s;
+  font-family: inherit;
 }
-.folder-item:hover {
-  background: rgba(var(--v-theme-on-surface), 0.04);
-}
+.folder-item:hover { background: var(--at-surface-soft); }
 .folder-item.is-active {
-  background: rgba(var(--v-theme-primary), 0.1);
-  color: rgb(var(--v-theme-primary));
-  font-weight: 600;
+  background: var(--at-ink);
+  color: var(--at-on-primary);
 }
 .folder-item__label { flex: 1; }
 .folder-item__count {
   font-size: 11px;
-  color: rgba(var(--v-theme-on-surface), 0.45);
-  background: rgba(var(--v-theme-on-surface), 0.06);
+  color: var(--at-muted);
+  background: var(--at-surface-soft);
   padding: 2px 7px;
-  border-radius: 8px;
+  border-radius: var(--at-r-pill);
 }
 .folder-item.is-active .folder-item__count {
-  color: rgb(var(--v-theme-primary));
-  background: rgba(var(--v-theme-primary), 0.15);
+  color: var(--at-on-primary);
+  background: rgba(255,255,255,0.15);
 }
-.folder-item--archived { margin-top: 8px; border-top: 1px dashed rgba(var(--v-theme-on-surface), 0.1); padding-top: 12px; }
 
 .block-toolbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
   flex-wrap: wrap;
-  gap: 12px;
+  gap: var(--at-s-sm);
+  margin-bottom: var(--at-s-md);
 }
 .block-toolbar__title {
-  font-size: 16px;
-  font-weight: 600;
-  color: rgb(var(--v-theme-on-surface));
+  font-size: 18px;
+  font-weight: 500;
+  color: var(--at-ink);
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
-.block-toolbar__count {
-  font-size: 12px;
-  margin-left: 8px;
-  background: rgba(var(--v-theme-on-surface), 0.06);
-  padding: 2px 8px;
-  border-radius: 10px;
-  color: rgba(var(--v-theme-on-surface), 0.55);
+.block-toolbar__filters {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.filter-chip {
+  background: var(--at-canvas);
+  color: var(--at-body);
+  border: 1px solid var(--at-hairline);
+  border-radius: var(--at-r-pill);
+  padding: 6px 12px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: inherit;
+}
+.filter-chip.is-active {
+  background: var(--at-ink);
+  color: var(--at-on-primary);
+  border-color: var(--at-ink);
 }
 
 .block-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 10px;
+  gap: var(--at-s-xs);
 }
 .block-card {
-  background: rgb(var(--v-theme-surface));
-  border: 1px solid rgba(var(--v-theme-on-surface), 0.08);
-  border-radius: 12px;
-  padding: 12px;
+  background: var(--at-canvas);
+  border: 1px solid var(--at-hairline);
+  border-radius: var(--at-r-md);
+  padding: var(--at-s-sm);
   display: flex;
   align-items: center;
-  gap: 12px;
-  transition: all 0.12s;
+  gap: var(--at-s-sm);
   position: relative;
+  transition: border-color 0.1s;
 }
 .block-card::before {
   content: '';
   position: absolute;
-  left: 0; top: 12px; bottom: 12px;
+  left: 0; top: var(--at-s-sm); bottom: var(--at-s-sm);
   width: 3px;
   border-radius: 2px;
   background: var(--card-accent);
-  opacity: 0.85;
 }
-.block-card:hover {
-  border-color: var(--card-accent);
-  box-shadow: 0 6px 16px -6px rgba(0,0,0,0.1);
-  transform: translateY(-1px);
-}
-.block-card.is-archived { opacity: 0.6; }
+.block-card:hover { border-color: var(--card-accent); }
+.block-card.is-archived { opacity: 0.55; }
 
 .block-card__icon {
-  width: 40px; height: 40px;
-  border-radius: 10px;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--at-r-md);
   background: var(--card-tint);
   color: var(--card-text);
   display: inline-flex;
@@ -395,8 +405,8 @@ async function createFolderInline() {
 .block-card__body { flex: 1; min-width: 0; }
 .block-card__name {
   font-size: 14px;
-  font-weight: 600;
-  color: rgb(var(--v-theme-on-surface));
+  font-weight: 500;
+  color: var(--at-ink);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -405,40 +415,28 @@ async function createFolderInline() {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-top: 3px;
-  font-size: 11.5px;
-  color: rgba(var(--v-theme-on-surface), 0.55);
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--at-muted);
 }
-.block-card__usage {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-}
-.block-card__archived-badge {
-  background: rgba(var(--v-theme-on-surface), 0.08);
+.meta-usage { display: inline-flex; align-items: center; gap: 2px; }
+.meta-archived {
+  background: var(--at-surface-soft);
   padding: 2px 6px;
-  border-radius: 6px;
+  border-radius: var(--at-r-sm);
   font-size: 10px;
-  font-weight: 600;
+  font-weight: 500;
   text-transform: uppercase;
   letter-spacing: 0.4px;
 }
 .block-card__actions {
   display: flex;
-  align-items: center;
   gap: 0;
   flex-shrink: 0;
   opacity: 0;
-  transition: opacity 0.12s;
+  transition: opacity 0.1s;
 }
 .block-card:hover .block-card__actions { opacity: 1; }
-
-.loading-state, .empty-block-state {
-  text-align: center;
-  padding: 64px 16px;
-  color: rgba(var(--v-theme-on-surface), 0.5);
-}
-.empty-block-state p { margin: 12px 0 0; }
 
 @media (max-width: 900px) {
   .layout-2col { grid-template-columns: 1fr; }
