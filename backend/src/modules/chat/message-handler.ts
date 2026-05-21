@@ -113,9 +113,11 @@ export async function handleIncomingMessage(
       });
       if (recentDupe) {
         if (!recentDupe.zaloMsgId && msg.msgId) {
+          // Update cả zaloMsgIdNum để row CRM-sent giờ có numeric Snowflake → sort đúng
+          const dupNum = /^\d+$/.test(msg.msgId) ? BigInt(msg.msgId) : null;
           await prisma.message.update({
             where: { id: recentDupe.id },
-            data: { zaloMsgId: msg.msgId },
+            data: { zaloMsgId: msg.msgId, zaloMsgIdNum: dupNum },
           }).catch(() => {});
         }
         logger.debug(`[message-handler] Skipping self echo: ${isAttachment ? 'attachment' : 'content'} match within 30s`);
@@ -125,11 +127,15 @@ export async function handleIncomingMessage(
 
     let message;
     try {
+      // zaloMsgIdNum = numeric form của Snowflake — primary sort key match Zalo Web.
+      // Parse fail → null (CRM-sent in-flight messages chưa có msgId).
+      const zaloMsgIdNum = msg.msgId && /^\d+$/.test(msg.msgId) ? BigInt(msg.msgId) : null;
       message = await prisma.message.create({
         data: {
           id: randomUUID(),
           conversationId: conversation.id,
           zaloMsgId: msg.msgId || null,
+          zaloMsgIdNum,
           senderType: msg.isSelf ? 'self' : 'contact',
           senderUid: msg.senderUid,
           senderName: msg.senderName || null,
@@ -178,7 +184,11 @@ export async function handleIncomingMessage(
         try {
           const { incrementDailyAggregate, messageEngagementInputs } =
             await import('../engagement/engagement-service.js');
-          const signals = messageEngagementInputs(message.contentType, msg.isSelf);
+          // hasQuote: KH dùng quote-reply (Zalo "trả lời tin nhắn") → quote payload non-null/non-empty
+          const q = (msg as any).quote;
+          const hasQuote = q !== undefined && q !== null
+            && (typeof q !== 'object' || Object.keys(q).length > 0);
+          const signals = messageEngagementInputs(message.contentType, msg.isSelf, hasQuote);
 
           // customerInitiated: KH nhắn trước trong ngày (chỉ khi inbound + chưa có activity nào hôm nay)
           let customerInitiated = false;
@@ -204,6 +214,8 @@ export async function handleIncomingMessage(
             outboundMsg: signals.outbound,
             mediaShare: signals.mediaShare,
             voiceMsg: signals.voiceMsg,
+            call: signals.call,
+            quoteReply: signals.quoteReply,
             customerInitiated,
           });
         } catch (err) {

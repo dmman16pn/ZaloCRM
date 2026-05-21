@@ -54,6 +54,8 @@ export async function registerEngagementRoutes(app: FastifyInstance): Promise<vo
         reactionCount: true,
         mediaShareCount: true,
         voiceMsgCount: true,
+        callCount: true,
+        quoteReplyCount: true,
         customerInitiated: true,
         dailyIntensity: true,
       },
@@ -72,6 +74,8 @@ export async function registerEngagementRoutes(app: FastifyInstance): Promise<vo
       reactionCount: number;
       mediaShareCount: number;
       voiceMsgCount: number;
+      callCount: number;
+      quoteReplyCount: number;
       customerInitiated: boolean;
       dailyIntensity: number;
     }> = [];
@@ -86,17 +90,21 @@ export async function registerEngagementRoutes(app: FastifyInstance): Promise<vo
         reactionCount: r?.reactionCount ?? 0,
         mediaShareCount: r?.mediaShareCount ?? 0,
         voiceMsgCount: r?.voiceMsgCount ?? 0,
+        callCount: r?.callCount ?? 0,
+        quoteReplyCount: r?.quoteReplyCount ?? 0,
         customerInitiated: r?.customerInitiated ?? false,
         dailyIntensity: r?.dailyIntensity ?? 0,
       });
     }
 
-    // Aggregate totals for breakdown box
+    // Aggregate totals for breakdown box (6 signal groups anh chốt 2026-05-21)
     let totalReactions = 0;
     let totalInbound = 0;
     let totalOutbound = 0;
     let totalMedia = 0;
     let totalVoice = 0;
+    let totalCalls = 0;
+    let totalQuoteReplies = 0;
     let daysInitiated = 0;
     for (const r of rows) {
       totalReactions += r.reactionCount;
@@ -104,6 +112,8 @@ export async function registerEngagementRoutes(app: FastifyInstance): Promise<vo
       totalOutbound += r.outboundMsgCount;
       totalMedia += r.mediaShareCount;
       totalVoice += r.voiceMsgCount;
+      totalCalls += r.callCount;
+      totalQuoteReplies += r.quoteReplyCount;
       if (r.customerInitiated) daysInitiated++;
     }
     const replyRate = totalOutbound > 0 ? Math.round((totalInbound / totalOutbound) * 100) : 0;
@@ -131,6 +141,8 @@ export async function registerEngagementRoutes(app: FastifyInstance): Promise<vo
         totalReactions,
         totalMedia,
         totalVoice,
+        totalCalls,
+        totalQuoteReplies,
         daysInitiated,
         replyRate,
         reactionRate,

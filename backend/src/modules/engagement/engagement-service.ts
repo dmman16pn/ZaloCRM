@@ -38,35 +38,61 @@ export interface IncrementInput {
   reaction?: number;
   mediaShare?: number;
   voiceMsg?: number;
+  call?: number;
+  quoteReply?: number;
   /** True nếu KH chủ động nhắn trong ngày (sale chưa ping trước) */
   customerInitiated?: boolean;
 }
 
-const MEDIA_TYPES = new Set(['image', 'video', 'file', 'voice', 'audio', 'sticker']);
+// 4. "File/ảnh/video" group — broad set, hiểu là mọi content non-text từ KH:
+// ảnh, video, file, voice/audio, location, contact_card, sticker, bank_transfer.
+const MEDIA_TYPES = new Set([
+  'image', 'video', 'file', 'voice', 'audio', 'sticker',
+  'location', 'contact_card', 'bank_transfer', 'gif',
+]);
 const VOICE_TYPES = new Set(['voice', 'audio']);
 
 /**
- * Map message contentType → engagement signals.
- * Used by message-handler hook.
+ * Map message contentType + quote → engagement signals (KH-side only).
+ *
+ * Signals tracked:
+ *   - inbound/outbound: every message
+ *   - mediaShare: KH gửi non-text (broad set, see MEDIA_TYPES)
+ *   - voiceMsg: KH gửi voice/audio recording (subset of media)
+ *   - call: KH start voice/video call (contentType='call')
+ *   - quoteReply: KH dùng quote-reply để phản hồi 1 tin của sale (strong intent)
  */
 export function messageEngagementInputs(
   contentType: string,
   isSelf: boolean,
-): { mediaShare: number; voiceMsg: number; inbound: number; outbound: number } {
+  hasQuote = false,
+): { mediaShare: number; voiceMsg: number; call: number; quoteReply: number; inbound: number; outbound: number } {
   const isMedia = MEDIA_TYPES.has(contentType);
   const isVoice = VOICE_TYPES.has(contentType);
+  const isCall = contentType === 'call';
   return {
     inbound: isSelf ? 0 : 1,
     outbound: isSelf ? 1 : 0,
-    // Media share counts only from customer (sale gửi ảnh không phải engagement signal)
+    // Các signal sau chỉ tính khi KH gửi (sale-side actions không phải engagement signal)
     mediaShare: !isSelf && isMedia ? 1 : 0,
     voiceMsg: !isSelf && isVoice ? 1 : 0,
+    call: !isSelf && isCall ? 1 : 0,
+    quoteReply: !isSelf && hasQuote ? 1 : 0,
   };
 }
 
 /**
  * Compute daily intensity score 0-100 from raw counters.
- * Weighted formula favoring high-signal events (voice, reaction).
+ *
+ * Weights — anh chốt 6 group signal 2026-05-21:
+ *   call         40  — cuộc gọi thật (effort cao nhất)
+ *   reaction     30  — KH thả tim, easy nhưng explicit
+ *   voiceMsg     30  — tin thoại ghi âm (KH effort cao)
+ *   quoteReply   25  — KH quote-reply có chủ ý (đọc + phản hồi)
+ *   customerInitiated 20 (once/day) — KH chủ động nhắn trước
+ *   mediaShare   15  — ảnh/video/file/sticker/location/...
+ *   inbound       5  — tin KH thường (text)
+ *   outbound      5  — sale có chăm KH
  */
 export function computeDailyIntensity(row: {
   inboundMsgCount: number;
@@ -74,11 +100,15 @@ export function computeDailyIntensity(row: {
   reactionCount: number;
   mediaShareCount: number;
   voiceMsgCount: number;
+  callCount: number;
+  quoteReplyCount: number;
   customerInitiated: boolean;
 }): number {
   const score =
+    row.callCount * 40 +
     row.reactionCount * 30 +
     row.voiceMsgCount * 30 +
+    row.quoteReplyCount * 25 +
     (row.customerInitiated ? 20 : 0) +
     row.mediaShareCount * 15 +
     row.inboundMsgCount * 5 +
@@ -113,6 +143,8 @@ export async function incrementDailyAggregate(input: IncrementInput): Promise<vo
     reaction: input.reaction ?? 0,
     mediaShare: input.mediaShare ?? 0,
     voiceMsg: input.voiceMsg ?? 0,
+    call: input.call ?? 0,
+    quoteReply: input.quoteReply ?? 0,
   };
   const setCustomerInitiated = input.customerInitiated === true;
 
@@ -122,6 +154,8 @@ export async function incrementDailyAggregate(input: IncrementInput): Promise<vo
     inc.reaction === 0 &&
     inc.mediaShare === 0 &&
     inc.voiceMsg === 0 &&
+    inc.call === 0 &&
+    inc.quoteReply === 0 &&
     !setCustomerInitiated
   ) {
     return; // nothing to record
@@ -139,6 +173,8 @@ export async function incrementDailyAggregate(input: IncrementInput): Promise<vo
         reactionCount: (existing?.reactionCount ?? 0) + inc.reaction,
         mediaShareCount: (existing?.mediaShareCount ?? 0) + inc.mediaShare,
         voiceMsgCount: (existing?.voiceMsgCount ?? 0) + inc.voiceMsg,
+        callCount: (existing?.callCount ?? 0) + inc.call,
+        quoteReplyCount: (existing?.quoteReplyCount ?? 0) + inc.quoteReply,
         customerInitiated: existing?.customerInitiated || setCustomerInitiated,
       };
       const dailyIntensity = computeDailyIntensity(next);
