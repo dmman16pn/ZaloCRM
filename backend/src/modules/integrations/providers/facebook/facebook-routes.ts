@@ -42,10 +42,11 @@ const FRONTEND_FB_PATH = '/settings/channels/facebook';
 
 export async function facebookRoutes(app: FastifyInstance): Promise<void> {
 
-  // ── GET /oauth/start ─────────────────────────────────────────────────────
-  // Generates CSRF state and redirects to Meta OAuth dialog.
-  // Auth required — we need orgId.
-  app.get(
+  // ── POST /oauth/start ────────────────────────────────────────────────────
+  // Generates CSRF state and returns Meta OAuth URL as JSON.
+  // Frontend calls this with auth header, then redirects browser to data.url.
+  // POST (not GET) to avoid browser-prefetch + ensure axios sends Authorization header.
+  app.post(
     `${PREFIX}/oauth/start`,
     { preHandler: authMiddleware },
     async (request: FastifyRequest, reply: FastifyReply) => {
@@ -53,7 +54,7 @@ export async function facebookRoutes(app: FastifyInstance): Promise<void> {
         const { orgId } = request.user!;
         const state = generateState(orgId);
         const authUrl = buildAuthUrl(orgId, state);
-        return reply.redirect(authUrl, 302);
+        return reply.send({ url: authUrl });
       } catch (err) {
         logger.error('[fb-routes] OAuth start error:', err);
         return reply.status(500).send({ error: 'Failed to initiate Facebook OAuth' });

@@ -73,9 +73,10 @@ export interface TokenRefreshSummary {
 
 // ── API functions ─────────────────────────────────────────────────────────────
 
-/** Redirect browser to OAuth start — returns the URL to navigate to. */
-export function getFbOAuthStartUrl(): string {
-  return `${window.location.origin}/api/v1${FB}/oauth/start`;
+/** Begin OAuth flow — POST with auth header, get Meta dialog URL, then redirect browser. */
+export async function startFbOAuth(): Promise<string> {
+  const { data } = await api.post<{ url: string }>(`${FB}/oauth/start`);
+  return data.url;
 }
 
 /** List connected Facebook pages for current org. */

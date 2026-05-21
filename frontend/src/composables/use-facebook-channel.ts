@@ -24,7 +24,7 @@ import {
   updateMapping,
   deleteMapping as apiDeleteMapping,
   disconnectPage as apiDisconnectPage,
-  getFbOAuthStartUrl,
+  startFbOAuth,
   type FacebookPageConnectionDto,
   type FacebookLeadgenForm,
   type FacebookFormMappingDto,
@@ -67,8 +67,13 @@ export function useFacebookChannel() {
   // ── Actions ──────────────────────────────────────────────────────────────
 
   /** Redirect to Meta OAuth. Returns to /settings/channels/facebook after auth. */
-  function connectPage(): void {
-    window.location.href = getFbOAuthStartUrl();
+  async function connectPage(): Promise<void> {
+    try {
+      const url = await startFbOAuth();
+      window.location.href = url;
+    } catch (err) {
+      error.value = (err as Error).message || 'Không khởi tạo được kết nối Facebook';
+    }
   }
 
   async function refreshPages(): Promise<void> {
