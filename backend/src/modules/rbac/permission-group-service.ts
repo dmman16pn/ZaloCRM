@@ -168,41 +168,54 @@ export async function updatePermissionGroup(input: {
     throw new Error('Nhóm quyền không thể là cha của chính nó');
   }
 
-  // Anti-cycle: check parent không phải descendant của self
-  if (input.parentId !== undefined && input.parentId !== null) {
-    const isDescendant = await checkIsDescendant(input.orgId, input.parentId, input.id);
-    if (isDescendant) {
-      throw new Error('Không thể move nhóm quyền vào trong nhánh con của chính nó');
+  // FIX codex review #5: validate parent thuộc đúng org + active TRƯỚC khi anti-cycle.
+  // FIX codex review #2: wrap check + update trong 1 tx atomic.
+  return await prisma.$transaction(async (tx) => {
+    if (input.parentId !== undefined && input.parentId !== null) {
+      const parent = await tx.permissionGroup.findFirst({
+        where: { id: input.parentId, orgId: input.orgId, archivedAt: null },
+        select: { id: true },
+      });
+      if (!parent) throw new Error('Nhóm quyền cha không tồn tại (hoặc khác tổ chức)');
+      const isDescendant = await checkIsDescendant(input.orgId, input.parentId, input.id, tx);
+      if (isDescendant) {
+        throw new Error('Không thể move nhóm quyền vào trong nhánh con của chính nó');
+      }
     }
-  }
 
-  const data: Record<string, unknown> = {};
-  if (input.name !== undefined) data.name = input.name.trim();
-  if (input.parentId !== undefined) data.parentId = input.parentId;
-  if (input.displayOrder !== undefined) data.displayOrder = input.displayOrder;
-  if (input.grants !== undefined) data.grants = sanitizeGrants(input.grants) as object;
+    const data: Record<string, unknown> = {};
+    if (input.name !== undefined) data.name = input.name.trim();
+    if (input.parentId !== undefined) data.parentId = input.parentId;
+    if (input.displayOrder !== undefined) data.displayOrder = input.displayOrder;
+    if (input.grants !== undefined) data.grants = sanitizeGrants(input.grants) as object;
 
-  const updated = await prisma.permissionGroup.update({
-    where: { id: input.id },
-    data,
+    const updated = await tx.permissionGroup.update({
+      where: { id: input.id },
+      data,
+    });
+    return {
+      id: updated.id,
+      name: updated.name,
+      grants: (updated.grants ?? {}) as GrantsJson,
+    };
   });
-  return {
-    id: updated.id,
-    name: updated.name,
-    grants: (updated.grants ?? {}) as GrantsJson,
-  };
 }
 
 /**
  * Recursive check: descendantId có nằm trong subtree của ancestorId không?
- * Permission group tree không có path materialized, em traverse.
+ * Pass tx để chia sẻ snapshot transaction (consistent read).
  */
-async function checkIsDescendant(orgId: string, descendantId: string, ancestorId: string): Promise<boolean> {
+async function checkIsDescendant(
+  orgId: string,
+  descendantId: string,
+  ancestorId: string,
+  client: typeof prisma | Parameters<Parameters<typeof prisma.$transaction>[0]>[0] = prisma,
+): Promise<boolean> {
   let currentId: string | null = descendantId;
   let hops = 0;
   while (currentId && hops < 20) {
     if (currentId === ancestorId) return true;
-    const parent: { parentId: string | null } | null = await prisma.permissionGroup.findFirst({
+    const parent: { parentId: string | null } | null = await (client as any).permissionGroup.findFirst({
       where: { id: currentId, orgId },
       select: { parentId: true },
     });
@@ -214,27 +227,29 @@ async function checkIsDescendant(orgId: string, descendantId: string, ancestorId
 }
 
 export async function archivePermissionGroup(orgId: string, id: string): Promise<void> {
-  const group = await prisma.permissionGroup.findFirst({
-    where: { id, orgId, archivedAt: null },
-    select: { id: true, isSystem: true },
-  });
-  if (!group) throw new Error('Nhóm quyền không tồn tại');
-  if (group.isSystem) throw new Error('Không thể xóa nhóm quyền hệ thống');
+  // FIX codex review #7: wrap count + archive trong 1 tx, lock group row → tránh race.
+  await prisma.$transaction(async (tx) => {
+    const rows = await tx.$queryRawUnsafe<Array<{ id: string; is_system: boolean }>>(
+      `SELECT id, is_system FROM permission_groups
+       WHERE id = $1 AND org_id = $2 AND archived_at IS NULL FOR UPDATE`,
+      id,
+      orgId,
+    );
+    if (rows.length === 0) throw new Error('Nhóm quyền không tồn tại');
+    if (rows[0].is_system) throw new Error('Không thể xóa nhóm quyền hệ thống');
 
-  const memberCount = await prisma.user.count({ where: { orgId, permissionGroupId: id } });
-  if (memberCount > 0) {
-    throw new Error(`Nhóm quyền còn ${memberCount} user — chuyển hết user sang nhóm khác trước khi xóa`);
-  }
-  const childCount = await prisma.permissionGroup.count({
-    where: { parentId: id, archivedAt: null },
-  });
-  if (childCount > 0) {
-    throw new Error(`Nhóm quyền còn ${childCount} nhóm con — xóa hoặc move các nhóm con trước`);
-  }
+    const memberCount = await tx.user.count({ where: { orgId, permissionGroupId: id } });
+    if (memberCount > 0) {
+      throw new Error(`Nhóm quyền còn ${memberCount} user — chuyển hết user sang nhóm khác trước khi xóa`);
+    }
+    const childCount = await tx.permissionGroup.count({
+      where: { parentId: id, archivedAt: null },
+    });
+    if (childCount > 0) {
+      throw new Error(`Nhóm quyền còn ${childCount} nhóm con — xóa hoặc move các nhóm con trước`);
+    }
 
-  await prisma.permissionGroup.update({
-    where: { id },
-    data: { archivedAt: new Date() },
+    await tx.permissionGroup.update({ where: { id }, data: { archivedAt: new Date() } });
   });
 }
 

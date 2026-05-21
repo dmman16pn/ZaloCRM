@@ -2,7 +2,7 @@
  * permission-group-routes.ts — RBAC Phase Phân Quyền 2026-05-21
  * REST endpoints cho PermissionGroup CRUD + matrix update.
  */
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { authMiddleware } from '../auth/auth-middleware.js';
 import {
   getOrgPermissionGroups,
@@ -10,8 +10,19 @@ import {
   createPermissionGroup,
   updatePermissionGroup,
   archivePermissionGroup,
+  userHasGrant,
 } from './permission-group-service.js';
-import { RESOURCES, ACTIONS, RESOURCE_ACTIONS } from './permission-types.js';
+import { RESOURCES, ACTIONS, RESOURCE_ACTIONS, type Resource, type Action } from './permission-types.js';
+
+// TEMP RBAC guard (D8 sẽ extract thành middleware chính thức)
+function requireGrant(resource: Resource, action: Action) {
+  return async (request: FastifyRequest, reply: FastifyReply) => {
+    const user = (request as any).user;
+    if (!user) return reply.status(401).send({ error: 'unauthorized' });
+    const allowed = await userHasGrant(user.userId ?? user.id, resource, action);
+    if (!allowed) return reply.status(403).send({ error: `Forbidden: ${resource}.${action}` });
+  };
+}
 
 export async function registerPermissionGroupRoutes(app: FastifyInstance): Promise<void> {
   // GET /api/v1/permission-groups — full tree
@@ -45,7 +56,7 @@ export async function registerPermissionGroupRoutes(app: FastifyInstance): Promi
   });
 
   // POST /api/v1/permission-groups
-  app.post('/api/v1/permission-groups', { preHandler: authMiddleware }, async (request, reply) => {
+  app.post('/api/v1/permission-groups', { preHandler: [authMiddleware, requireGrant('permission_group', 'create')] }, async (request, reply) => {
     const user = (request as any).user;
     if (!user) return reply.status(401).send({ error: 'unauthorized' });
     const body = (request.body ?? {}) as {
@@ -69,7 +80,7 @@ export async function registerPermissionGroupRoutes(app: FastifyInstance): Promi
   });
 
   // PATCH /api/v1/permission-groups/:id
-  app.patch('/api/v1/permission-groups/:id', { preHandler: authMiddleware }, async (request, reply) => {
+  app.patch('/api/v1/permission-groups/:id', { preHandler: [authMiddleware, requireGrant('permission_group', 'edit')] }, async (request, reply) => {
     const user = (request as any).user;
     if (!user) return reply.status(401).send({ error: 'unauthorized' });
     const { id } = request.params as { id: string };
@@ -95,7 +106,7 @@ export async function registerPermissionGroupRoutes(app: FastifyInstance): Promi
   });
 
   // DELETE /api/v1/permission-groups/:id
-  app.delete('/api/v1/permission-groups/:id', { preHandler: authMiddleware }, async (request, reply) => {
+  app.delete('/api/v1/permission-groups/:id', { preHandler: [authMiddleware, requireGrant('permission_group', 'delete')] }, async (request, reply) => {
     const user = (request as any).user;
     if (!user) return reply.status(401).send({ error: 'unauthorized' });
     const { id } = request.params as { id: string };

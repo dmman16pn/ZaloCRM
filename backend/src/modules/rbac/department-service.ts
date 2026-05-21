@@ -118,37 +118,41 @@ export async function createDepartment(input: {
   if (!input.name?.trim()) throw new Error('Tên phòng ban không được trống');
   if (input.name.length > 100) throw new Error('Tên phòng ban quá dài (>100 ký tự)');
 
-  // FIX 2026-05-21: Postgres trigger bị `prisma db push` drop khi sync schema.
-  // → Move path/depth compute logic vào TS app layer (tx scope, SELECT FOR UPDATE
-  // tránh race condition khi 2 concurrent insert dưới cùng parent).
-  const newId = randomUUID();
-  let path = '/' + newId + '/';
-  let depth = 0;
+  // FIX codex review #4: parent read + create cùng tx (atomic, không race).
+  return await prisma.$transaction(async (tx) => {
+    const newId = randomUUID();
+    let path = '/' + newId + '/';
+    let depth = 0;
 
-  if (input.parentId) {
-    const parent = await prisma.department.findFirst({
-      where: { id: input.parentId, orgId: input.orgId, archivedAt: null },
-      select: { id: true, depth: true, path: true },
+    if (input.parentId) {
+      // Lock parent row trong tx (FOR UPDATE)
+      const parentRows = await tx.$queryRawUnsafe<Array<{ id: string; depth: number; path: string }>>(
+        `SELECT id, depth, path FROM departments
+         WHERE id = $1 AND org_id = $2 AND archived_at IS NULL FOR UPDATE`,
+        input.parentId,
+        input.orgId,
+      );
+      const parent = parentRows[0];
+      if (!parent) throw new Error('Phòng ban cha không tồn tại');
+      if (parent.depth >= 4) throw new Error('Cây phòng ban đã max 5 level — không thể thêm con');
+      path = parent.path + newId + '/';
+      depth = parent.depth + 1;
+    }
+
+    const created = await tx.department.create({
+      data: {
+        id: newId,
+        orgId: input.orgId,
+        name: input.name.trim(),
+        parentId: input.parentId,
+        displayOrder: input.displayOrder ?? 0,
+        path,
+        depth,
+      },
+      select: { id: true, name: true, path: true, depth: true },
     });
-    if (!parent) throw new Error('Phòng ban cha không tồn tại');
-    if (parent.depth >= 4) throw new Error('Cây phòng ban đã max 5 level — không thể thêm con');
-    path = parent.path + newId + '/';
-    depth = parent.depth + 1;
-  }
-
-  const created = await prisma.department.create({
-    data: {
-      id: newId,
-      orgId: input.orgId,
-      name: input.name.trim(),
-      parentId: input.parentId,
-      displayOrder: input.displayOrder ?? 0,
-      path,
-      depth,
-    },
-    select: { id: true, name: true, path: true, depth: true },
+    return created;
   });
-  return created;
 }
 
 export async function updateDepartment(input: {
@@ -241,24 +245,29 @@ export async function updateDepartment(input: {
 }
 
 export async function archiveDepartment(orgId: string, id: string): Promise<void> {
-  // Block nếu còn member
-  const memberCount = await prisma.departmentMember.count({
-    where: { departmentId: id },
-  });
-  if (memberCount > 0) {
-    throw new Error(`Phòng ban còn ${memberCount} thành viên — chuyển hết sang phòng khác trước khi xóa`);
-  }
-  // Block nếu còn dept con
-  const childCount = await prisma.department.count({
-    where: { parentId: id, archivedAt: null },
-  });
-  if (childCount > 0) {
-    throw new Error(`Phòng ban còn ${childCount} phòng ban con — xóa hoặc move các phòng con trước`);
-  }
+  // FIX codex review #7: wrap count + archive trong 1 tx, lock dept row → tránh race.
+  await prisma.$transaction(async (tx) => {
+    const rows = await tx.$queryRawUnsafe<Array<{ id: string }>>(
+      `SELECT id FROM departments
+       WHERE id = $1 AND org_id = $2 AND archived_at IS NULL FOR UPDATE`,
+      id,
+      orgId,
+    );
+    if (rows.length === 0) throw new Error('Phòng ban không tồn tại');
 
-  await prisma.department.updateMany({
-    where: { id, orgId },
-    data: { archivedAt: new Date() },
+    const memberCount = await tx.departmentMember.count({ where: { departmentId: id } });
+    if (memberCount > 0) {
+      throw new Error(`Phòng ban còn ${memberCount} thành viên — chuyển hết sang phòng khác trước khi xóa`);
+    }
+    const childCount = await tx.department.count({ where: { parentId: id, archivedAt: null } });
+    if (childCount > 0) {
+      throw new Error(`Phòng ban còn ${childCount} phòng ban con — xóa hoặc move các phòng con trước`);
+    }
+
+    await tx.department.update({
+      where: { id },
+      data: { archivedAt: new Date() },
+    });
   });
 }
 
@@ -299,13 +308,25 @@ export async function assignUserToDepartment(input: {
   });
 }
 
-export async function removeUserFromDepartment(orgId: string, userId: string): Promise<void> {
+export async function removeUserFromDepartment(orgId: string, userId: string, deptId?: string): Promise<void> {
   // Sanity: ensure user ∈ org
   const user = await prisma.user.findFirst({
     where: { id: userId, orgId },
     select: { id: true },
   });
   if (!user) throw new Error('User không tồn tại trong tổ chức');
+
+  // FIX codex review #6: nếu caller pass deptId → enforce user ĐANG ở dept đó
+  // Tránh trick "delete /departments/random/members/userX" remove user khỏi dept thật
+  if (deptId) {
+    const dept = await prisma.department.findFirst({
+      where: { id: deptId, orgId },
+      select: { id: true },
+    });
+    if (!dept) throw new Error('Phòng ban không tồn tại');
+    await prisma.departmentMember.deleteMany({ where: { userId, departmentId: deptId } });
+    return;
+  }
 
   await prisma.departmentMember.deleteMany({ where: { userId } });
 }

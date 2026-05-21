@@ -35,8 +35,9 @@ function assert(cond, label) {
 
 console.log('=== D3 Department CRUD test ===');
 
-// 1. Cleanup test data từ runs trước
+// 1. Cleanup test data từ runs trước — remove member trước khi archive
 console.log('\n[Cleanup]');
+await call('DELETE', '/departments/_/members/' + USER_ID).catch(() => {});
 const tree0 = await call('GET', '/departments');
 if (tree0.data.tree) {
   // archive recursively bottom-up

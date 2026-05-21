@@ -15,6 +15,22 @@ import {
   removeUserFromDepartment,
   getUsersUnderDepartment,
 } from './department-service.js';
+import { userHasGrant } from './permission-group-service.js';
+import type { Resource, Action } from './permission-types.js';
+
+/**
+ * TEMP RBAC guard cho D5-6 (proper middleware ship ở D8).
+ * Codex review P1 finding: mọi authenticated user có thể CRUD dept/group.
+ * Tạm dùng userHasGrant + legacy role='owner' fallback.
+ */
+function requireGrant(resource: Resource, action: Action) {
+  return async (request: FastifyRequest, reply: FastifyReply) => {
+    const user = (request as any).user;
+    if (!user) return reply.status(401).send({ error: 'unauthorized' });
+    const allowed = await userHasGrant(user.userId ?? user.id, resource, action);
+    if (!allowed) return reply.status(403).send({ error: `Forbidden: ${resource}.${action}` });
+  };
+}
 
 export async function registerDepartmentRoutes(app: FastifyInstance): Promise<void> {
   // GET /api/v1/departments — full tree
@@ -26,7 +42,7 @@ export async function registerDepartmentRoutes(app: FastifyInstance): Promise<vo
   });
 
   // POST /api/v1/departments — tạo dept mới
-  app.post('/api/v1/departments', { preHandler: authMiddleware }, async (request, reply) => {
+  app.post('/api/v1/departments', { preHandler: [authMiddleware, requireGrant('department', 'create')] }, async (request, reply) => {
     const user = (request as any).user;
     if (!user) return reply.status(401).send({ error: 'unauthorized' });
     const body = (request.body ?? {}) as {
@@ -48,7 +64,7 @@ export async function registerDepartmentRoutes(app: FastifyInstance): Promise<vo
   });
 
   // PATCH /api/v1/departments/:id — rename, move parent, reorder
-  app.patch('/api/v1/departments/:id', { preHandler: authMiddleware }, async (request, reply) => {
+  app.patch('/api/v1/departments/:id', { preHandler: [authMiddleware, requireGrant('department', 'edit')] }, async (request, reply) => {
     const user = (request as any).user;
     if (!user) return reply.status(401).send({ error: 'unauthorized' });
     const { id } = request.params as { id: string };
@@ -72,7 +88,7 @@ export async function registerDepartmentRoutes(app: FastifyInstance): Promise<vo
   });
 
   // DELETE /api/v1/departments/:id — archive (soft delete)
-  app.delete('/api/v1/departments/:id', { preHandler: authMiddleware }, async (request, reply) => {
+  app.delete('/api/v1/departments/:id', { preHandler: [authMiddleware, requireGrant('department', 'delete')] }, async (request, reply) => {
     const user = (request as any).user;
     if (!user) return reply.status(401).send({ error: 'unauthorized' });
     const { id } = request.params as { id: string };
@@ -85,7 +101,7 @@ export async function registerDepartmentRoutes(app: FastifyInstance): Promise<vo
   });
 
   // POST /api/v1/departments/:id/members — add/move user vào dept với role
-  app.post('/api/v1/departments/:id/members', { preHandler: authMiddleware }, async (request, reply) => {
+  app.post('/api/v1/departments/:id/members', { preHandler: [authMiddleware, requireGrant('user', 'edit')] }, async (request, reply) => {
     const user = (request as any).user;
     if (!user) return reply.status(401).send({ error: 'unauthorized' });
     const { id } = request.params as { id: string };
@@ -114,12 +130,13 @@ export async function registerDepartmentRoutes(app: FastifyInstance): Promise<vo
   });
 
   // DELETE /api/v1/departments/:id/members/:userId — remove user khỏi dept
-  app.delete('/api/v1/departments/:id/members/:userId', { preHandler: authMiddleware }, async (request, reply) => {
+  app.delete('/api/v1/departments/:id/members/:userId', { preHandler: [authMiddleware, requireGrant('user', 'edit')] }, async (request, reply) => {
     const user = (request as any).user;
     if (!user) return reply.status(401).send({ error: 'unauthorized' });
-    const { userId } = request.params as { id: string; userId: string };
+    // FIX codex review #6: validate user thuộc đúng dept :id trước khi remove
+    const { id: deptId, userId } = request.params as { id: string; userId: string };
     try {
-      await removeUserFromDepartment(user.orgId, userId);
+      await removeUserFromDepartment(user.orgId, userId, deptId);
       return reply.send({ ok: true });
     } catch (e: any) {
       return reply.status(400).send({ error: e.message });
