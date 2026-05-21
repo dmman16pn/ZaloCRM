@@ -28,10 +28,29 @@
 
         <!-- ─── Body ─── -->
         <div class="editor-body">
-          <!-- 1. Tiêu đề — icon prefix + placeholder bold trong box (bỏ label trên) -->
+          <!-- 1. Loại nhắc hẹn (LÊN ĐẦU — click 1 loại sẽ auto-fill template tiêu đề) -->
+          <div class="field">
+            <span class="field-label">Loại nhắc hẹn</span>
+            <div class="type-row">
+              <button
+                v-for="t in APPOINTMENT_TYPE_OPTIONS"
+                :key="t.value"
+                type="button"
+                class="type-chip"
+                :class="{ active: form.type === t.value }"
+                :data-t="t.value"
+                @click="selectType(t.value)"
+              >
+                <span class="type-ico">{{ typeIcon(t.value) }}</span>
+                {{ t.text }}
+              </button>
+            </div>
+          </div>
+
+          <!-- 2. Tiêu đề — icon prefix động theo loại (📞📩🤝👁), template tự fill -->
           <div class="field">
             <div class="title-input-wrap">
-              <span class="ic">📌</span>
+              <span class="ic">{{ titleIcon }}</span>
               <input
                 ref="titleInputRef"
                 v-model="form.title"
@@ -144,25 +163,6 @@
                 :class="{ active: form.durationMin === d.value }"
                 @click="form.durationMin = d.value"
               >{{ d.label }}</button>
-            </div>
-          </div>
-
-          <!-- 4. Loại (4 icon chips) -->
-          <div class="field">
-            <span class="field-label">Loại nhắc hẹn</span>
-            <div class="type-row">
-              <button
-                v-for="t in APPOINTMENT_TYPE_OPTIONS"
-                :key="t.value"
-                type="button"
-                class="type-chip"
-                :class="{ active: form.type === t.value }"
-                :data-t="t.value"
-                @click="form.type = t.value"
-              >
-                <span class="type-ico">{{ typeIcon(t.value) }}</span>
-                {{ t.text }}
-              </button>
             </div>
           </div>
 
@@ -431,10 +431,9 @@ function pickContact(c: ContactLite) {
   selectedContact.value = c;
   custSuggestOpen.value = false;
   custQuery.value = '';
-  // Auto-fill title nếu chưa có
-  if (!form.title.trim() && c.fullName) {
-    form.title = `Gọi nhắc KH ${c.fullName}`;
-  }
+  // Rebuild title theo template hiện tại (loại + tên KH mới)
+  form.title = buildTitleFromType(form.type);
+  nextTick(() => focusTitleAtEnd());
 }
 
 function clearContact() {
@@ -465,6 +464,44 @@ const titlePlaceholder = computed(() =>
     ? `Tiêu đề nhắc hẹn — vd Gọi nhắc ${selectedContact.value.fullName}`
     : 'Tiêu đề nhắc hẹn — vd Gọi nhắc khách hàng',
 );
+
+/**
+ * Title template per type — sale click loại sẽ auto-fill, trailing space để sale gõ tiếp.
+ *   call      → "Gọi điện cho {name} "
+ *   message   → "Nhắn tin cho {name} "
+ *   meeting   → "Hẹn gặp {name} "
+ *   follow_up → "Theo dõi {name} "
+ */
+const TYPE_TITLE_TEMPLATE: Record<string, string> = {
+  call:      'Gọi điện cho',
+  message:   'Nhắn tin cho',
+  meeting:   'Hẹn gặp',
+  follow_up: 'Theo dõi',
+};
+
+function buildTitleFromType(type: string): string {
+  const prefix = TYPE_TITLE_TEMPLATE[type] || 'Nhắc';
+  const name = selectedContact.value?.fullName?.trim() || '';
+  return name ? `${prefix} ${name} ` : `${prefix} `;
+}
+
+function focusTitleAtEnd() {
+  const el = titleInputRef.value;
+  if (!el) return;
+  el.focus();
+  const len = el.value.length;
+  try { el.setSelectionRange(len, len); } catch { /* IE fallback no-op */ }
+}
+
+function selectType(type: string) {
+  form.type = type;
+  // Overwrite tiêu đề bằng template loại mới — sale gõ tiếp sau dấu cách cuối
+  form.title = buildTitleFromType(type);
+  nextTick(() => focusTitleAtEnd());
+}
+
+/** Icon prefix trong ô tiêu đề thay đổi theo loại đang chọn */
+const titleIcon = computed(() => typeIcon(form.type));
 
 const canSubmit = computed(() =>
   !!form.title.trim() && !!form.date && !!form.time && !!form.type,
@@ -510,11 +547,8 @@ watch(() => props.modelValue, (open) => {
     form.notes = '';
     form.assignedUserId = currentUserId.value; // default sale = người tạo
     selectedContact.value = props.prefillContact ?? null;
-    if (props.prefillContact?.fullName) {
-      form.title = `Gọi nhắc KH ${props.prefillContact.fullName}`;
-    } else {
-      form.title = '';
-    }
+    // Tiêu đề default = template theo loại hiện tại (call), kèm tên KH nếu prefill
+    form.title = buildTitleFromType(form.type);
     calMonth.value = new Date(base);
   }
 
@@ -651,8 +685,9 @@ const vClickOutside = {
   },
 };
 
+// 8 tip chips — bỏ "Hôm nay" (default form.date đã là hôm nay nên không cần)
+// Layout: 4-col × 2 dòng, gọn trong popup 300px.
 const dateTips = [
-  { label: 'Hôm nay',    offset: 0 },
   { label: 'Ngày mai',   offset: 1 },
   { label: 'Ngày mốt',   offset: 2 },
   { label: '+3 ngày',    offset: 3 },
@@ -821,8 +856,15 @@ async function submit() {
   saving.value = true;
   error.value = '';
   try {
+    // Khi save: nếu có location, append "📍 {location}" vào sau tiêu đề.
+    // Idempotent — không double-append nếu sale đã gõ tay vào tiêu đề rồi.
+    const rawTitle = form.title.trim();
+    const locTrim = form.location.trim();
+    const finalTitle = locTrim && !rawTitle.includes('📍')
+      ? `${rawTitle} 📍 ${locTrim}`
+      : rawTitle;
     const payload = {
-      title: form.title.trim(),
+      title: finalTitle,
       contactId: selectedContact.value?.id ?? null,
       assignedUserId: form.assignedUserId,
       appointmentDate: form.date,
@@ -874,10 +916,10 @@ if (typeof window !== 'undefined') {
 }
 .editor {
   width: 560px; max-width: 100%;
-  /* Fix size: chiều cao luôn 720px (hoặc 92vh nếu màn thấp). Modal KHÔNG expand
-     khi popup mở vì popup TELEPORT ra ngoài (position fixed). */
-  height: 720px;
-  max-height: 92vh;
+  /* Fix size: chiều cao 780px (tăng từ 720 để khỏi scroll khi đủ 6 section).
+     Modal KHÔNG expand khi popup mở vì popup TELEPORT ra ngoài (position fixed). */
+  height: 780px;
+  max-height: 94vh;
   background: var(--at-canvas);
   border-radius: var(--at-r-lg);
   box-shadow: 0 24px 60px rgba(0, 0, 0, 0.32), 0 2px 8px rgba(0, 0, 0, 0.12);
@@ -1111,10 +1153,10 @@ if (typeof window !== 'undefined') {
   height: 1px; background: var(--at-hairline);
   margin: var(--at-s-sm) calc(-1 * var(--at-s-sm));
 }
-/* Tip chips: 5-col grid (2 rows: 5+4 chips) — nhỏ gọn */
+/* Tip chips: 4-col grid × 2 rows = 8 chips (đã bỏ "Hôm nay") */
 .dp-tips {
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 4px;
 }
 .dp-tip {
