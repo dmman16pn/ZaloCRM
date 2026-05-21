@@ -81,6 +81,7 @@
 <script setup lang="ts">
 import { ref, computed, nextTick } from 'vue';
 import type { Note } from '@/composables/use-notes';
+import { formatInOrgTz, getOrgParts } from '@/composables/use-org-timezone';
 
 const props = defineProps<{
   note: Note;
@@ -120,14 +121,12 @@ const relTime = computed(() => {
   if (h < 24) return `${h}h`;
   const days = Math.floor(h / 24);
   if (days < 7) return `${days}n`;
-  const dt = new Date(props.note.createdAt);
-  return `${String(dt.getDate()).padStart(2, '0')}/${String(dt.getMonth() + 1).padStart(2, '0')}`;
+  const p = getOrgParts(props.note.createdAt);
+  if (!p) return '';
+  return `${String(p.day).padStart(2, '0')}/${String(p.month).padStart(2, '0')}`;
 });
 
-const absTime = computed(() => {
-  const d = new Date(props.note.createdAt);
-  return d.toLocaleString('vi-VN');
-});
+const absTime = computed(() => formatInOrgTz(props.note.createdAt));
 
 const clusteredReactions = computed(() => {
   const map = new Map<string, { emoji: string; count: number; mine: boolean; users: string[] }>();

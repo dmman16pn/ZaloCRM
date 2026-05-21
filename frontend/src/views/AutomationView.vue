@@ -64,6 +64,7 @@ import TemplateManager from '@/components/automation/TemplateManager.vue';
 import { useAutomationRules, type AutomationRule } from '@/composables/use-automation-rules';
 import { useMessageTemplates } from '@/composables/use-message-templates';
 import { useAuthStore } from '@/stores/auth';
+import { formatInOrgTz } from '@/composables/use-org-timezone';
 
 const authStore = useAuthStore();
 const canManage = computed(() => authStore.isAdmin);
@@ -111,7 +112,7 @@ function triggerLabel(trigger: string) {
 }
 
 function formatDateTime(value: string) {
-  return new Date(value).toLocaleString('vi-VN');
+  return formatInOrgTz(value);
 }
 
 function openCreateRule() {

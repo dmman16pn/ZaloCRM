@@ -1,0 +1,395 @@
+<template>
+  <div class="apt-list">
+    <div v-if="!appointments.length" class="empty">
+      <div class="empty-icon">📅</div>
+      <h3>Chưa có lịch hẹn</h3>
+      <p>Lọc hiện tại không khớp lịch nào. Thử bỏ bớt filter hoặc tạo lịch hẹn mới.</p>
+      <button class="empty-btn" @click="$emit('create')">＋ Tạo lịch hẹn</button>
+    </div>
+
+    <div v-for="group in grouped" :key="group.iso" class="group">
+      <h3>
+        {{ group.label }}
+        <span class="badge">{{ group.items.length }} lịch<span v-if="group.conflicts"> · ⚠ {{ group.conflicts }} trùng giờ</span></span>
+      </h3>
+      <div
+        v-for="a in group.items"
+        :key="a.id"
+        class="row"
+        :style="{ borderLeftColor: saleColor(ownerId(a)).bg }"
+        @click="$emit('select-appointment', a)"
+      >
+        <div class="time">
+          {{ fmtTime(a) }}
+          <span class="dur">{{ a.durationMin || 30 }} phút</span>
+        </div>
+        <div class="customer">
+          <div class="av" :style="{ background: saleColor(ownerId(a)).bg }">{{ initials(a.contact?.fullName) }}</div>
+          <div class="info">
+            <div class="name">
+              {{ a.contact?.fullName || 'Khách hàng' }}
+              <span v-if="a.contact?.zaloUid" class="zalo-tag">🔵</span>
+            </div>
+            <div class="sub">
+              <span v-if="a.contact?.phone">📱 {{ a.contact.phone }}</span>
+              <span v-if="a.contact?.zaloUid"> · {{ a.contact.zaloUid }}</span>
+            </div>
+            <!-- mobile-only inline meta -->
+            <div class="mobile-meta">
+              <span class="pill type">{{ typeIcon(a.type) }} {{ typeLabel(a.type) }}</span>
+              <span class="pill" :class="`status-${a.status}`">{{ statusLabel(a.status) }}</span>
+              <span class="src-icon" :class="a.source">{{ a.source === 'zalo' ? 'Z' : 'M' }}</span>
+              <span class="av-mini" :style="{ background: saleColor(ownerId(a)).bg }">{{ initials(ownerName(a)) }}</span>
+            </div>
+          </div>
+        </div>
+        <div class="source">
+          <span class="src-icon" :class="a.source">{{ a.source === 'zalo' ? 'Z' : 'M' }}</span>
+          {{ a.source === 'zalo' ? 'Auto từ chat Zalo' : 'Tạo thủ công' }}
+        </div>
+        <div class="type-cell">
+          <span class="pill type">{{ typeIcon(a.type) }} {{ typeLabel(a.type) }}</span>
+        </div>
+        <div>
+          <span class="pill" :class="`status-${a.status}`">{{ statusLabel(a.status) }}</span>
+        </div>
+        <div class="owner">
+          <span class="av-mini" :style="{ background: saleColor(ownerId(a)).bg }">{{ initials(ownerName(a)) }}</span>
+          <span class="owner-name">{{ shortName(ownerName(a)) }}</span>
+        </div>
+        <div class="actions" @click.stop>
+          <button
+            v-if="a.source === 'zalo' && a.conversationId"
+            title="Mở chat Zalo"
+            @click="$emit('open-chat', a)"
+          >💬</button>
+          <button
+            v-if="a.status === 'scheduled' || a.status === 'overdue'"
+            title="Hoàn thành"
+            @click="$emit('mark-complete', a)"
+          >✓</button>
+          <button title="Chi tiết" @click="$emit('select-appointment', a)">⋯</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { computed } from 'vue';
+import {
+  saleColor,
+  typeIcon,
+  typeLabel,
+  statusLabel,
+  initials,
+  appointmentOwnerId as ownerId,
+  appointmentOwnerName as ownerName,
+  appointmentStart,
+  appointmentEnd,
+  type AppointmentEx as Appointment,
+} from '@/composables/appointment-helpers';
+
+const props = defineProps<{
+  appointments: Appointment[];
+}>();
+
+defineEmits<{
+  (e: 'select-appointment', a: Appointment): void;
+  (e: 'create'): void;
+  (e: 'mark-complete', a: Appointment): void;
+  (e: 'open-chat', a: Appointment): void;
+}>();
+
+function isoDay(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function fmtTime(a: Appointment): string {
+  const d = appointmentStart(a);
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
+function shortName(name: string): string {
+  const parts = name.trim().split(/\s+/);
+  return parts.length > 1 ? parts.slice(-2).join(' ') : name;
+}
+
+function dayLabel(d: Date): string {
+  const DOWS = ['Chủ nhật', 'Thứ 2', 'Thứ 3', 'Thứ 4', 'Thứ 5', 'Thứ 6', 'Thứ 7'];
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const tmr = new Date(today); tmr.setDate(today.getDate() + 1);
+  const yest = new Date(today); yest.setDate(today.getDate() - 1);
+  const dayMid = new Date(d); dayMid.setHours(0, 0, 0, 0);
+  let prefix = '';
+  if (dayMid.getTime() === today.getTime()) prefix = 'Hôm nay · ';
+  else if (dayMid.getTime() === tmr.getTime()) prefix = 'Mai · ';
+  else if (dayMid.getTime() === yest.getTime()) prefix = 'Hôm qua · ';
+  return `${prefix}${DOWS[d.getDay()]}, ${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`;
+}
+
+function countConflicts(items: Appointment[]): number {
+  const conflictSet = new Set<string>();
+  const sorted = [...items].sort((a, b) => appointmentStart(a).getTime() - appointmentStart(b).getTime());
+  for (let i = 0; i < sorted.length; i++) {
+    for (let j = i + 1; j < sorted.length; j++) {
+      if (appointmentStart(sorted[j]).getTime() >= appointmentEnd(sorted[i]).getTime()) break;
+      conflictSet.add(sorted[i].id);
+      conflictSet.add(sorted[j].id);
+    }
+  }
+  return conflictSet.size;
+}
+
+const grouped = computed(() => {
+  const m = new Map<string, Appointment[]>();
+  for (const a of props.appointments) {
+    const k = isoDay(appointmentStart(a));
+    if (!m.has(k)) m.set(k, []);
+    m.get(k)!.push(a);
+  }
+  return [...m.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([iso, items]) => {
+      items.sort((a, b) => appointmentStart(a).getTime() - appointmentStart(b).getTime());
+      const d = appointmentStart(items[0]);
+      return { iso, label: dayLabel(d), items, conflicts: countConflicts(items) };
+    });
+});
+</script>
+
+<style scoped>
+@import '@/components/automation/phase7/airtable.css';
+
+.apt-list {
+  padding: var(--at-s-md) var(--at-s-xl) var(--at-s-lg);
+  overflow-y: auto;
+  height: 100%;
+  background: var(--at-canvas);
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  color: var(--at-body);
+}
+
+/* Empty state — cream callout */
+.empty {
+  background: var(--at-cream);
+  border-radius: var(--at-r-lg);
+  padding: var(--at-s-xxl) var(--at-s-lg);
+  text-align: center;
+  color: var(--at-ink);
+}
+.empty-icon { font-size: 36px; margin-bottom: var(--at-s-xs); }
+.empty h3 {
+  margin: var(--at-s-xs) 0 var(--at-s-xxs);
+  color: var(--at-ink);
+  font-size: 18px;
+  font-weight: 500;
+}
+.empty p { color: var(--at-body); font-size: 13.5px; margin: 0; }
+.empty-btn {
+  margin-top: var(--at-s-md);
+  padding: 10px 18px;
+  border: none;
+  border-radius: var(--at-r-lg);
+  cursor: pointer;
+  font-weight: 500;
+  font-size: 13px;
+  background: var(--at-ink);
+  color: var(--at-on-primary);
+  font-family: inherit;
+}
+.empty-btn:active { background: var(--at-primary-active); }
+
+/* Day group */
+.group { margin-bottom: var(--at-s-lg); }
+.group h3 {
+  font-size: 11.5px;
+  color: var(--at-muted);
+  margin: 0 0 var(--at-s-xs);
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  display: flex;
+  align-items: center;
+  gap: var(--at-s-xs);
+}
+.group h3 .badge {
+  background: var(--at-canvas);
+  border: 1px solid var(--at-hairline);
+  padding: 1px 8px;
+  border-radius: var(--at-r-pill);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--at-ink);
+}
+
+/* List row — Airtable card style */
+.row {
+  display: grid;
+  grid-template-columns: 80px 1fr 200px 130px 130px 110px 88px;
+  align-items: center;
+  gap: var(--at-s-sm);
+  background: var(--at-canvas);
+  border: 1px solid var(--at-hairline);
+  border-left: 4px solid transparent;
+  border-radius: var(--at-r-md);
+  padding: 10px var(--at-s-sm);
+  margin-bottom: 6px;
+  cursor: pointer;
+  transition: background 0.1s, box-shadow 0.1s;
+}
+.row:active { background: var(--at-surface-soft); }
+
+.time {
+  font-weight: 500;
+  font-size: 14px;
+  color: var(--at-ink);
+  font-family: ui-monospace, 'SF Mono', Consolas, monospace;
+}
+.time .dur {
+  font-size: 10px;
+  color: var(--at-muted);
+  font-weight: 500;
+  display: block;
+  margin-top: 1px;
+}
+
+.customer { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.customer .av {
+  width: 32px; height: 32px;
+  border-radius: var(--at-r-pill);
+  color: var(--at-on-primary);
+  display: grid; place-items: center;
+  font-weight: 500;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+.customer .info { min-width: 0; }
+.customer .info .name {
+  font-weight: 500;
+  color: var(--at-ink);
+  font-size: 13.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.customer .info .zalo-tag {
+  font-size: 10px;
+  color: var(--at-muted);
+  letter-spacing: 0.06em;
+}
+.customer .info .sub {
+  font-size: 11.5px;
+  color: var(--at-muted);
+  margin-top: 1px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Source col */
+.source {
+  font-size: 12px;
+  color: var(--at-body);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.src-icon {
+  width: 22px; height: 22px;
+  border-radius: var(--at-r-sm);
+  display: grid; place-items: center;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--at-on-primary);
+  flex-shrink: 0;
+}
+.src-icon.zalo   { background: var(--at-link); }
+.src-icon.manual { background: var(--at-muted); }
+
+/* Pills — Airtable signature tints */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 9px;
+  border-radius: var(--at-r-pill);
+  font-size: 11.5px;
+  font-weight: 500;
+  letter-spacing: 0.16px;
+  white-space: nowrap;
+}
+.pill.type { background: var(--at-surface-soft); color: var(--at-body); border: 1px solid var(--at-hairline); }
+.pill.status-scheduled { background: #fdf0e3; color: #7a4115; }    /* peach tint */
+.pill.status-overdue   { background: #fdf3df; color: #7a5818; }    /* mustard tint */
+.pill.status-completed { background: #e3ede4; color: #0a2e0e; }    /* forest tint */
+.pill.status-cancelled { background: var(--at-surface-strong); color: var(--at-muted); text-decoration: line-through; }
+.pill.status-no_show   { background: #fbe6dc; color: #7a2000; }    /* coral tint */
+
+/* Owner col */
+.owner { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--at-body); }
+.av-mini {
+  width: 22px; height: 22px;
+  border-radius: var(--at-r-pill);
+  color: var(--at-on-primary);
+  display: grid; place-items: center;
+  font-size: 10px;
+  font-weight: 500;
+  flex-shrink: 0;
+}
+
+/* Actions */
+.actions { display: flex; gap: 4px; justify-content: flex-end; }
+.actions button {
+  width: 28px; height: 28px;
+  border-radius: var(--at-r-sm);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--at-body);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 14px;
+}
+.actions button:active { background: var(--at-surface-soft); border-color: var(--at-hairline); }
+
+@media (max-width: 1100px) {
+  .row { grid-template-columns: 70px 1fr 130px 120px 110px 90px 80px; gap: 8px; }
+  .source { font-size: 11px; }
+}
+
+.mobile-meta { display: none; }
+
+@media (max-width: 900px) {
+  .apt-list { padding: 10px 12px 20px; }
+  .row {
+    grid-template-columns: 60px 1fr auto;
+    row-gap: 4px;
+  }
+  .row .time { align-self: start; }
+  .row .customer { min-width: 0; }
+  .row .customer .info .name { font-size: 13px; }
+  .row .source,
+  .row .type-cell,
+  .row > div:nth-child(5),
+  .row .owner {
+    display: none;
+  }
+  .mobile-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    align-items: center;
+    margin-top: 4px;
+  }
+  .mobile-meta .src-icon { width: 18px; height: 18px; font-size: 9px; }
+  .mobile-meta .av-mini { width: 18px; height: 18px; font-size: 9px; }
+}
+
+@media (max-width: 600px) {
+  .row { padding: 8px 10px; }
+  .row .customer .av { width: 30px; height: 30px; font-size: 11px; }
+  .time { font-size: 13px; }
+}
+</style>

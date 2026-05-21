@@ -6,11 +6,14 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { authMiddleware } from '../auth/auth-middleware.js';
 import { zaloOps } from '../../shared/zalo-operations.js';
-import { resolveAccount, checkAccess, handleError } from './zalo-route-helpers.js';
-import { markFriendRequestSent, applyFriendTransition } from './friend-event-handler.js';
+import { resolveAccount, checkAccess, handleError, getAccessibleZaloAccountIds } from './zalo-route-helpers.js';
+import { markFriendRequestSent } from './friend-event-handler.js';
 import { prisma } from '../../shared/database/prisma-client.js';
-import { randomUUID } from 'node:crypto';
 import { normalizePhone } from '../../shared/utils/phone.js';
+import { FRIEND_INCLUDE_WITH_CONTACT, toFriendDto } from '../../shared/friend-serializer.js';
+import { syncAccountFully } from './friend-sync-service.js';
+import { zaloPool } from './zalo-pool.js';
+import { logger } from '../../shared/utils/logger.js';
 
 const BASE = '/api/v1/zalo-accounts/:accountId/friends';
 
@@ -19,7 +22,7 @@ export async function friendRoutes(app: FastifyInstance) {
 
   // ── DB-backed friend list (preferred over live for /friends UI) ───────────
 
-  // GET .../friends-db?kind=friend|pending_friend|chatting_stranger|ghost|all&page=1&limit=25&search=...
+  // GET .../friends-db?kind=...&page=1&limit=25&search=...&sortBy=recent|score-desc|score-asc|stuck
   app.get(`${BASE}-db`, async (request: FastifyRequest, reply: FastifyReply) => {
     const { accountId } = request.params as { accountId: string };
     const {
@@ -27,7 +30,8 @@ export async function friendRoutes(app: FastifyInstance) {
       page = '1',
       limit = '25',
       search = '',
-    } = request.query as { kind?: string; page?: string; limit?: string; search?: string };
+      sortBy = 'recent',
+    } = request.query as { kind?: string; page?: string; limit?: string; search?: string; sortBy?: string };
     const user = request.user!;
     if (!await checkAccess(request, reply, accountId, 'read')) return;
     try {
@@ -61,23 +65,13 @@ export async function friendRoutes(app: FastifyInstance) {
         ];
       }
 
+      const orderBy = buildFriendOrderBy(sortBy);
+
       const [friends, total, countsRaw] = await Promise.all([
         prisma.friend.findMany({
           where,
-          include: {
-            contact: {
-              select: {
-                id: true, fullName: true, crmName: true, phone: true, email: true,
-                avatarUrl: true, tags: true, leadScore: true, source: true,
-                gender: true, status: true, province: true, district: true,
-                birthYear: true,
-              },
-            },
-            zaloAccount: { select: { id: true, displayName: true, phone: true, avatarUrl: true } },
-            // Per-pair Status (dynamic, từ Status table) — UI dùng cho cột "Trạng thái KH"
-            statusRef: { select: { id: true, name: true, color: true, order: true, isTerminal: true } },
-          },
-          orderBy: [{ lastInboundAt: 'desc' }, { lastOutboundAt: 'desc' }, { createdAt: 'desc' }],
+          include: FRIEND_INCLUDE_WITH_CONTACT,
+          orderBy,
           skip: (pageNum - 1) * limitNum,
           take: limitNum,
         }),
@@ -90,98 +84,134 @@ export async function friendRoutes(app: FastifyInstance) {
       ]);
 
       const counts = Object.fromEntries(countsRaw.map((g) => [g.relationshipKind, g._count]));
-      return { friends, total, counts, page: pageNum, limit: limitNum };
+      return {
+        friends: friends.map(toFriendDto),
+        total,
+        counts,
+        page: pageNum,
+        limit: limitNum,
+      };
     } catch (err) {
       return handleError(reply, err, 'friends-db-list');
     }
   });
 
-  // POST .../friends-db/sync — pull live friend list + sent requests, upsert into Friend table
+  // GET /api/v1/friends-db/all-nicks — cross-nick Friend list (mọi nick user có access)
+  // Phục vụ FriendsView "Tất cả nick" mode. Flat per-pair: 1 KH × N nick chăm → N rows.
+  app.get('/api/v1/friends-db/all-nicks', async (request: FastifyRequest, reply: FastifyReply) => {
+    const user = request.user!;
+    const {
+      kind = 'all',
+      page = '1',
+      limit = '25',
+      search = '',
+      sortBy = 'recent',
+    } = request.query as { kind?: string; page?: string; limit?: string; search?: string; sortBy?: string };
+    try {
+      // B3 fix — Resolve accessible accounts via shared helper (cùng hierarchy với
+      // checkAccess): owner/admin → tất cả nick org; non-admin → ACL + owned.
+      // Trước đây inline chỉ explicit + owned → admin không own đủ nick bị empty list.
+      const accessibleIds = await getAccessibleZaloAccountIds({
+        id: user.id,
+        orgId: user.orgId,
+        role: user.role,
+      });
+
+      if (accessibleIds.length === 0) {
+        return { friends: [], total: 0, counts: {}, page: 1, limit: parseInt(limit, 10) || 25 };
+      }
+
+      const pageNum = Math.max(1, parseInt(page, 10) || 1);
+      const limitNum = Math.min(200, Math.max(1, parseInt(limit, 10) || 25));
+
+      const where: any = {
+        orgId: user.orgId,
+        zaloAccountId: { in: accessibleIds },
+      };
+      if (kind && kind !== 'all') where.relationshipKind = kind;
+      if (search.trim()) {
+        const q = search.trim();
+        const canonicalPhone = normalizePhone(q);
+        const contactOr: Record<string, unknown>[] = [
+          { fullName: { contains: q, mode: 'insensitive' } },
+          { crmName:  { contains: q, mode: 'insensitive' } },
+        ];
+        if (canonicalPhone) contactOr.push({ phoneNormalized: { equals: canonicalPhone } });
+        where.AND = [
+          { OR: [
+            { contact: { OR: contactOr } },
+            { zaloUidInNick:   { equals: q } },
+            { zaloGlobalId:    { equals: q } },
+            { zaloUsername:    { equals: q } },
+            { zaloDisplayName: { contains: q, mode: 'insensitive' } },
+            { aliasInNick:     { contains: q, mode: 'insensitive' } },
+          ] },
+        ];
+      }
+
+      const orderBy = buildFriendOrderBy(sortBy);
+
+      const [friends, total, countsRaw] = await Promise.all([
+        prisma.friend.findMany({
+          where,
+          include: FRIEND_INCLUDE_WITH_CONTACT,
+          orderBy,
+          skip: (pageNum - 1) * limitNum,
+          take: limitNum,
+        }),
+        prisma.friend.count({ where }),
+        prisma.friend.groupBy({
+          by: ['relationshipKind'],
+          where: { orgId: user.orgId, zaloAccountId: { in: accessibleIds } },
+          _count: true,
+        }),
+      ]);
+
+      const counts = Object.fromEntries(countsRaw.map((g) => [g.relationshipKind, g._count]));
+      return {
+        friends: friends.map(toFriendDto),
+        total,
+        counts,
+        page: pageNum,
+        limit: limitNum,
+        accessibleNicks: accessibleIds.length,
+      };
+    } catch (err) {
+      return handleError(reply, err, 'friends-db-all-nicks');
+    }
+  });
+
+  // POST .../friends-db/sync — manual force-refresh ("↻ Làm mới ngay" button).
+  // Gọi syncAccountFully → 3 nhánh parallel (friends + aliases + labels) để
+  // user bấm 1 nút catch tất cả update từ Zalo native app.
+  // Cooldown 5s/account (áp ở friends branch) để chống spam.
   app.post(`${BASE}-db/sync`, async (request: FastifyRequest, reply: FastifyReply) => {
     const { accountId } = request.params as { accountId: string };
     const user = request.user!;
     if (!await checkAccess(request, reply, accountId, 'chat')) return;
     try {
       const account = await resolveAccount(accountId, user.orgId);
-
-      // Pull live data
-      const liveFriends = (await zaloOps.getAllFriends(accountId).catch(() => [])) as any[];
-      const sentRequests = (await zaloOps.getSentFriendRequests(accountId).catch(() => [])) as any[];
-
-      let createdContacts = 0;
-      let upsertedFriends = 0;
-
-      // Upsert each live friend (state=accepted)
-      for (const f of liveFriends) {
-        const uid = String(f.userId || f.uid || '');
-        if (!uid) continue;
-        // Find or create Contact
-        let contact = await prisma.contact.findFirst({
-          where: { orgId: user.orgId, zaloUid: uid },
-          select: { id: true },
+      const result = await syncAccountFully(accountId, user.orgId, {
+        trigger: 'manual',
+        io: zaloPool.getIO(),
+      });
+      if (result.friends?.skipped === 'cooldown') {
+        return reply.status(429).send({
+          error: 'cooldown',
+          message: 'Vừa đồng bộ xong, vui lòng thử lại sau vài giây',
         });
-        if (!contact) {
-          contact = await prisma.contact.create({
-            data: {
-              id: randomUUID(),
-              orgId: user.orgId,
-              zaloUid: uid,
-              fullName: f.zaloName || f.displayName || 'Unknown',
-              avatarUrl: f.avatar || null,
-              hasZalo: true,
-            },
-            select: { id: true },
-          });
-          createdContacts++;
-        }
-        await applyFriendTransition({
-          orgId: user.orgId,
-          zaloAccountId: accountId,
-          contactId: contact.id,
-          zaloUidInNick: uid,
-          newFriendshipStatus: 'accepted',
-        });
-        upsertedFriends++;
       }
-
-      // Upsert sent requests (state=pending_sent)
-      for (const r of sentRequests) {
-        const uid = String(r.uid || r.userId || '');
-        if (!uid) continue;
-        let contact = await prisma.contact.findFirst({
-          where: { orgId: user.orgId, zaloUid: uid },
-          select: { id: true },
-        });
-        if (!contact) {
-          contact = await prisma.contact.create({
-            data: {
-              id: randomUUID(),
-              orgId: user.orgId,
-              zaloUid: uid,
-              fullName: r.zaloName || r.displayName || 'Unknown',
-              hasZalo: true,
-            },
-            select: { id: true },
-          });
-          createdContacts++;
-        }
-        await applyFriendTransition({
-          orgId: user.orgId,
-          zaloAccountId: accountId,
-          contactId: contact.id,
-          zaloUidInNick: uid,
-          newFriendshipStatus: 'pending_sent',
-        });
-        upsertedFriends++;
-      }
-
       return {
         nickId: accountId,
         nickDisplayName: account.displayName,
-        liveFriends: liveFriends.length,
-        sentRequests: sentRequests.length,
-        upsertedFriends,
-        createdContacts,
+        liveFriends: result.friends?.liveCount ?? 0,
+        upsertedFriends: result.friends?.upsertedFriends ?? 0,
+        createdContacts: result.friends?.createdContacts ?? 0,
+        emittedCount: result.friends?.emittedCount ?? 0,
+        aliasesUpdated: result.aliasesUpdated,
+        labelsUpdated: result.labelsUpdated,
+        errors: result.errors,
+        durationMs: result.durationMs,
       };
     } catch (err) {
       return handleError(reply, err, 'friends-db-sync');
@@ -289,14 +319,16 @@ export async function friendRoutes(app: FastifyInstance) {
     }
   });
 
-  // GET .../friends/aliases — all custom aliases
-  app.get(`${BASE}/aliases`, async (request: FastifyRequest, reply: FastifyReply) => {
+  // GET .../friends/aliases — all custom aliases (?count=N&page=P, default 100/1)
+  app.get(`${BASE}/aliases`, async (request: FastifyRequest<{ Querystring: { count?: string; page?: string } }>, reply: FastifyReply) => {
     const { accountId } = request.params as { accountId: string };
     const user = request.user!;
+    const count = Math.min(parseInt(request.query.count || '100') || 100, 1000);
+    const page = Math.max(parseInt(request.query.page || '1') || 1, 1);
     try {
       if (!await checkAccess(request, reply, accountId, 'read')) return;
       await resolveAccount(accountId, user.orgId);
-      const data = await zaloOps.getAliasList(accountId);
+      const data = await zaloOps.getAliasList(accountId, count, page);
       return { data };
     } catch (err) {
       return handleError(reply, err, 'friend-op');
@@ -352,28 +384,136 @@ export async function friendRoutes(app: FastifyInstance) {
   });
 
   // POST .../friends/requests/:userId/accept — accept incoming request
+  // Per-nick UID resolution: 1 Contact có thể có nhiều Friend rows trong cùng 1 nick
+  // (old friendship UID + new pending invite UID khác nhau — Zalo issue UID mới mỗi
+  // lần re-request). Conv bind vào UID cũ nhưng accept phải target UID PENDING.
+  // → Resolve actual pending UID qua Friend table trước khi gọi SDK.
   app.post(`${BASE}/requests/:userId/accept`, async (request: FastifyRequest, reply: FastifyReply) => {
     const { accountId, userId } = request.params as { accountId: string; userId: string };
     const user = request.user!;
     try {
       if (!await checkAccess(request, reply, accountId, 'chat')) return;
       await resolveAccount(accountId, user.orgId);
-      const data = await zaloOps.acceptFriendRequest(accountId, userId);
-      return { data };
+
+      // Bước 1: resolve actual pending UID. userId từ URL có thể là externalThreadId
+      // của conv (= UID old friendship). Tìm Friend row pending_received cùng (nick, contact).
+      let acceptUid = userId;
+      let resolvedFrom: string | null = null;
+      try {
+        const convFriend = await prisma.friend.findUnique({
+          where: { zaloAccountId_zaloUidInNick: { zaloAccountId: accountId, zaloUidInNick: userId } },
+          select: { contactId: true, friendshipStatus: true },
+        });
+        if (convFriend?.contactId && convFriend.friendshipStatus !== 'pending_received') {
+          // Conv UID không phải pending → tìm pending sibling cùng contact + nick
+          const pendingSibling = await prisma.friend.findFirst({
+            where: {
+              zaloAccountId: accountId,
+              contactId: convFriend.contactId,
+              friendshipStatus: 'pending_received',
+              zaloUidInNick: { not: userId },
+            },
+            select: { zaloUidInNick: true, id: true },
+          });
+          if (pendingSibling?.zaloUidInNick) {
+            acceptUid = pendingSibling.zaloUidInNick;
+            resolvedFrom = userId;
+            logger.info(`[friend-op] Resolved pending UID for accept`, {
+              accountId, originalUid: userId, actualUid: acceptUid,
+              contactId: convFriend.contactId, siblingFriendId: pendingSibling.id,
+            });
+          }
+        }
+      } catch (resolveErr: any) {
+        logger.warn(`[friend-op] UID resolve failed, using original`, { userId, err: resolveErr?.message });
+      }
+
+      // Bước 2: verify current state qua getFriendRequestStatus (diagnostic)
+      let statusBefore: any = null;
+      try {
+        statusBefore = await zaloOps.getFriendRequestStatus(accountId, acceptUid);
+        logger.info(`[friend-op] accept ${accountId}→${acceptUid} status:`, statusBefore);
+      } catch (statusErr: any) {
+        logger.warn(`[friend-op] getFriendRequestStatus failed before accept`, { accountId, acceptUid, err: statusErr?.message });
+      }
+
+      // Bước 3: thử acceptFriendRequest với UID đã resolve
+      try {
+        const data = await zaloOps.acceptFriendRequest(accountId, acceptUid);
+        return { data, method: resolvedFrom ? 'accept-resolved' : 'accept', acceptUid, resolvedFrom };
+      } catch (acceptErr: any) {
+        const errMsg = String(acceptErr?.message || '');
+        logger.warn(`[friend-op] acceptFriendRequest failed`, {
+          accountId, acceptUid, originalUid: userId,
+          errMsg, errCode: acceptErr?.code, statusBefore,
+        });
+
+        // Bước 4: fallback sendFriendRequest — Zalo SDK comment:
+        // "222 if user has already sent you a friend request, your request will be
+        //  treated as acceptance instead". Chỉ fallback khi statusBefore != is_friend.
+        const shouldFallback = !statusBefore?.is_friend && (
+          statusBefore?.is_requesting === 1 ||
+          errMsg.includes('Tham số không hợp lệ') ||
+          errMsg.includes('Invalid')
+        );
+        if (shouldFallback) {
+          logger.info(`[friend-op] Falling back to sendFriendRequest`, { acceptUid });
+          try {
+            const data = await zaloOps.sendFriendRequest(accountId, '', acceptUid);
+            return { data, method: 'send-as-accept', acceptUid, resolvedFrom };
+          } catch (sendErr: any) {
+            logger.error(`[friend-op] sendFriendRequest fallback also failed`, {
+              accountId, acceptUid, err: sendErr?.message,
+            });
+            throw sendErr;
+          }
+        }
+        throw acceptErr;
+      }
     } catch (err) {
       return handleError(reply, err, 'friend-op');
     }
   });
 
   // POST .../friends/requests/:userId/reject — reject incoming request
+  // Per-nick UID: same resolution logic như /accept — conv UID có thể là old friendship,
+  // pending invite trên Friend row sibling khác. Reject sai UID → "Tham số không hợp lệ".
   app.post(`${BASE}/requests/:userId/reject`, async (request: FastifyRequest, reply: FastifyReply) => {
     const { accountId, userId } = request.params as { accountId: string; userId: string };
     const user = request.user!;
     try {
       if (!await checkAccess(request, reply, accountId, 'chat')) return;
       await resolveAccount(accountId, user.orgId);
-      const data = await zaloOps.rejectFriendRequest(accountId, userId);
-      return { data };
+
+      let rejectUid = userId;
+      try {
+        const convFriend = await prisma.friend.findUnique({
+          where: { zaloAccountId_zaloUidInNick: { zaloAccountId: accountId, zaloUidInNick: userId } },
+          select: { contactId: true, friendshipStatus: true },
+        });
+        if (convFriend?.contactId && convFriend.friendshipStatus !== 'pending_received') {
+          const pendingSibling = await prisma.friend.findFirst({
+            where: {
+              zaloAccountId: accountId,
+              contactId: convFriend.contactId,
+              friendshipStatus: 'pending_received',
+              zaloUidInNick: { not: userId },
+            },
+            select: { zaloUidInNick: true },
+          });
+          if (pendingSibling?.zaloUidInNick) {
+            rejectUid = pendingSibling.zaloUidInNick;
+            logger.info(`[friend-op] Resolved pending UID for reject`, {
+              accountId, originalUid: userId, actualUid: rejectUid,
+            });
+          }
+        }
+      } catch (resolveErr: any) {
+        logger.warn(`[friend-op] UID resolve failed for reject`, { userId, err: resolveErr?.message });
+      }
+
+      const data = await zaloOps.rejectFriendRequest(accountId, rejectUid);
+      return { data, rejectUid, originalUid: userId };
     } catch (err) {
       return handleError(reply, err, 'friend-op');
     }
@@ -496,4 +636,30 @@ export async function friendRoutes(app: FastifyInstance) {
       return handleError(reply, err, 'friend-op');
     }
   });
+}
+
+/**
+ * Map sortBy query param → Prisma orderBy clause. Stable tie-break luôn cuối
+ * (createdAt + id) để pagination không dao động giữa các page.
+ *
+ * Phase 6: thêm sort theo leadScore + stuckSince để FriendsView Score column sort được.
+ */
+function buildFriendOrderBy(sortBy: string): any[] {
+  const tieBreak = [{ createdAt: 'desc' as const }, { id: 'asc' as const }];
+  switch (sortBy) {
+    case 'score-desc':
+      return [{ leadScore: 'desc' as const }, ...tieBreak];
+    case 'score-asc':
+      return [{ leadScore: 'asc' as const }, ...tieBreak];
+    case 'stuck':
+      // Stuck KH lên đầu (oldest stuck first), KH không stuck xuống cuối.
+      return [{ stuckSince: { sort: 'asc' as const, nulls: 'last' as const } }, ...tieBreak];
+    case 'recent':
+    default:
+      return [
+        { lastInboundAt: { sort: 'desc' as const, nulls: 'last' as const } },
+        { lastOutboundAt: { sort: 'desc' as const, nulls: 'last' as const } },
+        ...tieBreak,
+      ];
+  }
 }

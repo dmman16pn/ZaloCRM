@@ -54,6 +54,7 @@ export async function syncLabelsForAccount(
 ): Promise<{
   labels: Array<{ id: number; text: string; color: string; emoji: string | null; assignedCount: number }>;
   friendsUpdated: number;
+  aliasesUpdated: number;
   version: number;
 }> {
   const isDelta = Array.isArray(opts?.affectedUidsOnly);
@@ -216,10 +217,16 @@ export async function syncLabelsForAccount(
         where: { sourceZaloLabelId: l.zaloLabelId },
       });
       if (bySource) {
-        await prisma.crmTag.update({
-          where: { id: bySource.id },
-          data: { name: tagName, ...baseData },
-        });
+        try {
+          await prisma.crmTag.update({
+            where: { id: bySource.id },
+            data: { name: tagName, ...baseData },
+          });
+        } catch (err: any) {
+          // Race: another sync claimed (orgId, name) trong khi mình tính update
+          // → skip, row đã được đồng bộ bởi caller khác.
+          if (err?.code !== 'P2002') throw err;
+        }
         continue;
       }
 
@@ -228,16 +235,45 @@ export async function syncLabelsForAccount(
       });
       if (byName) {
         // Claim legacy row (sourceZaloLabelId=null từ PR2) → upgrade managedBy
-        await prisma.crmTag.update({
-          where: { id: byName.id },
-          data: baseData,
-        });
+        try {
+          await prisma.crmTag.update({
+            where: { id: byName.id },
+            data: baseData,
+          });
+        } catch (err: any) {
+          // Race: another sync vừa set sourceZaloLabelId cho row này → skip
+          if (err?.code !== 'P2002') throw err;
+        }
         continue;
       }
 
-      await prisma.crmTag.create({
-        data: { orgId, name: tagName, ...baseData },
-      });
+      // Race-condition safe: 2 concurrent sync requests cho cùng 1 label
+      // có thể cả 2 cùng pass bySource=null + byName=null. Khi create lần 2
+      // sẽ hit P2002 unique(orgId, name) hoặc unique(sourceZaloLabelId).
+      // Fix: catch P2002 → retry find + update thay vì error toàn bộ sync.
+      try {
+        await prisma.crmTag.create({
+          data: { orgId, name: tagName, ...baseData },
+        });
+      } catch (err: any) {
+        if (err?.code === 'P2002') {
+          const winnerBySrc = await prisma.crmTag.findUnique({
+            where: { sourceZaloLabelId: l.zaloLabelId },
+          });
+          const winnerByName = winnerBySrc
+            ? null
+            : await prisma.crmTag.findUnique({ where: { orgId_name: { orgId, name: tagName } } });
+          const winner = winnerBySrc ?? winnerByName;
+          if (winner) {
+            await prisma.crmTag.update({
+              where: { id: winner.id },
+              data: { name: tagName, ...baseData },
+            });
+          }
+        } else {
+          throw err;
+        }
+      }
     }
 
     // Archive CrmTag tương ứng với label bị xoá (không còn trong upserted set)
@@ -340,6 +376,20 @@ export async function syncLabelsForAccount(
     }
   }
 
+  // Alias sync (Tên gợi nhớ): chỉ ở full-sync path. Delta path (assign-thread) bỏ qua
+  // vì user assign tag không liên quan đến alias. Fire-and-forget — không block label
+  // sync nếu alias pull lỗi (alias là enrichment, không critical).
+  let aliasesUpdated = 0;
+  if (!isDelta) {
+    try {
+      const { syncAliasesForAccount } = await import('./alias-sync.js');
+      const r = await syncAliasesForAccount(accountId, orgId);
+      aliasesUpdated = r.updated;
+    } catch (err) {
+      logger.warn(`[zalo-labels] Alias sync skipped for ${accountId}:`, err);
+    }
+  }
+
   return {
     labels: upserted.map(l => ({
       id: l.zaloLabelId,
@@ -349,6 +399,7 @@ export async function syncLabelsForAccount(
       assignedCount: Array.isArray(l.conversations) ? (l.conversations as string[]).length : 0,
     })),
     friendsUpdated,
+    aliasesUpdated,
     version,
   };
 }

@@ -10,9 +10,13 @@ backups/
 .backfill*.sql
 .diag.sql
 TODO.local.md
+.zalo-icon-preview.html
+.zalo-phase6-preview.html
+.zalo-filter-mockup.html
 /frontend/public/chat-smax-*.html
 /frontend/public/chat-perpair-context.html
 /frontend/public/contacts-approach-*.html
 /frontend/public/contacts-layout-mockups.html
 /frontend/public/friends-v2.html
 /frontend/public/Giao Diện Tính Năng*.xlsx
+backend/static/

@@ -57,6 +57,12 @@ class ZaloAccountPool {
     this.io = io;
   }
 
+  /** Accessor cho module ngoài (friend-sync-service, ...) cần emit socket
+   *  mà không cần register listener — dùng zaloPool như central IO registry. */
+  getIO(): Server | null {
+    return this.io;
+  }
+
   // Initiate QR-based login; emits QR events to frontend via Socket.IO
   async loginQR(accountId: string, proxyUrl?: string | null): Promise<void> {
     const zalo = new Zalo({ logging: false, selfListen: true, imageMetadataGetter });
@@ -130,7 +136,7 @@ class ZaloAccountPool {
 
       // Fire-and-forget: pull Zalo labels lần đầu để Friend.zaloLabels + crmTagsPerNick
       // có data ngay sau khi connect — tránh phải bấm "Đồng bộ ngay" thủ công.
-      this.autoSyncLabelsOnConnect(accountId);
+      this.autoSyncOnConnect(accountId);
     } catch (err) {
       const instance = this.instances.get(accountId);
       if (instance) instance.status = 'disconnected';
@@ -186,7 +192,7 @@ class ZaloAccountPool {
 
       // Fire-and-forget: pull Zalo labels sau reconnect — bắt kịp thay đổi label
       // mà user thực hiện trên Zalo Real lúc CRM offline.
-      this.autoSyncLabelsOnConnect(accountId);
+      this.autoSyncOnConnect(accountId);
     } catch (err) {
       const instance = this.instances.get(accountId);
       if (instance) instance.status = 'disconnected';
@@ -195,22 +201,25 @@ class ZaloAccountPool {
     }
   }
 
-  /** Pull Zalo labels for this account, fire-and-forget. Loads orgId from DB
-   *  vì instance trong RAM không có. Có thể trỳ lỗi nếu account vừa kết nối
-   *  chưa kịp ổn định — không throw, chỉ log. */
-  private autoSyncLabelsOnConnect(accountId: string): void {
+  /** Pull friends + aliases + labels cho account vừa connect via syncAccountFully wrapper.
+   *  Fire-and-forget — 3 nhánh parallel trong wrapper. Errors logged, không throw. */
+  private autoSyncOnConnect(accountId: string): void {
     void (async () => {
-      try {
-        const account = await prisma.zaloAccount.findUnique({
-          where: { id: accountId },
-          select: { orgId: true },
-        });
-        if (!account) return;
-        const { syncLabelsForAccount } = await import('./zalo-labels-routes.js');
-        const result = await syncLabelsForAccount(accountId, account.orgId);
-        logger.info(`[zalo:${accountId}] Auto-sync labels on connect: ${result.labels.length} labels, ${result.friendsUpdated} friends updated`);
-      } catch (err) {
-        logger.warn(`[zalo:${accountId}] Auto-sync labels on connect failed:`, err);
+      const account = await prisma.zaloAccount.findUnique({
+        where: { id: accountId },
+        select: { orgId: true },
+      });
+      if (!account) return;
+      const { syncAccountFully } = await import('./friend-sync-service.js');
+      const res = await syncAccountFully(accountId, account.orgId, {
+        trigger: 'connect',
+        io: this.io,
+      });
+      logger.info(
+        `[zalo:${accountId}] Auto-sync on connect: friends_emitted=${res.friends?.emittedCount ?? 0} aliases=${res.aliasesUpdated} labels=${res.labelsUpdated} errors=${res.errors.length}`,
+      );
+      if (res.errors.length > 0) {
+        logger.warn(`[zalo:${accountId}] Auto-sync errors: ${res.errors.join(' | ')}`);
       }
     })();
   }

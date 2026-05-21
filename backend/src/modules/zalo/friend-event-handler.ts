@@ -16,6 +16,7 @@
 import { prisma } from '../../shared/database/prisma-client.js';
 import { logger } from '../../shared/utils/logger.js';
 import { randomUUID } from 'node:crypto';
+import { zaloPool } from './zalo-pool.js';
 
 // zca-js FriendEventType numeric values (mirrored from models/FriendEvent.d.ts)
 export const FriendEventType = {
@@ -100,13 +101,76 @@ async function resolveContact(
   });
   if (byGlobalUid) return byGlobalUid;
 
-  // Fresh — create stub Contact (no phone yet; will be filled from message events later)
+  // Cross-nick contact matching — UID này từ POV nick mới, có thể đã là Contact
+  // dưới UID khác (per-account UID rule). Hỏi Zalo getUserInfo để lấy globalId/
+  // username/phone → match Contact đã có thay vì tạo stub mới. Tránh trường hợp
+  // friend:updated event emit cho contactId stub mới mà UI conv bind contactId cũ.
+  let resolvedGlobalId: string | null = null;
+  let resolvedUsername: string | null = null;
+  let resolvedPhone: string | null = null;
+  let resolvedName: string | null = null;
+  let resolvedAvatar: string | null = null;
+  try {
+    const instance = zaloPool.getInstance(zaloAccountId);
+    if (instance?.api?.getUserInfo && instance.status === 'connected') {
+      const result: any = await instance.api.getUserInfo(uid);
+      const profiles = result?.changed_profiles || {};
+      const profile = profiles[uid] || profiles[`${uid}_0`];
+      if (profile) {
+        resolvedGlobalId = String(profile.globalId || '').trim() || null;
+        resolvedUsername = String(profile.username || '').trim() || null;
+        resolvedPhone = String(profile.phoneNumber || '').trim() || null;
+        resolvedName = (profile.zaloName || profile.zalo_name || profile.displayName || profile.display_name || '').trim() || null;
+        resolvedAvatar = (profile.avatar || '').trim() || null;
+      }
+    }
+  } catch (err) {
+    logger.debug(`[friend-event] getUserInfo(${uid}) failed in resolveContact:`, err);
+  }
+
+  if (resolvedGlobalId || resolvedUsername) {
+    const byIdentity = await prisma.contact.findFirst({
+      where: {
+        orgId,
+        OR: [
+          ...(resolvedGlobalId ? [{ zaloGlobalId: resolvedGlobalId }] : []),
+          ...(resolvedUsername ? [{ zaloUsername: resolvedUsername }] : []),
+        ],
+      },
+      select: { id: true, orgId: true },
+    });
+    if (byIdentity) {
+      logger.info(`[friend-event] Cross-nick match: uid=${uid} → existing contact=${byIdentity.id} via globalId/username`);
+      return byIdentity;
+    }
+  }
+
+  if (resolvedPhone) {
+    const { normalizePhone } = await import('../../shared/utils/phone.js');
+    const phoneNormalized = normalizePhone(resolvedPhone);
+    if (phoneNormalized) {
+      const byPhone = await prisma.contact.findFirst({
+        where: { orgId, phoneNormalized },
+        select: { id: true, orgId: true },
+      });
+      if (byPhone) {
+        logger.info(`[friend-event] Cross-nick match: uid=${uid} → existing contact=${byPhone.id} via phone`);
+        return byPhone;
+      }
+    }
+  }
+
+  // Fresh — create stub Contact với data fetch được từ Zalo (avatar/name/globalId/etc)
   const created = await prisma.contact.create({
     data: {
       id: randomUUID(),
       orgId,
       zaloUid: uid,
-      fullName: fallbackName || 'Unknown',
+      fullName: resolvedName || fallbackName || 'Unknown',
+      zaloGlobalId: resolvedGlobalId,
+      zaloUsername: resolvedUsername,
+      avatarUrl: resolvedAvatar,
+      phone: resolvedPhone,
     },
     select: { id: true, orgId: true },
   });
@@ -128,13 +192,22 @@ export async function applyFriendTransition(args: {
   zaloUidInNick: string;
   newFriendshipStatus: string;
   attemptStateOnAccept?: string; // 'accepted' | 'rejected' | 'cancelled' | 'expired'
+  /** 'event' = real Zalo event (acceptFriendRequest…) → reliable becameFriendAt;
+   *  'sync' = bulk sync from getAllFriends → KHÔNG set becameFriendAt
+   *           (Zalo không trả ngày kết bạn thực, sync time = today gây "Đã KB hôm nay" sai). */
+  source?: 'event' | 'sync';
 }): Promise<void> {
   const { orgId, zaloAccountId, contactId, zaloUidInNick, newFriendshipStatus } = args;
+  const source = args.source ?? 'event';
 
   await prisma.$transaction(async (tx) => {
     const existing = await tx.friend.findUnique({
       where: { zaloAccountId_zaloUidInNick: { zaloAccountId, zaloUidInNick } },
-      select: { relationshipKind: true, hasConversation: true },
+      select: {
+        relationshipKind: true,
+        hasConversation: true,
+        becameFriendAt: true,  // B1 — cần để biết đã set chưa, tránh reset
+      },
     });
 
     const fromKind = (existing?.relationshipKind as RelationshipKind) ?? 'none';
@@ -146,8 +219,26 @@ export async function applyFriendTransition(args: {
       friendshipStatus: newFriendshipStatus,
       relationshipKind: toKind,
     };
-    if (newFriendshipStatus === 'accepted') data.becameFriendAt = now;
-    if (newFriendshipStatus === 'removed' || newFriendshipStatus === 'blocked') data.removedAt = now;
+    // B1 + Phase B fix — chỉ set becameFriendAt khi:
+    //   1. source = 'event' (REAL Zalo acceptFriendRequest event) — reliable
+    //   2. AND becameFriendAt còn NULL (chưa set bao giờ)
+    //
+    // BULK SYNC (source='sync') KHÔNG set vì Zalo getAllFriends KHÔNG trả ngày
+    // KB thực — sync time = today → mọi KH cũ hiện "Đã KB hôm nay" sai. Để null
+    // trong DB và FE hiển thị "✓ Đã kết bạn" không kèm date label.
+    if (source === 'event' && newFriendshipStatus === 'accepted' && !existing?.becameFriendAt) {
+      data.becameFriendAt = now;
+    }
+    // removedAt cũng phải tương tự — chỉ set khi transition NEW, không overwrite ngày ngắt cũ
+    if ((newFriendshipStatus === 'removed' || newFriendshipStatus === 'blocked') && !existing?.relationshipKind) {
+      data.removedAt = now;
+    } else if (
+      (newFriendshipStatus === 'removed' || newFriendshipStatus === 'blocked')
+      && existing?.relationshipKind !== 'ghost'
+    ) {
+      // Transition non-ghost → ghost: set removedAt lần đầu
+      data.removedAt = now;
+    }
 
     await tx.friend.upsert({
       where: { zaloAccountId_zaloUidInNick: { zaloAccountId, zaloUidInNick } },
@@ -197,6 +288,23 @@ export async function applyFriendTransition(args: {
       });
     }
   });
+
+  // Phase 7 — emit AutomationEvent so engine can fire triggers bound to this
+  // event. Imported lazily to avoid circular dep (engine imports prisma helpers).
+  if (newFriendshipStatus === 'accepted' || newFriendshipStatus === 'pending_received') {
+    try {
+      const { automationEventBus } = await import('../automation/engine/event-bus.js');
+      automationEventBus.emit({
+        type: newFriendshipStatus === 'accepted' ? 'friendship_accepted' : 'friendship_received',
+        orgId,
+        occurredAt: new Date(),
+        contactId,
+        payload: { zaloAccountId, zaloUidInNick },
+      });
+    } catch (err) {
+      // Engine not loaded (e.g. in tests) — silent fail
+    }
+  }
 }
 
 /**

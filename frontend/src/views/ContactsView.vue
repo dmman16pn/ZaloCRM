@@ -57,6 +57,12 @@
         💡 Gợi ý KH Cha
         <span v-if="candidateCount > 0" class="btn-badge">{{ candidateCount }}</span>
       </button>
+      <button
+        class="btn"
+        :disabled="runningDetector"
+        title="Chạy detector ngay (không đợi cron 02:30 UTC). Cần admin/owner."
+        @click="onRunDetector"
+      >{{ runningDetector ? '🔄 Đang quét…' : '🔄 Quét ngay' }}</button>
       <button class="btn">⬇ Xuất</button>
       <v-menu :close-on-content-click="false">
         <template #activator="{ props: act }">
@@ -207,11 +213,11 @@
                 <div class="name-text">
                   {{ contact.crmName || contact.fullName || '—' }}
                   <span
-                    v-if="(contact._count?.conversations || 0) > 1"
+                    v-if="(contact.childrenCount ?? 0) > 1"
                     class="chip chip-multi-nick"
-                    :title="`${contact._count?.conversations} nick CRM đang chăm khách này`"
+                    :title="`${contact.childrenCount} Friend row (nick chăm × Zalo identity) — mở ▸ để xem chi tiết`"
                   >
-                    👥 Đa nick ({{ contact._count?.conversations }})
+                    👥 Đa nick ({{ contact.childrenCount }})
                   </span>
                 </div>
                 <div v-if="contact.fullName && contact.crmName && contact.fullName !== contact.crmName" class="name-sub">
@@ -337,9 +343,9 @@
                     <thead>
                       <tr>
                         <th>Nick Zalo (Sale)</th>
-                        <th>Tên CRM/Nick KH</th>
                         <th>Ảnh KH</th>
                         <th>Tên Zalo + UID</th>
+                        <th>Tên gợi nhớ</th>
                         <th v-if="visibleChildCols.zaloGlobalId" title="Zalo globalId per identity (toàn cục)">Global ID</th>
                         <th v-if="visibleChildCols.zaloUsername" title="Zalo username (handle)">Username</th>
                         <th>Trạng thái KB</th>
@@ -369,11 +375,6 @@
                           </div>
                         </td>
                         <td>
-                          <span :class="['line1', { empty: !row.aliasInNick }]">
-                            {{ row.aliasInNick || '— chưa đặt —' }}
-                          </span>
-                        </td>
-                        <td>
                           <Avatar :src="row.zaloAvatarUrl || contact.avatarUrl" :name="row.zaloName || contact.fullName || '?'" :size="32" :gradient-seed="row.id" />
                         </td>
                         <td>
@@ -381,6 +382,15 @@
                             <span class="line1">{{ row.zaloName || '—' }}</span>
                             <span class="uid">{{ row.zaloUid || 'chưa lấy' }}</span>
                           </div>
+                        </td>
+                        <td>
+                          <input
+                            class="alias-input"
+                            :value="row.aliasInNick || ''"
+                            placeholder="— Tên gợi nhớ —"
+                            :title="'Sync 2-chiều với Zalo Real. Đổi ở đây → push qua Zalo của Sale.'"
+                            @change="onFriendAliasChange(row, ($event.target as HTMLInputElement).value)"
+                          />
                         </td>
                         <td v-if="visibleChildCols.zaloGlobalId">
                           <code v-if="row.zaloGlobalId" class="uid-cell" :title="row.zaloGlobalId">{{ row.zaloGlobalId.slice(0, 10) }}…</code>
@@ -527,6 +537,7 @@ import {
 import type { Contact } from '@/composables/use-contacts';
 import MobileContactView from '@/views/MobileContactView.vue';
 import { useMobile } from '@/composables/use-mobile';
+import { useFriendSocket, type FriendUpdatedPayload } from '@/composables/use-friend-socket';
 
 const { isMobile } = useMobile();
 const router = useRouter();
@@ -598,6 +609,34 @@ async function fetchCandidateCount() {
   } catch { candidateCount.value = 0; }
 }
 function onCandidateResolved() { fetchCandidateCount(); fetchContacts(); }
+
+// Manual trigger duplicate-detector — admin/owner only. Không đợi cron 02:30 UTC daily.
+// Sau khi xong, refetch parent-candidates + duplicate-groups count để hiện badge mới.
+const runningDetector = ref(false);
+async function onRunDetector() {
+  if (runningDetector.value) return;
+  runningDetector.value = true;
+  try {
+    const res = await api.post<{
+      ok: boolean; durationMs: number; parentCandidates: number; duplicateGroups: number;
+    }>('/admin/run-detector');
+    const { parentCandidates, duplicateGroups, durationMs } = res.data;
+    toast.success(
+      `Quét xong trong ${(durationMs / 1000).toFixed(1)}s — `
+      + `${parentCandidates} gợi ý KH Cha, ${duplicateGroups} cụm trùng lặp`,
+    );
+    await Promise.all([fetchCandidateCount(), fetchDuplicateGroups(), fetchContacts()]);
+  } catch (err: unknown) {
+    const e = err as { response?: { status?: number; data?: { error?: string } } };
+    if (e.response?.status === 403) {
+      toast.error('Chỉ admin/owner được phép chạy detector');
+    } else {
+      toast.error('Quét thất bại: ' + (e.response?.data?.error || String(err)));
+    }
+  } finally {
+    runningDetector.value = false;
+  }
+}
 const selectedContact = ref<Contact | null>(null);
 const expandedId = ref<string | null>(null);
 // Real friendship data per contact (key: contactId → ChildRow[]). Fetched on first expand.
@@ -730,6 +769,24 @@ async function fetchFriendships(contact: Contact) {
   }
 }
 
+// ─── Live socket subscribe: friend:updated → mutate row trong friendshipCache
+// Chỉ áp dụng khi KH Cha đang được expand (có cache). Row khác → ignore.
+// Tránh refetch list, mutate trực tiếp ô đã đổi (alias/status/score/avatar...).
+useFriendSocket((payload: FriendUpdatedPayload) => {
+  const cached = friendshipCache.value[payload.contactId];
+  if (!cached) return; // KH Cha chưa expand, skip
+  const row = cached.find((r) => r.id === payload.friendId);
+  if (!row) return;
+  // Merge fields mà ChildRow shape có. Skip key không match (vd Prisma timestamps
+  // dạng Date string — ChildRow đã có relativeTime cache riêng, để parent refetch
+  // tự rebuild).
+  for (const [k, v] of Object.entries(payload.patch)) {
+    if (k in row) {
+      (row as unknown as Record<string, unknown>)[k] = v;
+    }
+  }
+});
+
 interface ApiFriendship {
   id: string;
   zaloUidInNick: string;
@@ -839,6 +896,24 @@ async function onFriendScoreChange(row: ChildRow, value: string) {
     fetchContacts();
   } catch (err) {
     toast.error('Cập nhật score thất bại');
+  }
+}
+
+/* Edit "Tên gợi nhớ" — sync 2-chiều với Zalo Real.
+ * PATCH /friends/:id sẽ:
+ *  1. Update DB (Friend.aliasInNick)
+ *  2. Backend fire-and-forget gọi api.changeFriendAlias / removeFriendAlias để push lên Zalo
+ *  3. Log activity friend_alias_change với trigger='crm_edit' */
+async function onFriendAliasChange(row: ChildRow, value: string) {
+  const trimmed = (value || '').trim();
+  const newAlias = trimmed.length ? trimmed : null;
+  if (newAlias === (row.aliasInNick || null)) return;  // no-op
+  try {
+    await api.patch(`/friends/${row.id}`, { aliasInNick: newAlias });
+    row.aliasInNick = newAlias;
+    toast.success(newAlias ? `Đã đổi tên gợi nhớ → "${newAlias}"` : 'Đã xoá tên gợi nhớ');
+  } catch (err) {
+    toast.error('Cập nhật tên gợi nhớ thất bại');
   }
 }
 
@@ -1199,6 +1274,9 @@ onMounted(() => {
 .status-edit-chip:hover { filter: brightness(1.1); }
 .score-input { width: 50px; padding: 2px 4px; font-size: 11.5px; text-align: center; border: 1px solid var(--smax-grey-300); border-radius: 4px; }
 .score-input:focus { outline: 2px solid var(--smax-primary, #00f2ff); }
+.alias-input { width: 100%; min-width: 140px; padding: 3px 6px; font-size: 12px; border: 1px solid var(--smax-grey-300); border-radius: 4px; background: transparent; }
+.alias-input:focus { outline: 1.5px solid var(--smax-primary, #00f2ff); background: white; }
+.alias-input::placeholder { color: var(--smax-grey-400); font-style: italic; }
 .status-picker-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 1100; display: flex; align-items: center; justify-content: center; }
 .status-picker { background: var(--smax-bg); border-radius: 10px; padding: 16px 20px; min-width: 320px; max-width: 480px; }
 .status-picker h4 { margin: 0 0 12px; font-size: 14px; }

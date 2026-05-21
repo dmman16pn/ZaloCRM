@@ -167,6 +167,7 @@
 import { ref, reactive, computed } from 'vue';
 import { api } from '@/api/index';
 import AppointmentQuickDialog from './AppointmentQuickDialog.vue';
+import { getOrgParts, weekdayInOrgTz, formatInOrgTz, startOfOrgDay } from '@/composables/use-org-timezone';
 
 export interface Appointment {
   id: string;
@@ -283,36 +284,34 @@ function statusLabel(s: string): string {
 // Hiển thị giờ từ appointmentDate (UTC ISO) → browser local timezone tự chuyển đúng.
 // Không dùng appointmentTime string vì rows cũ có thể lưu UTC sai (bug Zalo sync).
 function formatAptTime(d: string): string {
-  const dt = new Date(d);
-  return `${String(dt.getHours()).padStart(2, '0')}:${String(dt.getMinutes()).padStart(2, '0')}`;
+  const p = getOrgParts(d);
+  if (!p) return '';
+  return `${String(p.hour).padStart(2, '0')}:${String(p.minute).padStart(2, '0')}`;
 }
 
-// Hiển thị ngày kiểu thân thiện: Hôm qua / Hôm nay / Ngày mai / Ngày mốt → trong list này,
-// quá list (3-6 ngày) thì Thứ X (Thứ 2..CN), >6 ngày thì dd/mm/yyyy
+// Hiển thị ngày kiểu thân thiện theo org TZ: Hôm qua / Hôm nay / Ngày mai / Ngày mốt;
+// 3-6 ngày tới: tên thứ; 2-6 ngày trước: "Thứ X tuần trước"; xa hơn: dd/mm/yyyy.
 function formatAptDate(d: string): string {
-  const dt = new Date(d);
-  const dateOnly = new Date(dt.getFullYear(), dt.getMonth(), dt.getDate());
-  const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const diffDays = Math.round((dateOnly.getTime() - today.getTime()) / 86400000);
+  const aptDay = startOfOrgDay(d);
+  const today = startOfOrgDay(new Date());
+  if (!aptDay || !today) return formatInOrgTz(d, undefined, { dateOnly: true });
+  const diffDays = Math.round((aptDay.getTime() - today.getTime()) / 86400000);
 
   if (diffDays === -1) return 'Hôm qua';
   if (diffDays === 0) return 'Hôm nay';
   if (diffDays === 1) return 'Ngày mai';
   if (diffDays === 2) return 'Ngày mốt';
 
-  // Trong tuần (3-6 ngày tới hoặc 2-6 ngày trước) → tên thứ
+  // Trong tuần (3-6 ngày tới hoặc 2-6 ngày trước) → tên thứ — weekday theo org TZ.
+  // weekdayInOrgTz đã trả về dạng "Thứ Hai" (cap-init), không cần replace nữa.
   if (diffDays >= 3 && diffDays <= 6) {
-    const weekday = dt.toLocaleDateString('vi-VN', { weekday: 'long' });
-    return weekday.replace(/^./, c => c.toUpperCase()); // "thứ hai" → "Thứ hai"
+    return weekdayInOrgTz(d, undefined, 'long');
   }
   if (diffDays <= -2 && diffDays >= -6) {
-    const weekday = dt.toLocaleDateString('vi-VN', { weekday: 'long' });
-    return `${weekday.replace(/^./, c => c.toUpperCase())} tuần trước`;
+    return `${weekdayInOrgTz(d, undefined, 'long')} tuần trước`;
   }
-
   // Xa hơn → full date
-  return dt.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' });
+  return formatInOrgTz(d, undefined, { dateOnly: true });
 }
 
 function startEdit(apt: Appointment) {
@@ -354,7 +353,7 @@ function formatRelativeTime(iso: string): string {
   if (diffH < 24) return `${diffH} giờ trước`;
   const diffD = Math.floor(diffH / 24);
   if (diffD < 7) return `${diffD} ngày trước`;
-  return new Date(iso).toLocaleDateString('vi-VN');
+  return formatInOrgTz(iso, undefined, { dateOnly: true });
 }
 
 async function submitEdit(appointmentId: string) {

@@ -95,6 +95,13 @@ export async function notesRoutes(app: FastifyInstance): Promise<void> {
         include: NOTE_INCLUDE,
       });
 
+      // Phase 6 polish P2 quick win — note dài (>100 chars) → +engagement signal
+      // Chỉ trigger với root note (không trigger với reply trong thread, tránh inflate)
+      if (!parentNoteId && body.length >= 100) {
+        const { onNoteAdded } = await import('../scoring/scoring-hooks.js');
+        onNoteAdded(user.orgId, contactId, body);
+      }
+
       return reply.status(201).send({ note });
     } catch (err) {
       logger.error('[notes] Create error:', err);

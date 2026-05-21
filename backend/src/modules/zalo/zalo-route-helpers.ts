@@ -42,6 +42,47 @@ export async function checkAccess(request: FastifyRequest, reply: FastifyReply, 
   return true;
 }
 
+/**
+ * B3 fix — Get all Zalo account IDs current user has access to, in the same
+ * hierarchy as checkAccess: owner/admin role → ALL accounts trong org;
+ * non-admin → explicit ZaloAccountAccess rows + accounts user own.
+ *
+ * Reuse cho /friends-db/all-nicks (cross-nick aggregate FE) để admin nhìn được
+ * toàn bộ nick org thay vì chỉ owned/explicit access (Codex flagged: admin all-nicks
+ * incomplete).
+ */
+export async function getAccessibleZaloAccountIds(user: {
+  id: string;
+  orgId: string;
+  role: string;
+}): Promise<string[]> {
+  // Owner/admin: tất cả nick trong org
+  if (['owner', 'admin'].includes(user.role)) {
+    const accounts = await prisma.zaloAccount.findMany({
+      where: { orgId: user.orgId },
+      select: { id: true },
+    });
+    return accounts.map((a) => a.id);
+  }
+  // Non-admin: union explicit ACL + owned
+  const [accessRows, ownedRows] = await Promise.all([
+    prisma.zaloAccountAccess.findMany({
+      where: { userId: user.id, zaloAccount: { orgId: user.orgId } },
+      select: { zaloAccountId: true },
+    }),
+    prisma.zaloAccount.findMany({
+      where: { orgId: user.orgId, ownerUserId: user.id },
+      select: { id: true },
+    }),
+  ]);
+  return [
+    ...new Set([
+      ...accessRows.map((r) => r.zaloAccountId),
+      ...ownedRows.map((r) => r.id),
+    ]),
+  ];
+}
+
 /** Map ZaloOpError to HTTP response, fallback 500 for unknown errors */
 export function handleError(reply: FastifyReply, err: unknown, op: string) {
   if (err instanceof ZaloOpError) {

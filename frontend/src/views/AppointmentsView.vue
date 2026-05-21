@@ -1,371 +1,653 @@
 <template>
-  <div>
-    <!-- Toolbar -->
-    <div class="d-flex align-center mb-4 flex-wrap gap-2">
-      <h1 class="text-h5 mr-4">Lịch hẹn</h1>
-      <v-spacer />
-      <v-btn color="primary" prepend-icon="mdi-plus" @click="showCreateDialog = true">
-        Tạo lịch hẹn
-      </v-btn>
+  <div class="airtable-scope apt-page">
+    <!-- Hero band: white canvas, h1 weight 400 size 32, 2-row layout (title+CTA / controls) -->
+    <header class="apt-hero">
+      <div class="apt-hero-row1">
+        <div class="title-block">
+          <button class="icon-btn icon-btn--bordered drawer-toggle" title="Mở bộ lọc" @click="sidebarOpen = !sidebarOpen">☰</button>
+          <div>
+            <h1 class="apt-hero-title">📅 Lịch hẹn</h1>
+            <div class="apt-hero-sub">
+              <b>{{ totalLabel }}</b> · {{ weekLabel }}
+            </div>
+          </div>
+        </div>
+        <div class="apt-hero-actions">
+          <button class="at-btn at-btn--secondary" :title="'Xuất CSV'">
+            <span class="ic">⤓</span>
+            <span class="btn-label">Xuất CSV</span>
+          </button>
+          <button class="at-btn at-btn--primary" @click="openQuickCreate(null)">
+            <span class="ic">+</span>
+            <span class="btn-label">Tạo lịch hẹn</span>
+          </button>
+        </div>
+      </div>
+      <div class="apt-hero-row2">
+        <!-- Segmented view toggle -->
+        <div class="at-segmented">
+          <button
+            v-for="v in viewOptions"
+            :key="v.value"
+            :class="{ active: viewMode === v.value }"
+            :disabled="v.value === 'week' && isNarrow"
+            :title="v.value === 'week' && isNarrow ? 'View tuần chỉ hỗ trợ màn ≥ 900px' : ''"
+            @click="viewMode = v.value"
+          >{{ v.label }}</button>
+        </div>
+        <!-- Date nav (week view only) -->
+        <div class="apt-date-nav" :class="{ hidden: viewMode !== 'week' }">
+          <button class="icon-btn icon-btn--bordered" @click="shiftWeek(-1)">‹</button>
+          <span class="week-range">{{ weekRangeLabel }}</span>
+          <button class="icon-btn icon-btn--bordered" @click="shiftWeek(1)">›</button>
+          <button class="at-btn at-btn--secondary" @click="goToToday">Hôm nay</button>
+        </div>
+      </div>
+    </header>
+
+    <!-- Filter chips strip (Airtable: surface-soft bg, hairline border) -->
+    <div class="apt-filter-strip">
+      <span class="lbl">Đang lọc</span>
+      <span class="at-chip at-chip--active">
+        <span class="dot" :style="{ background: saleColor(currentUserId).bg }" />
+        {{ scopeLabel }}
+        <span v-if="scope !== 'me'" class="chip-info">· {{ visibleAppointments.length }} lịch</span>
+      </span>
+      <span v-if="source !== 'all'" class="at-chip" @click="source = 'all'">
+        Nguồn: {{ source === 'zalo' ? 'Zalo' : 'Thủ công' }} <span class="x">✕</span>
+      </span>
+      <span v-if="selectedStatuses.size < APPOINTMENT_STATUS_OPTIONS.length" class="at-chip">
+        Trạng thái: {{ selectedStatuses.size }}/{{ APPOINTMENT_STATUS_OPTIONS.length }}
+      </span>
+      <span v-if="selectedTypes.size < APPOINTMENT_TYPE_OPTIONS.length" class="at-chip">
+        Loại: {{ selectedTypes.size }}/{{ APPOINTMENT_TYPE_OPTIONS.length }}
+      </span>
+      <div class="spacer" />
+      <span class="kb-hint">
+        <kbd>N</kbd> tạo nhanh · <kbd>←</kbd><kbd>→</kbd> tuần · <kbd>T</kbd> hôm nay · <kbd>Esc</kbd> đóng
+      </span>
     </div>
 
-    <!-- Tabs -->
-    <v-tabs v-model="activeTab" class="mb-4">
-      <v-tab value="today">Hôm nay</v-tab>
-      <v-tab value="upcoming">Sắp tới</v-tab>
-      <v-tab value="all">Tất cả</v-tab>
-    </v-tabs>
-
-    <!-- Source filter chips — phân biệt Zalo vs Manual -->
-    <div class="d-flex align-center gap-2 mb-3 flex-wrap">
-      <v-chip
-        :variant="filters.source === 'all' ? 'flat' : 'outlined'"
-        :color="filters.source === 'all' ? 'primary' : undefined"
-        @click="filters.source = 'all'; fetchAppointments()"
-      >
-        Tất cả
-        <v-chip size="x-small" class="ml-1" variant="flat">
-          {{ (sourceCounts.manual || 0) + (sourceCounts.zalo || 0) }}
-        </v-chip>
-      </v-chip>
-      <v-chip
-        :variant="filters.source === 'zalo' ? 'flat' : 'outlined'"
-        :color="filters.source === 'zalo' ? 'info' : undefined"
-        prepend-icon="mdi-bell-ring"
-        @click="filters.source = 'zalo'; fetchAppointments()"
-      >
-        Zalo
-        <v-chip size="x-small" class="ml-1" variant="flat">{{ sourceCounts.zalo || 0 }}</v-chip>
-      </v-chip>
-      <v-chip
-        :variant="filters.source === 'manual' ? 'flat' : 'outlined'"
-        :color="filters.source === 'manual' ? 'secondary' : undefined"
-        prepend-icon="mdi-pencil-outline"
-        @click="filters.source = 'manual'; fetchAppointments()"
-      >
-        Thủ công
-        <v-chip size="x-small" class="ml-1" variant="flat">{{ sourceCounts.manual || 0 }}</v-chip>
-      </v-chip>
-
-      <!-- Status filter chỉ hiện ở tab "Tất cả" -->
-      <v-select
-        v-if="activeTab === 'all'"
-        v-model="filters.status"
-        :items="APPOINTMENT_STATUS_OPTIONS"
-        item-title="text"
-        item-value="value"
-        label="Trạng thái"
-        clearable
-        style="max-width: 200px"
-        hide-details
-        density="compact"
-        class="ml-2"
-        @update:model-value="fetchAppointments()"
+    <!-- Body: sidebar + content -->
+    <div class="apt-body">
+      <div v-if="sidebarOpen && isNarrow" class="sidebar-backdrop" @click="sidebarOpen = false" />
+      <div class="sidebar-wrap" :class="{ open: sidebarOpen }">
+      <AppointmentsSidebar
+        :scope="scope"
+        :selected-sales="selectedSales"
+        :selected-statuses="selectedStatuses"
+        :selected-types="selectedTypes"
+        :source="source"
+        :users="users"
+        :current-user-id="currentUserId"
+        :appointments="scopedAppointments"
+        :visible-month="visibleMonth"
+        :selected-date="selectedDate"
+        @update:scope="onScopeChange"
+        @update:selected-sales="selectedSales = $event"
+        @update:selected-statuses="selectedStatuses = $event"
+        @update:selected-types="selectedTypes = $event"
+        @update:source="source = $event"
+        @update:visible-month="visibleMonth = $event"
+        @select-date="onSelectDate"
+        @select-appointment="onSelectAppointment"
       />
+      </div>
+
+      <main class="apt-content">
+        <AppointmentsWeekView
+          v-if="viewMode === 'week'"
+          :week-start="weekStart"
+          :appointments="visibleAppointments"
+          @select-appointment="onSelectAppointment"
+          @create-slot="onCreateSlot"
+        />
+        <AppointmentsListView
+          v-else
+          :appointments="visibleAppointments"
+          @select-appointment="onSelectAppointment"
+          @create="openQuickCreate(null)"
+          @mark-complete="onMarkComplete"
+          @open-chat="onOpenChat"
+        />
+      </main>
     </div>
 
-    <!-- Appointment table -->
-    <v-data-table
-      :headers="headers"
-      :items="activeList"
-      :loading="loading"
-      item-value="id"
-      hover
-      @click:row="onRowClick"
-    >
-      <!-- Source badge -->
-      <template #item.source="{ item }">
-        <v-chip
-          v-if="item.source === 'zalo'"
-          color="info"
-          size="x-small"
-          variant="tonal"
-          prepend-icon="mdi-bell-ring"
-        >
-          {{ item.emoji || '🔔' }} Zalo
-        </v-chip>
-        <v-chip
-          v-else
-          color="grey"
-          size="x-small"
-          variant="tonal"
-          prepend-icon="mdi-pencil-outline"
-        >
-          Thủ công
-        </v-chip>
-      </template>
+    <!-- Detail panel -->
+    <AppointmentDetailPanel
+      :appointment="selectedAppointment"
+      @close="selectedAppointment = null"
+      @complete="onMarkComplete"
+      @cancel="onCancel"
+      @no-show="onNoShow"
+      @reschedule="onReschedule"
+      @open-chat="onOpenChat"
+      @open-contact="onOpenContact"
+    />
 
-      <!-- Date -->
-      <template #item.appointmentDate="{ item }">
-        {{ formatDate(item.appointmentDate) }}
-      </template>
-
-      <!-- Time (timezone-aware từ appointmentDate, không trust appointmentTime string DB) -->
-      <template #item.time="{ item }">
-        {{ formatTime(item.appointmentDate) }}
-      </template>
-
-      <!-- Contact name -->
-      <template #item.contact="{ item }">
-        <span>{{ item.contact?.fullName ?? '—' }}</span>
-        <div class="text-caption text-grey">{{ item.contact?.phone ?? '' }}</div>
-      </template>
-
-      <!-- Type -->
-      <template #item.type="{ item }">
-        {{ typeLabel(item.type) }}
-      </template>
-
-      <!-- Status chip + audit info -->
-      <template #item.status="{ item }">
-        <v-chip :color="statusChipColor(item.status)" size="small" variant="tonal">
-          {{ statusLabel(item.status) }}
-        </v-chip>
-        <div v-if="item.statusChangedBy && item.status !== 'scheduled' && item.status !== 'overdue'" class="text-caption text-grey mt-1">
-          <v-icon size="11">mdi-account-check-outline</v-icon>
-          {{ item.statusChangedBy.fullName || item.statusChangedBy.email }}
-          <span v-if="item.statusChangedAt"> · {{ formatRelativeTime(item.statusChangedAt) }}</span>
-        </div>
-      </template>
-
-      <!-- Notes -->
-      <template #item.notes="{ item }">
-        <span class="text-body-2">{{ item.notes ?? '—' }}</span>
-      </template>
-
-      <!-- Quick actions: 1-click status change cho appointment chưa có outcome -->
-      <template #item.actions="{ item }">
-        <div class="d-flex gap-1 flex-wrap">
-          <template v-if="item.status === 'scheduled' || item.status === 'overdue'">
-            <v-btn
-              size="x-small"
-              variant="tonal"
-              color="success"
-              prepend-icon="mdi-check"
-              title="Hoàn thành"
-              @click.stop="onMarkComplete(item.id)"
-            >Xong</v-btn>
-            <v-btn
-              size="x-small"
-              variant="tonal"
-              color="error"
-              prepend-icon="mdi-account-cancel-outline"
-              title="Khách không đến"
-              @click.stop="onNoShow(item.id)"
-            >Vắng</v-btn>
-            <v-btn
-              size="x-small"
-              variant="text"
-              color="grey"
-              prepend-icon="mdi-close"
-              title="Huỷ"
-              @click.stop="onCancel(item.id)"
-            >Huỷ</v-btn>
-          </template>
-          <v-btn
-            size="x-small"
-            variant="text"
-            color="error"
-            icon="mdi-delete"
-            title="Xoá"
-            @click.stop="onDelete(item.id)"
-          />
-        </div>
-      </template>
-    </v-data-table>
-
-    <!-- Create appointment dialog -->
-    <v-dialog v-model="showCreateDialog" max-width="520" persistent>
-      <v-card>
-        <v-card-title class="d-flex align-center">
-          Tạo lịch hẹn
-          <v-spacer />
-          <v-btn icon="mdi-close" variant="text" @click="showCreateDialog = false" />
-        </v-card-title>
-        <v-divider />
-        <v-card-text>
-          <v-row dense>
-            <v-col cols="12">
-              <v-text-field
-                v-model="createForm.contactId"
-                label="ID khách hàng"
-                hint="Nhập ID khách hàng"
-                persistent-hint
-              />
-            </v-col>
-            <v-col cols="12" sm="6">
-              <v-text-field v-model="createForm.appointmentDate" label="Ngày hẹn" type="date" />
-            </v-col>
-            <v-col cols="12" sm="6">
-              <v-text-field v-model="createForm.appointmentTime" label="Giờ hẹn" type="time" />
-            </v-col>
-            <v-col cols="12">
-              <v-select
-                v-model="createForm.type"
-                :items="APPOINTMENT_TYPE_OPTIONS"
-                item-title="text"
-                item-value="value"
-                label="Loại"
-              />
-            </v-col>
-            <v-col cols="12">
-              <v-textarea v-model="createForm.notes" label="Ghi chú" rows="2" auto-grow />
-            </v-col>
-          </v-row>
-        </v-card-text>
-        <v-divider />
-        <v-card-actions>
-          <v-spacer />
-          <v-btn variant="text" @click="showCreateDialog = false">Huỷ</v-btn>
-          <v-btn color="primary" :loading="saving" @click="onCreateSave">Lưu</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <!-- Quick create modal -->
+    <AppointmentQuickCreate
+      v-model="quickCreateOpen"
+      :default-date="quickCreateDate"
+      :prefill-contact="quickCreatePrefillContact"
+      @created="onAppointmentCreated"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue';
+import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue';
 import { useRouter } from 'vue-router';
+import { useAuthStore } from '@/stores/auth';
+import { useAppointments } from '@/composables/use-appointments';
+import { useUsers } from '@/composables/use-users';
 import {
-  useAppointments,
   APPOINTMENT_STATUS_OPTIONS,
   APPOINTMENT_TYPE_OPTIONS,
-  statusChipColor,
-  statusLabel,
-} from '@/composables/use-appointments';
-import type { Appointment } from '@/composables/use-appointments';
+  saleColor,
+  appointmentOwnerId,
+  appointmentStart,
+  type AppointmentEx as Appointment,
+} from '@/composables/appointment-helpers';
+import AppointmentsSidebar from '@/components/appointments/AppointmentsSidebar.vue';
+import AppointmentsWeekView from '@/components/appointments/AppointmentsWeekView.vue';
+import AppointmentsListView from '@/components/appointments/AppointmentsListView.vue';
+import AppointmentDetailPanel from '@/components/appointments/AppointmentDetailPanel.vue';
+import AppointmentQuickCreate from '@/components/appointments/AppointmentQuickCreate.vue';
 
 const router = useRouter();
+const authStore = useAuthStore();
+const currentUserId = computed<string | null>(() => authStore.user?.id ?? null);
+
 const {
-  appointments, todayAppointments, upcomingAppointments,
-  loading, saving, filters, sourceCounts,
-  fetchAppointments, fetchToday, fetchUpcoming,
-  createAppointment, deleteAppointment, markComplete, cancelAppointment, markNoShow,
+  appointments,
+  filters,
+  fetchAppointments,
+  markComplete,
+  cancelAppointment,
+  markNoShow,
 } = useAppointments();
+const { users, fetchUsers } = useUsers();
 
-const activeTab = ref<'today' | 'upcoming' | 'all'>('today');
-const showCreateDialog = ref(false);
-
-interface CreateForm {
-  contactId: string;
-  appointmentDate: string;
-  appointmentTime: string;
-  type: string;
-  notes: string;
-}
-
-const createForm = ref<CreateForm>({
-  contactId: '',
-  appointmentDate: '',
-  appointmentTime: '',
-  type: 'follow_up',
-  notes: '',
-});
-
-const headers = [
-  { title: 'Nguồn', key: 'source', sortable: false, width: '110px' },
-  { title: 'Ngày', key: 'appointmentDate', sortable: true },
-  { title: 'Giờ', key: 'time', sortable: false }, // computed từ appointmentDate (timezone-aware)
-  { title: 'Khách hàng', key: 'contact', sortable: false },
-  { title: 'Loại', key: 'type', sortable: false },
-  { title: 'Trạng thái', key: 'status', sortable: false },
-  { title: 'Ghi chú', key: 'notes', sortable: false },
-  { title: '', key: 'actions', sortable: false, width: '120px' },
+// View state
+type ViewMode = 'week' | 'list';
+const viewMode = ref<ViewMode>('week');
+const viewOptions: { value: ViewMode; label: string }[] = [
+  { value: 'week', label: 'Tuần' },
+  { value: 'list', label: 'Danh sách' },
 ];
 
-// Click row Zalo → mở conversation tại message reminder gốc
-function onRowClick(_event: MouseEvent, row: { item: Appointment }) {
-  const item = row.item;
-  if (item.source === 'zalo' && item.conversationId) {
-    router.push(`/chat/${item.conversationId}`);
-  }
+// Responsive: track viewport width — narrow under 900px, force list view & drawer-style sidebar
+const viewportWidth = ref<number>(typeof window !== 'undefined' ? window.innerWidth : 1440);
+const isNarrow = computed(() => viewportWidth.value < 900);
+const sidebarOpen = ref(false);
+
+function onResize() { viewportWidth.value = window.innerWidth; }
+
+// When viewport becomes narrow while user is on week view, switch to list automatically
+watch(isNarrow, (narrow) => {
+  if (narrow && viewMode.value === 'week') viewMode.value = 'list';
+  if (!narrow) sidebarOpen.value = false; // reset drawer when back to desktop
+});
+
+// Date navigation
+const today = new Date(); today.setHours(0, 0, 0, 0);
+const selectedDate = ref<Date>(new Date(today));
+const visibleMonth = ref<Date>(new Date(today.getFullYear(), today.getMonth(), 1));
+
+const weekStart = computed(() => {
+  const d = new Date(selectedDate.value);
+  d.setHours(0, 0, 0, 0);
+  const offset = (d.getDay() + 6) % 7; // Mon = 0
+  d.setDate(d.getDate() - offset);
+  return d;
+});
+const weekEnd = computed(() => {
+  const d = new Date(weekStart.value);
+  d.setDate(d.getDate() + 7);
+  return d;
+});
+
+// Filters
+type Scope = 'me' | 'team' | 'all';
+const scope = ref<Scope>('me');
+const selectedSales = ref<Set<string>>(new Set());
+const selectedStatuses = ref<Set<string>>(new Set(['scheduled', 'overdue']));
+const selectedTypes = ref<Set<string>>(new Set(APPOINTMENT_TYPE_OPTIONS.map(o => o.value)));
+const source = ref<'all' | 'manual' | 'zalo'>('all');
+
+// Quick create
+const quickCreateOpen = ref(false);
+const quickCreateDate = ref<Date | null>(null);
+const quickCreatePrefillContact = ref<{ id: string; fullName: string | null; phone: string | null; zaloUid?: string | null } | null>(null);
+
+// Detail panel
+const selectedAppointment = ref<Appointment | null>(null);
+
+// Re-fetch when scope or date range changes
+async function reloadAppointments() {
+  const from = weekStart.value;
+  const to = new Date(weekEnd.value); to.setDate(to.getDate() + 7); // pad 1 week ahead
+  filters.from = from.toISOString();
+  filters.to = to.toISOString();
+  filters.source = source.value;
+  await fetchAppointments();
 }
 
-const activeList = computed<Appointment[]>(() => {
-  switch (activeTab.value) {
-    case 'today': return todayAppointments.value;
-    case 'upcoming': return upcomingAppointments.value;
-    default: return appointments.value;
+watch([weekStart, source], () => { reloadAppointments(); }, { immediate: false });
+
+// Initialize selectedSales when users + scope change
+watch([users, scope, currentUserId], () => {
+  if (scope.value === 'me' && currentUserId.value) {
+    selectedSales.value = new Set([currentUserId.value]);
+  } else if (scope.value === 'team' || scope.value === 'all') {
+    selectedSales.value = new Set(users.value.map(u => u.id));
   }
 });
 
-function formatDate(date: string) {
-  if (!date) return '';
-  return new Date(date).toLocaleDateString('vi-VN');
+function onScopeChange(s: Scope) {
+  scope.value = s;
 }
 
-function formatTime(date: string) {
-  if (!date) return '';
-  const d = new Date(date);
-  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+// Derived: scope filter
+const scopedAppointments = computed<Appointment[]>(() => {
+  if (scope.value === 'me') {
+    return (appointments.value as Appointment[]).filter(a => {
+      const owner = appointmentOwnerId(a);
+      return !owner || owner === currentUserId.value;
+    });
+  }
+  if (scope.value === 'team' || scope.value === 'all') {
+    if (selectedSales.value.size === 0) return [];
+    return (appointments.value as Appointment[]).filter(a => {
+      const owner = appointmentOwnerId(a);
+      return !owner || selectedSales.value.has(owner);
+    });
+  }
+  return appointments.value as Appointment[];
+});
+
+// Apply remaining filters: status, type, source
+const visibleAppointments = computed<Appointment[]>(() => {
+  return scopedAppointments.value.filter(a => {
+    if (!selectedStatuses.value.has(a.status)) return false;
+    if (!selectedTypes.value.has(a.type)) return false;
+    if (source.value !== 'all' && a.source !== source.value) return false;
+    // restrict to current week for week view
+    if (viewMode.value === 'week') {
+      const s = appointmentStart(a).getTime();
+      return s >= weekStart.value.getTime() && s < weekEnd.value.getTime();
+    }
+    return true;
+  });
+});
+
+// Labels
+const VN_MONTHS_SHORT = ['01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12'];
+const weekRangeLabel = computed(() => {
+  const s = weekStart.value;
+  const e = new Date(weekStart.value); e.setDate(e.getDate() + 6);
+  return `${String(s.getDate()).padStart(2, '0')}/${VN_MONTHS_SHORT[s.getMonth()]} – ${String(e.getDate()).padStart(2, '0')}/${VN_MONTHS_SHORT[e.getMonth()]}/${e.getFullYear()}`;
+});
+const weekLabel = computed(() => `Tuần ${weekRangeLabel.value}`);
+const totalLabel = computed(() => `${visibleAppointments.value.length} lịch`);
+const scopeLabel = computed(() => {
+  if (scope.value === 'me') return 'Sale: Của tôi';
+  if (scope.value === 'team') return `Sale: Nhóm (${selectedSales.value.size})`;
+  return `Sale: Tất cả (${selectedSales.value.size})`;
+});
+
+// Navigation actions
+function shiftWeek(delta: number) {
+  const d = new Date(selectedDate.value);
+  d.setDate(d.getDate() + delta * 7);
+  selectedDate.value = d;
+}
+function goToToday() {
+  selectedDate.value = new Date(today);
+}
+function onSelectDate(d: Date) {
+  selectedDate.value = d;
+  if (viewMode.value === 'list') viewMode.value = 'week';
 }
 
-function typeLabel(type: string) {
-  return APPOINTMENT_TYPE_OPTIONS.find(o => o.value === type)?.text ?? type;
+// Event handlers
+function onSelectAppointment(a: Appointment) {
+  selectedAppointment.value = a;
+}
+function onCreateSlot(payload: { date: Date }) {
+  openQuickCreate(payload.date);
+}
+function openQuickCreate(date: Date | null) {
+  quickCreateDate.value = date;
+  quickCreatePrefillContact.value = null;
+  quickCreateOpen.value = true;
+}
+async function onAppointmentCreated() {
+  await reloadAppointments();
 }
 
-async function onMarkComplete(id: string) {
-  await markComplete(id);
-  refreshActive();
+async function onMarkComplete(a: Appointment) {
+  await markComplete(a.id);
+  selectedAppointment.value = null;
+  await reloadAppointments();
 }
-
-async function onCancel(id: string) {
-  await cancelAppointment(id);
-  refreshActive();
+async function onCancel(a: Appointment) {
+  await cancelAppointment(a.id);
+  selectedAppointment.value = null;
+  await reloadAppointments();
 }
-
-async function onNoShow(id: string) {
-  await markNoShow(id);
-  refreshActive();
+async function onNoShow(a: Appointment) {
+  await markNoShow(a.id);
+  selectedAppointment.value = null;
+  await reloadAppointments();
 }
-
-async function onDelete(id: string) {
-  await deleteAppointment(id);
-  refreshActive();
+function onReschedule(a: Appointment) {
+  // Placeholder: pre-fill quick create with same contact
+  selectedAppointment.value = null;
+  quickCreateDate.value = appointmentStart(a);
+  quickCreatePrefillContact.value = a.contact
+    ? {
+        id: a.contact.id,
+        fullName: a.contact.fullName,
+        phone: a.contact.phone,
+        zaloUid: a.contact.zaloUid ?? null,
+      }
+    : null;
+  quickCreateOpen.value = true;
 }
-
-function formatRelativeTime(iso: string): string {
-  const then = new Date(iso).getTime();
-  const now = Date.now();
-  const diffMin = Math.floor((now - then) / 60000);
-  if (diffMin < 1) return 'vừa xong';
-  if (diffMin < 60) return `${diffMin} phút trước`;
-  const diffH = Math.floor(diffMin / 60);
-  if (diffH < 24) return `${diffH} giờ trước`;
-  const diffD = Math.floor(diffH / 24);
-  if (diffD < 7) return `${diffD} ngày trước`;
-  return new Date(iso).toLocaleDateString('vi-VN');
-}
-
-async function onCreateSave() {
-  const result = await createAppointment({
-    contactId: createForm.value.contactId,
-    appointmentDate: createForm.value.appointmentDate,
-    appointmentTime: createForm.value.appointmentTime,
-    type: createForm.value.type,
-    notes: createForm.value.notes || null,
-  } as Partial<Appointment>);
-  if (result) {
-    showCreateDialog.value = false;
-    createForm.value = { contactId: '', appointmentDate: '', appointmentTime: '', type: 'follow_up', notes: '' };
-    refreshActive();
+function onOpenChat(a: Appointment) {
+  if (a.source === 'zalo' && a.conversationId) {
+    router.push(`/chat/${a.conversationId}`);
   }
 }
-
-function refreshActive() {
-  switch (activeTab.value) {
-    case 'today': fetchToday(); break;
-    case 'upcoming': fetchUpcoming(); break;
-    default: fetchAppointments(); break;
-  }
+function onOpenContact(a: Appointment) {
+  if (a.contact?.id) router.push(`/contacts/${a.contact.id}`);
 }
 
-watch(activeTab, () => refreshActive());
+// Keyboard shortcuts
+function onKey(e: KeyboardEvent) {
+  const tgt = e.target as HTMLElement | null;
+  if (tgt && (tgt.tagName === 'INPUT' || tgt.tagName === 'TEXTAREA' || tgt.tagName === 'SELECT' || tgt.isContentEditable)) return;
+  if (e.key === 'n' || e.key === 'N') { e.preventDefault(); openQuickCreate(null); }
+  else if (e.key === 'ArrowRight') { shiftWeek(1); }
+  else if (e.key === 'ArrowLeft') { shiftWeek(-1); }
+  else if (e.key === 't' || e.key === 'T') { goToToday(); }
+  else if (e.key === 'Escape') { selectedAppointment.value = null; }
+}
 
 onMounted(() => {
-  fetchToday();
-  fetchUpcoming();
-  fetchAppointments(); // load để có sourceCounts cho chip badges
+  fetchUsers();
+  reloadAppointments();
+  window.addEventListener('keydown', onKey);
+  window.addEventListener('resize', onResize, { passive: true });
+  onResize();
+});
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onKey);
+  window.removeEventListener('resize', onResize);
 });
 </script>
+
+<style scoped>
+@import '@/components/automation/phase7/airtable.css';
+
+/* Page shell — Airtable design */
+.apt-page {
+  display: flex; flex-direction: column;
+  height: calc(100vh - var(--smax-topnav-h, 52px));
+  width: 100%;
+  background: var(--at-canvas);
+  overflow: hidden;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  color: var(--at-body);
+}
+
+/* ── Hero band (white canvas, 2 rows) ────────────────────────────────── */
+.apt-hero {
+  background: var(--at-canvas);
+  padding: var(--at-s-lg) var(--at-s-xl) var(--at-s-md);
+  border-bottom: 1px solid var(--at-hairline);
+  flex-shrink: 0;
+}
+.apt-hero-row1 {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: var(--at-s-md);
+  margin-bottom: var(--at-s-md);
+}
+.apt-hero-row2 {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: var(--at-s-md);
+  flex-wrap: wrap;
+}
+.title-block {
+  display: flex; align-items: flex-start; gap: var(--at-s-sm);
+  min-width: 0; flex: 1;
+}
+.apt-hero-title {
+  margin: 0;
+  font-size: 28px;
+  font-weight: 400;
+  line-height: 1.2;
+  color: var(--at-ink);
+  letter-spacing: 0;
+}
+.apt-hero-sub {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--at-muted);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-top: 4px;
+}
+.apt-hero-sub b { color: var(--at-ink); font-weight: 500; }
+
+.apt-hero-actions { display: flex; align-items: center; gap: var(--at-s-xs); flex-shrink: 0; }
+.drawer-toggle { display: none; }
+
+/* ── At-btn / icon-btn (Airtable spec) ───────────────────────────────── */
+.at-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  gap: 6px;
+  padding: 10px 16px;
+  border-radius: var(--at-r-lg);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.4;
+  cursor: pointer;
+  white-space: nowrap;
+  border: none;
+  font-family: inherit;
+  transition: background 0.12s, border-color 0.12s;
+}
+.at-btn--primary {
+  background: var(--at-primary);
+  color: var(--at-on-primary);
+}
+.at-btn--primary:active { background: var(--at-primary-active); }
+.at-btn--secondary {
+  background: var(--at-canvas);
+  color: var(--at-ink);
+  border: 1px solid var(--at-hairline);
+}
+.at-btn--secondary:active { background: var(--at-surface-soft); }
+.at-btn .ic { font-size: 15px; line-height: 1; }
+.at-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+
+.icon-btn {
+  width: 32px; height: 32px;
+  border-radius: var(--at-r-md);
+  background: transparent;
+  color: var(--at-body);
+  cursor: pointer;
+  font-size: 14px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid transparent;
+  font-family: inherit;
+}
+.icon-btn:active { background: var(--at-surface-soft); }
+.icon-btn--bordered { border-color: var(--at-hairline); background: var(--at-canvas); }
+
+/* ── Segmented view toggle ───────────────────────────────────────────── */
+.at-segmented {
+  display: inline-flex;
+  background: var(--at-surface-soft);
+  border: 1px solid var(--at-hairline);
+  border-radius: var(--at-r-md);
+  padding: 3px;
+  gap: 2px;
+}
+.at-segmented button {
+  padding: 7px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--at-body);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
+}
+.at-segmented button.active {
+  background: var(--at-ink);
+  color: var(--at-on-primary);
+}
+.at-segmented button:disabled { opacity: 0.35; cursor: not-allowed; }
+
+/* ── Date nav ────────────────────────────────────────────────────────── */
+.apt-date-nav { display: inline-flex; align-items: center; gap: var(--at-s-xs); }
+.apt-date-nav.hidden { display: none; }
+.apt-date-nav .week-range {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--at-ink);
+  padding: 0 var(--at-s-sm);
+  min-width: 170px;
+  text-align: center;
+}
+
+/* ── Filter chips strip (surface-soft bg) ─────────────────────────────── */
+.apt-filter-strip {
+  display: flex; align-items: center; gap: var(--at-s-xs);
+  padding: var(--at-s-sm) var(--at-s-xl);
+  background: var(--at-surface-soft);
+  border-bottom: 1px solid var(--at-hairline);
+  flex-wrap: wrap;
+  flex-shrink: 0;
+}
+.apt-filter-strip .lbl {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--at-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-right: var(--at-s-xs);
+}
+.apt-filter-strip .spacer { flex: 1; }
+.apt-filter-strip .kb-hint {
+  font-size: 11.5px;
+  color: var(--at-muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.apt-filter-strip .kb-hint kbd {
+  display: inline-block;
+  padding: 1px 5px;
+  background: var(--at-canvas);
+  border: 1px solid var(--at-hairline);
+  border-radius: var(--at-r-xs);
+  font-family: ui-monospace, 'SF Mono', Consolas, monospace;
+  font-size: 10.5px;
+  color: var(--at-ink);
+  margin: 0 1px;
+}
+
+.at-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 5px 11px;
+  background: var(--at-canvas);
+  border: 1px solid var(--at-hairline);
+  border-radius: var(--at-r-pill);
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--at-body);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.at-chip:active { background: var(--at-surface-soft); }
+.at-chip--active {
+  background: var(--at-ink);
+  color: var(--at-on-primary);
+  border-color: var(--at-ink);
+}
+.at-chip .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.at-chip .chip-info { opacity: 0.8; font-weight: 400; }
+.at-chip .x { margin-left: 2px; opacity: 0.6; font-size: 11px; }
+
+/* ── Body grid ──────────────────────────────────────────────────────── */
+.apt-body {
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  position: relative;
+  background: var(--at-canvas);
+}
+.sidebar-wrap { overflow: hidden; background: var(--at-surface-soft); border-right: 1px solid var(--at-hairline); }
+.sidebar-backdrop { display: none; }
+.apt-content {
+  overflow: hidden;
+  display: flex; flex-direction: column;
+  min-width: 0;
+  background: var(--at-canvas);
+}
+
+/* Tablet */
+@media (max-width: 1100px) {
+  .apt-body { grid-template-columns: 240px 1fr; }
+  .apt-hero { padding: var(--at-s-md) var(--at-s-lg); }
+  .apt-hero-title { font-size: 24px; }
+}
+
+/* Narrow tablet & mobile: sidebar = drawer */
+@media (max-width: 900px) {
+  .apt-body { grid-template-columns: 1fr; }
+  .drawer-toggle { display: inline-flex; }
+  .sidebar-wrap {
+    position: absolute;
+    top: 0; left: 0; bottom: 0;
+    width: 300px;
+    max-width: 86vw;
+    z-index: 20;
+    transform: translateX(-100%);
+    transition: transform .22s ease;
+    box-shadow: 4px 0 24px rgba(24,29,38,0.10);
+  }
+  .sidebar-wrap.open { transform: translateX(0); }
+  .sidebar-backdrop {
+    display: block;
+    position: absolute; inset: 0;
+    background: rgba(24,29,38,0.32);
+    z-index: 15;
+  }
+  .apt-hero-row1 { flex-direction: column; align-items: stretch; }
+  .apt-hero-actions { flex-wrap: wrap; }
+  .apt-hero-title { font-size: 22px; }
+  .apt-hero-sub { font-size: 11px; }
+}
+
+/* Mobile portrait */
+@media (max-width: 600px) {
+  .apt-hero { padding: var(--at-s-md); }
+  .apt-filter-strip { padding: var(--at-s-xs) var(--at-s-md); overflow-x: auto; flex-wrap: nowrap; }
+  .apt-filter-strip .kb-hint, .apt-filter-strip .spacer { display: none; }
+  .at-segmented { flex: 1; }
+  .at-segmented button { flex: 1; padding: 6px 10px; font-size: 12px; }
+  .btn-label { display: none; }
+  .at-btn { padding: 8px 12px; }
+  .apt-hero-actions .at-btn--primary { flex: 1; }
+  .apt-date-nav .week-range { min-width: 100px; font-size: 12px; }
+}
+</style>

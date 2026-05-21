@@ -100,6 +100,7 @@
 import { ref, onMounted } from 'vue';
 import { api } from '@/api/index';
 import { useToast } from '@/composables/use-toast';
+import { formatInOrgTz } from '@/composables/use-org-timezone';
 
 interface ZaloLabelView {
   id: number;
@@ -202,7 +203,7 @@ function relTime(iso: string): string {
   if (m < 60) return `${m}p trước`;
   const h = Math.floor(m / 60);
   if (h < 24) return `${h}h trước`;
-  return new Date(iso).toLocaleString('vi-VN');
+  return formatInOrgTz(iso);
 }
 
 // Auto-refresh mỗi 30s để pick up background sync changes

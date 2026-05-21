@@ -1,37 +1,29 @@
 <template>
   <aside class="info-panel">
-    <!-- ════════ HEADER pinned (avatar + lead score overlay + care-status) ════════ -->
+    <!-- ════════ HEADER: Phase 8.C Score Banner (3 stat cards + avatar below) ════════ -->
     <header class="ip-header">
       <button class="ip-close" title="Đóng" @click="$emit('close')">×</button>
-      <div class="ip-avatar-wrap">
-        <!-- KHÔNG truyền :gender — gender badge ♂/♀ sẽ đè lên lead-score-badge.
-             Gender info đã hiển thị ở chat header (chip "Nam"/"Nữ" row 1)
-             + ô select Gender trong tab Hồ sơ. Không cần lặp lại ở avatar cột 4. -->
-        <Avatar
-          :src="props.contact?.avatarUrl"
-          :name="headerFullName"
-          :size="64"
-          :gradient-seed="props.contact?.id || headerFullName"
-          class="ip-avatar-big"
-        />
-        <!-- Lead score badge overlay (Smax-style điểm KH) -->
-        <span
-          v-if="props.contact"
-          class="lead-score-badge"
-          :class="leadScoreTier"
-          :title="`Lead score: ${props.contact.leadScore ?? 0} điểm${props.contact.lastActivity ? ' · cập nhật ' + relativeTime(props.contact.lastActivity) : ''}`"
-        >
-          ⭐ {{ props.contact.leadScore ?? 0 }}
-        </span>
-      </div>
-      <div class="ip-name-line" :title="headerFullName">{{ headerFullName }}</div>
-      <div v-if="props.contact?.zaloUid" class="ip-id">UID: {{ props.contact.zaloUid }}</div>
-      <div class="ip-care-row">
-        <CareStatusBadge
-          :model-value="(form.status as string | null) || 'new'"
-          @update:model-value="onChangeCareStatus"
-        />
-      </div>
+      <ScoreBanner :scores="scoreData">
+        <template #avatar>
+          <Avatar
+            :src="props.contact?.avatarUrl"
+            :name="headerFullName"
+            :size="56"
+            :gradient-seed="props.contact?.id || headerFullName"
+            class="ip-avatar-big"
+          />
+        </template>
+        <template #name>
+          <div class="ip-name-line" :title="headerFullName">{{ headerFullName }}</div>
+          <div v-if="props.contact?.zaloUid" class="ip-id">UID: {{ props.contact.zaloUid }}</div>
+          <div class="ip-care-row-inline">
+            <CareStatusBadge
+              :model-value="(form.status as string | null) || 'new'"
+              @update:model-value="onChangeCareStatus"
+            />
+          </div>
+        </template>
+      </ScoreBanner>
     </header>
 
     <!-- ════════ Tab bar ════════ -->
@@ -59,6 +51,18 @@
       >
         <span class="ic">📅</span> Lịch hẹn
         <span v-if="activityBadgeCount || pendingAptBump" class="tab-badge">{{ (activityBadgeCount ?? 0) + pendingAptBump }}</span>
+      </button>
+      <button
+        v-if="props.friendId"
+        class="ip-tab"
+        :class="{ active: activeTab === 'score' }"
+        :title="`Điểm KH: ${props.contact?.leadScore ?? 0}`"
+        @click="activeTab = 'score'"
+      >
+        <span class="ic">⭐</span> Điểm
+        <span v-if="(props.contact?.leadScore ?? 0) > 0" class="tab-badge tab-badge-score">
+          {{ props.contact?.leadScore }}
+        </span>
       </button>
     </nav>
 
@@ -93,18 +97,30 @@
             </div>
           </div>
 
-          <!-- Expand toggle -->
-          <button class="info-expand-toggle" @click="toggleInfoExpand">
+          <!--
+            Toggle 1 nút, 3-state cycle:
+              hidden → click → auto (countdown 5s)
+              auto → click → sticky (ghim 📌, cancel countdown)
+              sticky → click → hidden
+          -->
+          <button class="info-expand-toggle" :class="{ 'is-sticky': isSticky }" @click="toggleInfoExpand">
             <span v-if="!infoExpanded">▾ Xem đầy đủ</span>
-            <span v-else>▴ Thu gọn (tự thu sau {{ collapseRemain }}s)</span>
+            <span v-else-if="isSticky">▴ Thu gọn <span class="sticky-badge" title="Đã ghim — không tự thu">📌</span></span>
+            <span v-else>📌 Ghim mở (tự thu sau {{ collapseRemain }}s)</span>
           </button>
 
           <!-- Expanded fields -->
           <template v-if="infoExpanded">
             <div class="ip-form-row">
               <span class="ip-icon">✏</span>
-              <span class="ip-label">Tên Alias</span>
-              <input v-model="form.crmName" placeholder="Sale tự đặt" @blur="saveContact" />
+              <span class="ip-label" title="Tên gợi nhớ Zalo per-pair — sync 2-way với Zalo Real">Tên gợi nhớ</span>
+              <input
+                :value="aliasDraft"
+                placeholder="Sync với Zalo Real"
+                @input="aliasDraft = ($event.target as HTMLInputElement).value"
+                @blur="saveAlias"
+                @keydown.enter.prevent="saveAlias"
+              />
             </div>
             <div class="ip-form-row">
               <span class="ip-icon">📅</span>
@@ -131,21 +147,18 @@
                 <input v-model="form.phone3" placeholder="SĐT phụ 2" @blur="saveContact" />
               </div>
             </template>
-            <div class="ip-form-row">
-              <span class="ip-icon">✉</span>
-              <span class="ip-label">Email</span>
-              <input v-model="form.email" placeholder="Chưa có email" @blur="saveContact" />
-            </div>
-            <div class="ip-form-row">
-              <span class="ip-icon">📍</span>
-              <span class="ip-label">Địa chỉ</span>
-              <input v-model="form.addressLine" placeholder="Địa chỉ chi tiết" @blur="saveContact" />
-            </div>
-            <div class="ip-form-row">
-              <span class="ip-icon">💼</span>
-              <span class="ip-label">Nghề</span>
-              <input v-model="form.occupation" placeholder="Nghề nghiệp" @blur="saveContact" />
-            </div>
+            <!-- 3 field Email · Địa chỉ · Nghề: ẨN khỏi cột 4 (quick view chat panel).
+                 Schema giữ nguyên — data vẫn lưu/edit qua tab "Hồ sơ KH tổng hợp" (phase sau).
+                 Xem ContactProfileView.vue stub + use-contact-profile.ts composable. -->
+            <button
+              v-if="contact?.id"
+              class="info-fullprofile-link"
+              type="button"
+              :title="'Xem hồ sơ KH tổng hợp (email, địa chỉ, nghề, ...)'"
+              @click="openFullProfile"
+            >
+              <span>✨ Xem hồ sơ KH tổng hợp →</span>
+            </button>
           </template>
         </section>
 
@@ -167,6 +180,11 @@
             :contact-name="headerFullName"
             @appointment-created="onAppointmentCreated"
           />
+        </section>
+
+        <!-- Phase 8 — Engagement Heatmap Timeline -->
+        <section v-if="props.contactId" class="ip-section">
+          <EngagementHeatmap :contact-id="props.contactId" />
         </section>
       </div>
 
@@ -322,13 +340,33 @@
           <p>Chưa có hoạt động — sau khi có conv tin nhắn, AI sẽ tự tóm tắt + phân tích cảm xúc.</p>
         </div>
       </div>
+
+      <!-- ══════ TAB 4: ĐIỂM (Lead Scoring) ══════ -->
+      <div v-show="activeTab === 'score'" class="tab-pane tab-pane-score">
+        <ScoreInlinePanel
+          v-if="props.friendId"
+          :friend-id="props.friendId"
+          :stage-label="scoreStageLabel"
+          @view-history="openScoreHistory"
+        />
+        <div v-else class="tab-empty">
+          <p>Tab Điểm chỉ áp dụng cho hội thoại 1-1 (có Friend).</p>
+        </div>
+      </div>
     </div>
 
+    <!-- Score history modal (overlay full screen, Teleport to body) -->
+    <ScoreHistoryModal
+      v-model="scoreHistoryOpen"
+      :friend-id="props.friendId ?? null"
+      :contact-name="headerFullName"
+    />
   </aside>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, watch, onBeforeUnmount, onMounted } from 'vue';
+import { useRouter } from 'vue-router';
 import type { Contact } from '@/composables/use-contacts';
 import type { AiSentiment } from '@/composables/use-chat';
 import { useChatContactPanel } from '@/composables/use-chat-contact-panel';
@@ -343,12 +381,20 @@ import type { CareStatusValue } from '@/constants/care-status';
 import { useToast } from '@/composables/use-toast';
 import { api } from '@/api';
 import CustomerTimelineSection from './CustomerTimelineSection.vue';
+import EngagementHeatmap from './EngagementHeatmap.vue';
+import ScoreBanner from './ScoreBanner.vue';
+import ScoreInlinePanel from '@/components/scoring/ScoreInlinePanel.vue';
+import ScoreHistoryModal from '@/components/scoring/ScoreHistoryModal.vue';
 
 const props = defineProps<{
   contactId: string | null;
   contact: Contact | null;
   // Nick CRM đang xem KH này — dùng để xác định Friend row "active" cho per-pair tag.
   activeZaloAccountId?: string | null;
+  // Friend.id của cặp (contact × activeZaloAccount). Cần để fetch score breakdown per-pair.
+  friendId?: string | null;
+  // Friendship per-pair (nick × KH) — chứa aliasInNick để sync 2-way với Zalo Real.
+  friendship?: { id?: string; aliasInNick?: string | null } | null;
   aiSummary: string;
   aiSummaryLoading: boolean;
   aiSentiment: AiSentiment | null;
@@ -372,41 +418,100 @@ const {
   () => emit('saved'),
 );
 
-// ════════ Tab state (persist sang tab khác KH khác) ════════
-const activeTab = ref<'profile' | 'relations' | 'activity'>('profile');
+// ════════ Tên gợi nhớ Zalo (per-pair, sync 2-way với Zalo Real) ════════
+// Bound to Friend.aliasInNick — PATCH /friends/:id sẽ:
+//   1. Update DB
+//   2. Fire-and-forget call api.changeFriendAlias / removeFriendAlias → push Zalo Real
+const aliasDraft = ref('');
+watch(() => props.friendship?.aliasInNick, (v) => {
+  aliasDraft.value = v || '';
+}, { immediate: true });
 
-// Info section auto-collapse: mặc định compact (chỉ Tên + SĐT). Click tab Hồ Sơ
-// hoặc bấm "Xem đầy đủ" → expand, đếm 5s rồi tự thu gọn lại.
-const infoExpanded = ref(false);
+const aliasToast = useToast();
+async function saveAlias() {
+  const friendId = props.friendship?.id;
+  if (!friendId) return;
+  const trimmed = aliasDraft.value.trim();
+  const newAlias = trimmed.length ? trimmed : null;
+  if (newAlias === (props.friendship?.aliasInNick || null)) return;  // no-op
+  try {
+    await api.patch(`/friends/${friendId}`, { aliasInNick: newAlias });
+    aliasToast.success(newAlias ? `Đã đổi tên gợi nhớ → "${newAlias}"` : 'Đã xoá tên gợi nhớ');
+    emit('saved');  // parent refetch để lấy alias mới + reflect lên cột 2 + header
+  } catch (err) {
+    aliasToast.error('Lưu tên gợi nhớ thất bại');
+  }
+}
+
+// ════════ Tab state (persist sang tab khác KH khác) ════════
+const activeTab = ref<'profile' | 'relations' | 'activity' | 'score'>('profile');
+
+// ════════════════════════════════════════════════════════════════════════
+// Info section state machine — 3 modes, in-memory only (KHÔNG persist):
+//   'auto'   → expand + countdown 5s → auto-hide
+//   'sticky' → user click 2nd time để ghim → KHÔNG auto-hide
+//   'hidden' → ẩn (mặc định, hoặc sau countdown, hoặc user thu gọn)
+//
+// Flow toggle button (1 nút, 3-state cycle):
+//   hidden → click → 'auto' (5s countdown)
+//   'auto' (đang countdown) → click → 'sticky' (cancel countdown, ghim 📌)
+//   'sticky' → click → 'hidden'
+//
+// Reload page / switch conv / switch tab → RESET về hidden (KHÔNG persist).
+// Sticky chỉ giữ trong cùng conv + cùng tab Hồ Sơ.
+// ════════════════════════════════════════════════════════════════════════
+type ExpandMode = 'auto' | 'sticky' | 'hidden';
+const expandMode = ref<ExpandMode>('hidden');
+const infoExpanded = computed(() => expandMode.value !== 'hidden');
+const isSticky = computed(() => expandMode.value === 'sticky');
 const collapseRemain = ref(5);
 let collapseTimer: ReturnType<typeof setInterval> | null = null;
+
 function clearCollapseTimer() {
   if (collapseTimer) { clearInterval(collapseTimer); collapseTimer = null; }
 }
-function startCollapseCountdown() {
+function startAutoCollapse() {
   clearCollapseTimer();
   collapseRemain.value = 5;
   collapseTimer = setInterval(() => {
     collapseRemain.value--;
     if (collapseRemain.value <= 0) {
-      infoExpanded.value = false;
+      // Chỉ tự hide khi đang ở mode 'auto'. Sticky thì never timeout.
+      if (expandMode.value === 'auto') expandMode.value = 'hidden';
       clearCollapseTimer();
     }
   }, 1000);
 }
+
+// 3-state cycle trên 1 nút toggle (theo user spec):
+//   hidden → 'auto' (countdown 5s)
+//   'auto' → 'sticky' (ghim, cancel countdown)
+//   'sticky' → 'hidden'
 function toggleInfoExpand() {
-  infoExpanded.value = !infoExpanded.value;
-  if (infoExpanded.value) startCollapseCountdown();
-  else clearCollapseTimer();
+  if (expandMode.value === 'hidden') {
+    // Open lần đầu → auto countdown 5s
+    expandMode.value = 'auto';
+    startAutoCollapse();
+  } else if (expandMode.value === 'auto') {
+    // Click lần nữa khi đang auto → ghim sticky (cancel countdown)
+    expandMode.value = 'sticky';
+    clearCollapseTimer();
+  } else {
+    // sticky → hidden
+    expandMode.value = 'hidden';
+    clearCollapseTimer();
+  }
 }
-// Khi click tab Hồ Sơ → expand + start countdown
+
+// Khi click tab Hồ Sơ: auto-expand + countdown (KHÔNG sticky default).
+// Khi switch tab khác: hidden.
 watch(activeTab, (tab) => {
   if (tab === 'profile') {
-    infoExpanded.value = true;
-    startCollapseCountdown();
+    expandMode.value = 'auto';
+    startAutoCollapse();
   } else {
     clearCollapseTimer();
-    infoExpanded.value = false;
+    expandMode.value = 'hidden';
   }
 });
 
@@ -431,6 +536,18 @@ onMounted(() => window.addEventListener('appointment-created', onGlobalAppointme
 onBeforeUnmount(() => {
   clearCollapseTimer();
   window.removeEventListener('appointment-created', onGlobalAppointmentCreated);
+});
+
+// ════════ Score history modal (mở từ tab Điểm "Xem toàn bộ →") ════════
+const scoreHistoryOpen = ref(false);
+function openScoreHistory() {
+  scoreHistoryOpen.value = true;
+}
+
+// Stage label hiển thị cạnh điểm tổng (vd "warm-lead" lấy từ friendship.statusRef.name)
+const scoreStageLabel = computed<string | null>(() => {
+  const c = props.contact as Contact & { friendship?: { statusRef?: { name?: string } | null } } | null;
+  return c?.friendship?.statusRef?.name || null;
 });
 
 // ════════ Relations data (friends per nick = KH Con) — fetch khi đổi contact ═══
@@ -520,18 +637,28 @@ function onChangeCareStatus(value: CareStatusValue) {
 }
 
 // ════════ Header name (Avatar component handle initials + gender + gradient) ════════
-const headerFullName = computed(() =>
-  props.contact?.crmName || props.contact?.fullName || 'Khách hàng',
-);
+// B7 fix — Contact stub có thể fullName='Unknown'; fallback qua aliasInNick (props.friendship)
+// rồi activeFriend.zaloDisplayName (nick đang chăm) trước khi hiện 'Khách hàng'.
+const headerFullName = computed(() => {
+  const isUsable = (s: string | null | undefined): s is string =>
+    !!s && s.trim().length > 0 && s.trim().toLowerCase() !== 'unknown';
+  if (isUsable(props.contact?.crmName)) return props.contact!.crmName!;
+  if (isUsable(props.contact?.fullName)) return props.contact!.fullName!;
+  if (isUsable(props.friendship?.aliasInNick)) return props.friendship!.aliasInNick!;
+  const af = activeFriend.value as { zaloDisplayName?: string | null } | null;
+  if (isUsable(af?.zaloDisplayName)) return af!.zaloDisplayName!;
+  return 'Khách hàng';
+});
 
 // Lead score tier để màu badge overlay trên avatar (thấp/TB/cao)
-const leadScoreTier = computed(() => {
-  const s = props.contact?.leadScore ?? 0;
-  if (s >= 70) return 'tier-hot';
-  if (s >= 40) return 'tier-warm';
-  if (s >= 10) return 'tier-cool';
-  return 'tier-cold';
-});
+// ════════ Phase 8.C — ScoreBanner 3 score data ════════
+const scoreData = computed(() => ({
+  lead: props.contact?.leadScore ?? null,
+  engagement: props.contact?.engagementScore ?? null,
+  priority: props.contact?.priorityScore ?? null,
+  engagementTrend: props.contact?.engagementTrend ?? null,
+  engagementPattern: props.contact?.engagementPattern ?? null,
+}));
 
 // ════════ Phones extras ════════
 const showExtraPhones = ref(false);
@@ -547,6 +674,15 @@ const automationCards = computed<AutomationCard[]>(() => {
 });
 function onAutomationAction(_id: string, _kind: string) { /* TODO wire to API */ }
 function onAttachAutomation() { toast.warning('Gắn automation: chờ backend schema delta'); }
+
+// ════════ Hồ sơ KH tổng hợp (phase sau) ════════
+// Tạm thời chỉ navigate sang route /contacts/:id/profile (skeleton view).
+// Sau khi backend GET /api/v1/contacts/:id/profile sẵn sàng + ContactProfileView
+// implement đầy đủ → tab này hiển thị 3 field Email/Address/Occupation đã ẩn ở cột 4.
+function openFullProfile() {
+  if (!props.contact?.id) return;
+  router.push(`/contacts/${props.contact.id}/profile`);
+}
 
 // MOCK: zaloLabels (per-pair native labels) chưa expose qua API
 const zaloLabels = ref<string[]>([]);
@@ -594,11 +730,18 @@ const hasAnyActivity = computed(() =>
 );
 
 const toast = useToast();
+const router = useRouter();
 
 // Khi đổi sang contact mới, reset về tab Hồ sơ + refetch relations
-// (NotesSection tự fetch khi prop contactId đổi)
+// (NotesSection tự fetch khi prop contactId đổi).
+// Cũng force reset infoExpanded + start countdown — nếu activeTab đã = 'profile',
+// watch(activeTab) sẽ KHÔNG fire khi cùng giá trị → form section stuck ở state cũ.
 watch(() => props.contactId, (id) => {
   activeTab.value = 'profile';
+  // Switch conv hoặc reload page → reset về 'auto' (countdown 5s).
+  // KHÔNG persist sticky giữa các conv (theo spec: sticky chỉ trong cùng conv).
+  expandMode.value = 'auto';
+  startAutoCollapse();
   if (id) void fetchRelations(id);
   else relations.value = { friends: [] };
 }, { immediate: true });
@@ -623,12 +766,43 @@ function relativeTime(dateStr: string) {
 
 /* ════════ Header (pinned) ════════ */
 .ip-header {
-  padding: 13px 17px 9px;
-  text-align: center;
+  padding: 0;
+  text-align: left;
   border-bottom: 1px solid var(--smax-grey-200);
   position: relative;
   flex-shrink: 0;
 }
+/* Avatar + name layout inside ScoreBanner slot */
+.ip-header .ip-name-line {
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.2;
+  margin-top: 0;
+  padding: 0;
+  text-align: left;
+}
+.ip-header .ip-id {
+  font-size: 10.5px;
+  margin-top: 2px;
+  padding: 0;
+  text-align: left;
+}
+.ip-care-row-inline {
+  margin-top: 5px;
+  display: flex;
+}
+/* Tab 4 "Điểm" — score panel content full-width 280px, vertical stack */
+.tab-pane-score {
+  padding: 12px 14px 18px;
+}
+/* Tab badge cho score (khác badge số tin chưa đọc) */
+.tab-badge-score {
+  background: #fef3c7 !important;
+  color: #b45309 !important;
+  font-weight: 700 !important;
+  min-width: 24px;
+}
+
 .ip-close {
   position: absolute; top: 7px; right: 9px;
   width: 26px; height: 26px;
@@ -636,8 +810,10 @@ function relativeTime(dateStr: string) {
   font-size: 20px; cursor: pointer;
   color: var(--smax-grey-700);
   border-radius: 50%;
+  z-index: 5;
 }
 .ip-close:hover { background: var(--smax-grey-100); }
+
 
 .ip-avatar-wrap {
   position: relative;
@@ -841,6 +1017,40 @@ function relativeTime(dateStr: string) {
   transition: background 0.12s;
 }
 .info-expand-toggle:hover { background: var(--smax-primary-soft, #e3f2fd); }
+.info-expand-toggle.is-sticky {
+  background: linear-gradient(135deg, #FEF3C7, #FDE68A);
+  color: #92400E;
+  border-color: #FCD34D;
+}
+.info-expand-toggle .sticky-badge {
+  font-size: 11px;
+  margin-left: 3px;
+}
+
+/* Link Hồ sơ KH tổng hợp — thay thế 3 field email/address/occupation ẩn ở cột 4 */
+.info-fullprofile-link {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: calc(100% - 24px);
+  margin: 6px 12px 4px;
+  padding: 8px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #6366F1;
+  background: #EEF2FF;
+  border: 1px dashed #C7D2FE;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+  font-family: inherit;
+}
+.info-fullprofile-link:hover {
+  background: #E0E7FF;
+  border-color: #818CF8;
+  border-style: solid;
+}
 .ip-form-row {
   display: grid;
   grid-template-columns: 22px 80px 1fr;

@@ -3,27 +3,43 @@
     <!-- Label prefix -->
     <span class="bar-label">🏷</span>
 
-    <!-- Assigned pills — Zalo-managed FIRST (theo managedBy), sau đó CrmTag.order.
-         Zalo-managed: monochromatic chip (icon + bg + border + text cùng tone từ ZaloLabel.color
-         qua color-mix). CRM tag: chip gray neutral hoặc tinted theo CrmTag.color. -->
+    <!-- ORDER: Zalo-managed FIRST (anchor left) → User CRM tags → Auto-tags (right end).
+         Lý do: Zalo tag là "ground truth" từ Zalo app (manage 1-chiều, sale ko đổi được),
+         hiện đầu để sale focus context KH. Auto-tag (system-derived) đẩy cuối — phụ trợ. -->
+
+    <!-- 1. Zalo-managed tags (managedBy='zalo_sync') — sort theo ZaloLabel.order -->
     <span
-      v-for="tag in sortedTags"
-      :key="tag"
-      class="tag-pill"
-      :class="{ 'tag-zalo': isZaloManaged(tag), 'tag-crm': !isZaloManaged(tag) }"
+      v-for="tag in zaloTags"
+      :key="'zalo-' + tag"
+      class="tag-pill tag-zalo"
       :style="{ '--tag-color': tagColor(tag) }"
-      :title="isZaloManaged(tag)
-        ? `Tag Zalo Real — đổi/gỡ trên app Zalo, hệ thống tự cập nhật. ${findDef(tag)?.description || ''}`
-        : (findDef(tag)?.description || 'Click × để xoá')"
+      :title="`Tag Zalo Real — đổi/gỡ trên app Zalo, hệ thống tự cập nhật. ${findDef(tag)?.description || ''}`"
     >
-      <TagIcon v-if="isZaloManaged(tag)" :size="13" />
-      <span v-else-if="findDef(tag)?.emoji">{{ findDef(tag)?.emoji }} </span>{{ cleanTagName(tag) }}
-      <button
-        v-if="!isZaloManaged(tag)"
-        class="tag-x"
-        title="Xoá tag"
-        @click="removeTag(tag)"
-      >×</button>
+      <TagIcon :size="13" />
+      <span>{{ cleanTagName(tag) }}</span>
+    </span>
+
+    <!-- 2. User CRM tags (sale assign tay) — sort theo CrmTag.order -->
+    <span
+      v-for="tag in userTags"
+      :key="'user-' + tag"
+      class="tag-pill tag-crm"
+      :style="{ '--tag-color': tagColor(tag) }"
+      :title="findDef(tag)?.description || 'Click × để xoá'"
+    >
+      <span v-if="findDef(tag)?.emoji">{{ findDef(tag)?.emoji }} </span>{{ cleanTagName(tag) }}
+      <button class="tag-x" title="Xoá tag" @click="removeTag(tag)">×</button>
+    </span>
+
+    <!-- 3. Auto-tag chips (Phase 6+ unified — read-only, system-derived) — END -->
+    <span
+      v-for="t in autoTagList"
+      :key="'auto-' + t"
+      class="tag-pill tag-auto"
+      :style="{ '--tag-color': autoTagDef(t).color }"
+      :title="autoTagDef(t).tooltip"
+    >
+      <span class="tag-emoji">{{ autoTagDef(t).icon }}</span>{{ autoTagDef(t).label }}
     </span>
 
     <!-- "+ Thêm tag" dropdown — xổ lên (location top) chứa list system tags + settings link -->
@@ -99,6 +115,7 @@ import { api } from '@/api/index';
 import { useToast } from '@/composables/use-toast';
 import TagIcon from '@/components/icons/TagIcon.vue';
 import { tagColor as lookupTagColor, cleanTagName } from '@/composables/use-crm-tag-defs';
+import { AUTO_TAG_DISPLAY, getAutoTagDef } from '@/constants/auto-tags';
 
 interface CrmTagDef {
   id: string;
@@ -115,6 +132,8 @@ interface CrmTagDef {
 const props = defineProps<{
   contactId: string | null;
   modelValue: string[];
+  /** Phase 6 polish — auto-tags từ scoring engine (active/cold/stuck/ready/...) — read-only, render đầu */
+  autoTags?: string[];
 }>();
 
 const emit = defineEmits<{
@@ -144,26 +163,30 @@ async function loadTagDefs() {
 
 const tags = computed(() => props.modelValue || []);
 
-// Sort: Zalo-managed tags FIRST, sau đó theo priority CrmTag.order, cuối là alphabetical
-const sortedTags = computed(() => {
-  const list = tags.value;
-  return [...list].sort((a, b) => {
+// Auto-tag display: shared constant ở `@/constants/auto-tags` — đồng bộ giữa
+// TagCrmBar (chat conv), ActivityItem (timeline), FriendsView (filter chip).
+const autoTagList = computed(() => {
+  const list = props.autoTags ?? [];
+  return list.filter(t => AUTO_TAG_DISPLAY[t]);
+});
+const autoTagDef = getAutoTagDef;
+
+// Split tags into Zalo-managed + user CRM. Render theo thứ tự Zalo → User → Auto.
+const zaloTags = computed(() => {
+  const list = tags.value.filter(t => findDef(t)?.managedBy === 'zalo_sync');
+  return list.sort((a, b) => (findDef(a)?.order ?? 0) - (findDef(b)?.order ?? 0));
+});
+const userTags = computed(() => {
+  const list = tags.value.filter(t => findDef(t)?.managedBy !== 'zalo_sync');
+  return list.sort((a, b) => {
     const da = findDef(a);
     const db = findDef(b);
-    // Zalo-managed luôn đứng trước
-    const aZalo = da?.managedBy === 'zalo_sync' ? 0 : 1;
-    const bZalo = db?.managedBy === 'zalo_sync' ? 0 : 1;
-    if (aZalo !== bZalo) return aZalo - bZalo;
     if (da && db) return da.order - db.order;
     if (da) return -1;
     if (db) return 1;
     return a.localeCompare(b);
   });
 });
-
-function isZaloManaged(name: string): boolean {
-  return findDef(name)?.managedBy === 'zalo_sync';
-}
 
 function findDef(name: string): CrmTagDef | null {
   return tagDefs.value.find(d => d.name === name) || null;
@@ -338,6 +361,33 @@ onMounted(() => { void loadTagDefs(); });
   background: color-mix(in srgb, var(--tag-color) 8%, white);
   border-color: color-mix(in srgb, var(--tag-color) 70%, white);
   color: color-mix(in srgb, var(--tag-color) 80%, black);
+}
+
+/* Phase 6 polish — Auto-tag chip (system-generated, read-only). Tonal theo --tag-color. */
+.tag-pill.tag-auto {
+  --tag-color: #6B7280;
+  background: color-mix(in srgb, var(--tag-color) 10%, white);
+  border-color: color-mix(in srgb, var(--tag-color) 60%, white);
+  color: color-mix(in srgb, var(--tag-color) 85%, black);
+  cursor: help;
+  font-weight: 600;
+  padding: 3px 9px;
+  position: relative;
+}
+.tag-pill.tag-auto .tag-emoji { margin-right: 2px; }
+.tag-pill.tag-auto::before {
+  content: 'AUTO';
+  position: absolute;
+  top: -7px;
+  right: -4px;
+  background: var(--tag-color);
+  color: white;
+  font-size: 7.5px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  padding: 1px 4px;
+  border-radius: 99px;
+  line-height: 1;
 }
 .tag-x {
   background: none;

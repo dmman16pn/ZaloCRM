@@ -108,8 +108,19 @@ const filtered = computed(() => {
   );
 });
 
-function displayName(conv: { contact: { fullName: string | null } | null; threadType: string }): string {
-  if (conv.contact?.fullName) return conv.contact.fullName;
+function displayName(conv: {
+  contact: { fullName: string | null; crmName?: string | null } | null;
+  friendship?: { aliasInNick?: string | null; zaloDisplayName?: string | null } | null;
+  threadType: string;
+}): string {
+  // B7 fix — fallback chain tránh hiển thị "Unknown" / "Không rõ" khi Contact
+  // stub trống tên nhưng Friend đã có zaloDisplayName từ SDK.
+  const isUsable = (s: string | null | undefined): s is string =>
+    !!s && s.trim().length > 0 && s.trim().toLowerCase() !== 'unknown';
+  if (isUsable(conv.contact?.crmName)) return conv.contact!.crmName!;
+  if (isUsable(conv.contact?.fullName)) return conv.contact!.fullName!;
+  if (isUsable(conv.friendship?.aliasInNick)) return conv.friendship!.aliasInNick!;
+  if (isUsable(conv.friendship?.zaloDisplayName)) return conv.friendship!.zaloDisplayName!;
   return conv.threadType === 'group' ? 'Nhóm' : 'Không rõ';
 }
 

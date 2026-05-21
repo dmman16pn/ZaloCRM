@@ -20,6 +20,36 @@
           </div>
         </div>
       </div>
+
+      <!-- Auto-tag change: render chips added/removed với format giống TagCrmBar
+           (icon + label + màu tonal + AUTO badge). Read-only, no remove. -->
+      <div v-if="autoTagDiff.added.length || autoTagDiff.removed.length" class="autotag-diff">
+        <div v-if="autoTagDiff.added.length" class="autotag-row">
+          <span class="autotag-arrow added">＋ Gắn:</span>
+          <span
+            v-for="key in autoTagDiff.added"
+            :key="'add-' + key"
+            class="autotag-chip"
+            :style="{ '--tag-color': autoTagInfo(key).color }"
+            :title="autoTagInfo(key).tooltip"
+          >
+            <span class="autotag-emoji">{{ autoTagInfo(key).icon }}</span>{{ autoTagInfo(key).label }}
+          </span>
+        </div>
+        <div v-if="autoTagDiff.removed.length" class="autotag-row">
+          <span class="autotag-arrow removed">− Gỡ:</span>
+          <span
+            v-for="key in autoTagDiff.removed"
+            :key="'rm-' + key"
+            class="autotag-chip removed"
+            :style="{ '--tag-color': autoTagInfo(key).color }"
+            :title="autoTagInfo(key).tooltip"
+          >
+            <span class="autotag-emoji">{{ autoTagInfo(key).icon }}</span>{{ autoTagInfo(key).label }}
+          </span>
+        </div>
+        <div v-if="autoTagContext" class="autotag-context">{{ autoTagContext }}</div>
+      </div>
       <div class="act-meta">
         <v-menu open-on-hover location="bottom start" :open-delay="200" :close-delay="100">
           <template #activator="{ props: actProps }">
@@ -42,8 +72,10 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import type { ActivityLogItem } from '@/composables/use-timeline';
+import { formatInOrgTz, getOrgParts } from '@/composables/use-org-timezone';
 import { CATEGORY_META, ACTION_META, categoryOf, type ActivityCategory } from '@/constants/activity-types';
 import { CARE_STATUSES } from '@/constants/care-status';
+import { getAutoTagDef } from '@/constants/auto-tags';
 import MentionPopover from './MentionPopover.vue';
 
 /* Care status meta map: code → { label VN, color hex từ chip class } */
@@ -108,11 +140,12 @@ const relTime = computed(() => {
   if (h < 24) return `${h}h`;
   const days = Math.floor(h / 24);
   if (days < 7) return `${days}n`;
-  const dt = new Date(props.item.createdAt);
-  return `${String(dt.getDate()).padStart(2, '0')}/${String(dt.getMonth() + 1).padStart(2, '0')}`;
+  const p = getOrgParts(props.item.createdAt);
+  if (!p) return '';
+  return `${String(p.day).padStart(2, '0')}/${String(p.month).padStart(2, '0')}`;
 });
 
-const absTime = computed(() => new Date(props.item.createdAt).toLocaleString('vi-VN'));
+const absTime = computed(() => formatInOrgTz(props.item.createdAt));
 
 /* Details rendering — pick out common fields based on action type */
 const detailsLine = computed(() => {
@@ -140,12 +173,11 @@ const detailsLine = computed(() => {
   }
   // Appointment: show date
   if (action === 'appointment_create' && d.appointmentDate) {
-    const dt = new Date(String(d.appointmentDate));
     const time = d.appointmentTime ? ` lúc ${escape(String(d.appointmentTime))}` : '';
-    return `: <strong>${dt.toLocaleDateString('vi-VN')}${time}</strong>`;
+    return `: <strong>${formatInOrgTz(String(d.appointmentDate), undefined, { dateOnly: true })}${time}</strong>`;
   }
   if (action === 'appointment_reschedule' && d.oldDate && d.newDate) {
-    return `: ${new Date(String(d.oldDate)).toLocaleDateString('vi-VN')} → ${new Date(String(d.newDate)).toLocaleDateString('vi-VN')}`;
+    return `: ${formatInOrgTz(String(d.oldDate), undefined, { dateOnly: true })} → ${formatInOrgTz(String(d.newDate), undefined, { dateOnly: true })}`;
   }
   // Customer update: KHÔNG show inline ở đây — render qua diff-block 2-line bên dưới
   // Friend alias change
@@ -175,8 +207,7 @@ function formatVal(field: string, val: unknown): string {
   if (val === null || val === undefined) return '';
   if (field === 'birthDate' && typeof val === 'string') {
     try {
-      const d = new Date(val);
-      return d.toLocaleDateString('vi-VN');
+      return formatInOrgTz(val, undefined, { dateOnly: true });
     } catch { return String(val); }
   }
   if (field === 'gender') {
@@ -193,6 +224,31 @@ const diffEntries = computed<Array<{ field: string; old: string; new: string }>>
     old: formatVal(field, v.old),
     new: formatVal(field, v.new),
   }));
+});
+
+/* Auto-tag diff render — action='auto_tag_change' từ scoring/auto-tag.ts.
+ * details: { added: AutoTagKey[], removed: AutoTagKey[], context: {leadScore, daysSilent, ...} } */
+const autoTagDiff = computed<{ added: string[]; removed: string[] }>(() => {
+  if (props.item.action !== 'auto_tag_change') return { added: [], removed: [] };
+  const d = props.item.details || {};
+  return {
+    added: Array.isArray(d.added) ? (d.added as string[]) : [],
+    removed: Array.isArray(d.removed) ? (d.removed as string[]) : [],
+  };
+});
+const autoTagInfo = getAutoTagDef;
+/* Subline context: sale hiểu LÝ DO bot gắn/gỡ — "score 85, im 12d, lịch hẹn 1" */
+const autoTagContext = computed<string>(() => {
+  if (props.item.action !== 'auto_tag_change') return '';
+  const ctx = (props.item.details?.context || {}) as Record<string, unknown>;
+  const parts: string[] = [];
+  if (typeof ctx.leadScore === 'number') parts.push(`score ${ctx.leadScore}`);
+  if (typeof ctx.daysSilent === 'number') parts.push(`im ${ctx.daysSilent}d`);
+  if (ctx.stuckSince) parts.push('stuck');
+  if (typeof ctx.futureAppointmentCount === 'number' && ctx.futureAppointmentCount > 0) {
+    parts.push(`${ctx.futureAppointmentCount} lịch hẹn`);
+  }
+  return parts.length ? `(${parts.join(' · ')})` : '';
 });
 </script>
 
@@ -329,6 +385,80 @@ const diffEntries = computed<Array<{ field: string; old: string; new: string }>>
   padding: 1px 6px;
   border-radius: 4px;
   font-size: 11px;
+}
+
+/* Auto-tag diff block — chip giống TagCrmBar.tag-auto (tonal + AUTO badge) */
+.autotag-diff {
+  margin-top: 4px;
+  background: var(--smax-grey-50, #fafbfc);
+  border-left: 2px solid var(--smax-grey-200);
+  padding: 5px 8px;
+  border-radius: 0 4px 4px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.autotag-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  align-items: center;
+  font-size: 11.5px;
+}
+.autotag-arrow {
+  font-weight: 600;
+  font-size: 11px;
+  margin-right: 2px;
+  flex-shrink: 0;
+}
+.autotag-arrow.added { color: #059669; }
+.autotag-arrow.removed { color: #b91c1c; }
+.autotag-chip {
+  --tag-color: #6B7280;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 8px 2px 7px;
+  border-radius: 11px;
+  font-size: 11px;
+  font-weight: 600;
+  border: 1px solid;
+  background: color-mix(in srgb, var(--tag-color) 10%, white);
+  border-color: color-mix(in srgb, var(--tag-color) 60%, white);
+  color: color-mix(in srgb, var(--tag-color) 85%, black);
+  cursor: help;
+  position: relative;
+  white-space: nowrap;
+}
+.autotag-chip .autotag-emoji { font-size: 12px; }
+.autotag-chip::before {
+  content: 'AUTO';
+  position: absolute;
+  top: -6px;
+  right: -3px;
+  background: var(--tag-color);
+  color: white;
+  font-size: 7px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  padding: 1px 3px;
+  border-radius: 99px;
+  line-height: 1;
+}
+/* Removed chip: dim + strikethrough để rõ "tag bị gỡ" */
+.autotag-chip.removed {
+  opacity: 0.65;
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}
+.autotag-chip.removed::before {
+  opacity: 0.7;
+}
+.autotag-context {
+  font-size: 10.5px;
+  color: var(--smax-grey-500);
+  margin-top: 1px;
+  font-style: italic;
 }
 
 /* Status pill inline trong activity details — match CareStatusBadge style */

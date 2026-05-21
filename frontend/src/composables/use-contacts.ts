@@ -6,6 +6,7 @@
  */
 import { ref, reactive } from 'vue';
 import { api } from '@/api/index';
+import { getOrgParts, orgDayKey, formatInOrgTz } from '@/composables/use-org-timezone';
 
 export interface Contact {
   id: string;
@@ -103,6 +104,16 @@ export interface Contact {
   totalInbound?: number;
   totalOutbound?: number;
   totalAppointments?: number;
+
+  // Phase 8 — Engagement Heatmap (read-only, server-computed)
+  engagementPattern?: 'hot' | 'champion' | 'stable' | 'cooling' | 'cold' | 'noise' | null;
+  engagementTrend?: number | null;
+  engagementScore?: number | null;
+  engagementUpdatedAt?: string | null;
+
+  // Phase 8.C — Priority Score (combined Lead × 0.55 + Engagement × 0.30 + trend)
+  priorityScore?: number | null;
+  priorityUpdatedAt?: string | null;
 }
 
 export const GENDER_OPTIONS = [
@@ -137,19 +148,19 @@ export const CONTENT_TYPE_LABEL: Record<string, string> = {
   location: '📍 Vị trí',
 };
 
-/** "Hôm nay 12:49" / "Hôm qua 23:14" / "5/5/2026 14:32" */
+/** "Hôm nay 12:49" / "Hôm qua 23:14" / "5/5/2026 14:32" — theo org TZ. */
 export function formatRecentDateTime(iso: string | null | undefined): string {
   if (!iso) return '';
-  const d = new Date(iso);
-  const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const yesterday = new Date(today.getTime() - 86_400_000);
-  const dayOfMsg = new Date(d.getFullYear(), d.getMonth(), d.getDate());
-  const hh = d.getHours().toString().padStart(2, '0');
-  const mm = d.getMinutes().toString().padStart(2, '0');
-  if (dayOfMsg.getTime() === today.getTime()) return `Hôm nay ${hh}:${mm}`;
-  if (dayOfMsg.getTime() === yesterday.getTime()) return `Hôm qua ${hh}:${mm}`;
-  return `${d.toLocaleDateString('vi-VN')} ${hh}:${mm}`;
+  const todayKey = orgDayKey(new Date());
+  const yesterdayKey = orgDayKey(new Date(Date.now() - 86_400_000));
+  const msgKey = orgDayKey(iso);
+  const parts = getOrgParts(iso);
+  if (!parts) return '';
+  const hh = String(parts.hour).padStart(2, '0');
+  const mm = String(parts.minute).padStart(2, '0');
+  if (msgKey === todayKey) return `Hôm nay ${hh}:${mm}`;
+  if (msgKey === yesterdayKey) return `Hôm qua ${hh}:${mm}`;
+  return formatInOrgTz(iso);
 }
 
 /** Truncated preview: 60 chars max. Falls back to media-type label when content is empty. */

@@ -189,11 +189,13 @@ async function exec<T>(opts: ExecOptions, fn: (api: any) => Promise<T>): Promise
     }
   }
 
-  // Wrap unknown errors
+  // Wrap unknown errors — preserve Zalo error code in message for diagnostics
   if (lastError instanceof ZaloOpError) throw lastError;
   logger.error(`[zalo-ops:${accountId}] ${operation} failed:`, lastError);
+  const zaloCode = lastError?.code; // ZaloApiError exposes .code = Zalo error_code (e.g., 113, 222)
+  const msg = lastError?.message || String(lastError);
   throw new ZaloOpError(
-    `${operation} failed: ${lastError?.message || String(lastError)}`,
+    `${operation} failed: ${msg}${zaloCode != null ? ` [zalo:${zaloCode}]` : ''}`,
     'API_ERROR',
     500,
   );
@@ -503,9 +505,9 @@ async function removeFriendAlias(accountId: string, userId: string) {
     (api) => api.removeFriendAlias(userId));
 }
 
-async function getAliasList(accountId: string) {
+async function getAliasList(accountId: string, count = 100, page = 1) {
   return exec({ accountId, category: 'friend_read', operation: 'getAliasList' },
-    (api) => api.getAliasList());
+    (api) => api.getAliasList(count, page));
 }
 
 async function blockUser(accountId: string, userId: string) {
@@ -551,7 +553,7 @@ async function setOnlineStatus(accountId: string, online: boolean) {
 
 async function getLastOnline(accountId: string, userId: string) {
   return exec({ accountId, category: 'query', operation: 'getLastOnline' },
-    (api) => api.getLastOnline(userId));
+    (api) => api.lastOnline(userId));
 }
 
 // ── Public API ──────────────────────────────────────────────────────────────

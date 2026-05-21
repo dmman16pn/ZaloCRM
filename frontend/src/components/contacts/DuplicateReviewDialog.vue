@@ -174,6 +174,7 @@ import { ref, computed, watch, reactive, h, defineComponent, type PropType } fro
 import Avatar from '@/components/ui/Avatar.vue';
 import { useContactIntelligence } from '@/composables/use-contacts';
 import { useToast } from '@/composables/use-toast';
+import { formatInOrgTz } from '@/composables/use-org-timezone';
 
 interface ContactInGroup {
   id: string;
@@ -379,7 +380,7 @@ const ContactCardInner = defineComponent({
     }
     function formatDate(d: string | undefined): string {
       if (!d) return '';
-      return new Date(d).toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' });
+      return formatInOrgTz(d, undefined, { dateOnly: true });
     }
     function richness(c: ContactInGroup): { friends: number; convs: number; apts: number } {
       return {

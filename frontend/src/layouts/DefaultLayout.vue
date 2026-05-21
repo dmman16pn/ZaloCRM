@@ -34,17 +34,20 @@
           <span class="ic">{{ tab.icon }}</span>{{ tab.label }}
         </RouterLink>
 
+        <!-- Legacy automation dropdown (kept for backward compat — Phase 7 Bot-Auto
+             is now a top-level primary tab via primaryTabs array above) -->
         <v-menu open-on-hover>
           <template #activator="{ props: act }">
-            <button class="nav-tab" :class="{ active: isPathPrefix('/automation') }" v-bind="act">
+            <button
+              class="nav-tab"
+              :class="{ active: isLegacyAutomationActive }"
+              v-bind="act"
+            >
               <span class="ic">⚡</span>Automation<span class="caret">▾</span>
             </button>
           </template>
           <v-list density="compact" min-width="220">
-            <v-list-item to="/automation" title="Tổng quan" prepend-icon="mdi-chart-box-outline" />
-            <v-list-item to="/automation?tab=send-message" title="Nhắn tin" prepend-icon="mdi-message-fast-outline" />
-            <v-list-item to="/automation?tab=add-friend" title="Kết bạn" prepend-icon="mdi-account-plus-outline" />
-            <v-list-item to="/automation?tab=follow-up" title="Bám đuổi" prepend-icon="mdi-radar" />
+            <v-list-item to="/automation" title="Rules &amp; Templates (legacy)" prepend-icon="mdi-chart-box-outline" />
           </v-list>
         </v-menu>
 
@@ -54,13 +57,23 @@
               <span class="ic">⚙</span>Cài đặt<span class="caret">▾</span>
             </button>
           </template>
-          <v-list density="compact" min-width="220">
-            <v-list-item to="/zalo-accounts" title="Tài khoản Zalo" prepend-icon="mdi-cellphone-link" />
-            <v-list-item to="/api-settings" title="API &amp; Webhook" prepend-icon="mdi-api" />
-            <v-list-item to="/integrations" title="Tích hợp" prepend-icon="mdi-connection" />
+          <v-list density="compact" min-width="240">
+            <v-list-item to="/settings/personal/profile" title="Hồ sơ của tôi" prepend-icon="mdi-account-circle-outline" />
             <v-divider />
-            <v-list-item to="/settings" title="Nhân viên" prepend-icon="mdi-account-cog-outline" />
-            <v-list-item to="/settings?tab=roles" title="Phân quyền" prepend-icon="mdi-shield-account-outline" />
+            <v-list-subheader>Tổ chức &amp; Nhân sự</v-list-subheader>
+            <v-list-item to="/settings/team/users" title="Nhân viên" prepend-icon="mdi-account-cog-outline" />
+            <v-list-item to="/settings/team/teams" title="Đội nhóm" prepend-icon="mdi-account-group-outline" />
+            <v-list-item to="/settings/team/roles" title="Vai trò &amp; Phân quyền" prepend-icon="mdi-shield-account-outline" />
+            <v-divider />
+            <v-list-subheader>CRM &amp; Kênh</v-list-subheader>
+            <v-list-item to="/settings/crm/tags" title="Tag CRM" prepend-icon="mdi-tag-multiple-outline" />
+            <v-list-item to="/settings/crm/scoring" title="Lead scoring" prepend-icon="mdi-chart-line" />
+            <v-list-item to="/settings/channels/zalo" title="Tài khoản Zalo" prepend-icon="mdi-cellphone-link" />
+            <v-list-item to="/settings/channels/integrations" title="Tích hợp" prepend-icon="mdi-connection" />
+            <v-divider />
+            <v-list-item to="/settings/dev/api" title="API &amp; Webhook" prepend-icon="mdi-api" />
+            <v-divider />
+            <v-list-item to="/settings" title="📋 Xem tất cả cài đặt" prepend-icon="mdi-cog-outline" />
           </v-list>
         </v-menu>
       </nav>
@@ -141,27 +154,34 @@ interface NavTab {
 }
 
 // Excel-driven menu (cấp 1) — Automation/Cài đặt được render riêng với dropdown.
+// Bot-Auto (Phase 7) là tab top-level riêng (giống smax.ai), tách hẳn khỏi
+// legacy Automation dropdown để user không bị nhầm 2 hệ thống.
 const primaryTabs: NavTab[] = [
-  { path: '/',             label: 'Dashboard',  icon: '🏠', matchPrefix: '/$' },
-  { path: '/chat',         label: 'Tin nhắn',   icon: '💬' },
-  { path: '/friends',      label: 'Bạn bè',     icon: '👥' },
-  { path: '/contacts',     label: 'Khách hàng', icon: '🧑' },
-  { path: '/appointments', label: 'Lịch hẹn',   icon: '📅' },
-  { path: '/analytics',    label: 'Phân tích',  icon: '📈' },
-  { path: '/reports',      label: 'Báo cáo',    icon: '📊' },
+  { path: '/',                       label: 'Dashboard',   icon: '🏠', matchPrefix: '/$' },
+  { path: '/chat',                   label: 'Tin nhắn',    icon: '💬' },
+  { path: '/friends',                label: 'Bạn bè',      icon: '👥' },
+  { path: '/contacts',               label: 'Khách hàng',  icon: '🧑' },
+  { path: '/leads/stuck',            label: 'KH đình trệ', icon: '🚨' },
+  { path: '/appointments',           label: 'Lịch hẹn',    icon: '📅' },
+  { path: '/automation/bot/triggers', label: 'Bot-Auto',   icon: '🤖', matchPrefix: '/automation/bot' },
+  { path: '/analytics',              label: 'Phân tích',   icon: '📈' },
+  { path: '/reports',                label: 'Báo cáo',     icon: '📊' },
 ];
 
 function isActive(tab: NavTab): boolean {
   if (tab.matchPrefix === '/$') return route.path === '/';
+  if (tab.matchPrefix) {
+    return route.path === tab.matchPrefix || route.path.startsWith(tab.matchPrefix + '/');
+  }
   return route.path === tab.path || route.path.startsWith(tab.path + '/');
 }
-function isPathPrefix(prefix: string): boolean {
-  return route.path === prefix || route.path.startsWith(prefix + '/');
-}
 const isSettingsActive = computed(() =>
-  ['/settings', '/api-settings', '/integrations', '/zalo-accounts'].some(p =>
-    route.path === p || route.path.startsWith(p + '/'),
-  ),
+  route.path === '/settings' || route.path.startsWith('/settings/'),
+);
+// Highlight legacy Automation dropdown ONLY when on /automation (exact) — do NOT
+// activate when on /automation/bot/* (that's the top-level Bot-Auto tab).
+const isLegacyAutomationActive = computed(
+  () => route.path === '/automation' || (route.path.startsWith('/automation') && !route.path.startsWith('/automation/bot')),
 );
 
 // Workspace — placeholder single-tenant cho Phase 1

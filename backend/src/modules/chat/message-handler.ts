@@ -8,6 +8,7 @@ import { randomUUID } from 'node:crypto';
 import { emitWebhook } from '../api/webhook-service.js';
 import { runAutomationRules } from '../automation/automation-service.js';
 import { applyContactAggregateFromMessage, applyContactInteraction, applyFriendAggregate } from '../contacts/contact-aggregate.js';
+import { onInboundMessage as onInboundScoring, onOutboundMessage as onOutboundScoring } from '../scoring/scoring-hooks.js';
 import { syncReminderFromMessage } from '../contacts/reminder-sync.js';
 
 export interface IncomingMessage {
@@ -170,6 +171,94 @@ export async function handleIncomingMessage(
     void applyContactAggregateFromMessage(aggregateInput);
     void applyFriendAggregate(aggregateInput);
 
+    // Phase 8 — Engagement daily aggregate hook (fire-and-forget).
+    // Skip for group threads (only meaningful for 1-1 contact engagement).
+    if (msg.threadType !== 'group' && contactId) {
+      void (async () => {
+        try {
+          const { incrementDailyAggregate, messageEngagementInputs } =
+            await import('../engagement/engagement-service.js');
+          const signals = messageEngagementInputs(message.contentType, msg.isSelf);
+
+          // customerInitiated: KH nhắn trước trong ngày (chỉ khi inbound + chưa có activity nào hôm nay)
+          let customerInitiated = false;
+          if (!msg.isSelf) {
+            const today = new Date(sentAt);
+            const startOfDay = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()));
+            const priorToday = await prisma.message.findFirst({
+              where: {
+                conversationId: conversation.id,
+                sentAt: { gte: startOfDay, lt: sentAt },
+                id: { not: message.id },
+              },
+              select: { id: true },
+            });
+            customerInitiated = !priorToday;
+          }
+
+          await incrementDailyAggregate({
+            contactId,
+            orgId: account.orgId,
+            at: sentAt,
+            inboundMsg: signals.inbound,
+            outboundMsg: signals.outbound,
+            mediaShare: signals.mediaShare,
+            voiceMsg: signals.voiceMsg,
+            customerInitiated,
+          });
+        } catch (err) {
+          // silent — engagement is best-effort
+        }
+      })();
+    }
+
+    // Phase 6 — Lead scoring hook (fire-and-forget).
+    // Resolve friendId by (zaloAccountId, externalThreadId) sau aggregate đã chạy.
+    // Nếu Friend chưa exist (lần đầu chat), aggregate sẽ tạo row → hook sẽ chạy ở message kế.
+    if (msg.threadType !== 'group' && msg.threadId) {
+      void (async () => {
+        try {
+          const friend = await prisma.friend.findUnique({
+            where: {
+              zaloAccountId_zaloUidInNick: {
+                zaloAccountId: msg.accountId,
+                zaloUidInNick: msg.threadId,
+              },
+            },
+            select: { id: true, lastInboundAt: true, lastOutboundAt: true },
+          });
+          if (!friend) return;
+
+          const content = String(message.content || '');
+          const sentAtMs = message.sentAt.getTime();
+
+          if (msg.isSelf) {
+            // Outbound — chỉ check slow_response_self
+            if (friend.lastInboundAt) {
+              const secs = Math.max(0, (sentAtMs - friend.lastInboundAt.getTime()) / 1000);
+              onOutboundScoring(account.orgId, friend.id, { responseSecondsFromLastInbound: secs });
+            }
+          } else {
+            // Inbound — full keyword + engagement scoring
+            const responseSecs = friend.lastOutboundAt
+              ? Math.max(0, (sentAtMs - friend.lastOutboundAt.getTime()) / 1000)
+              : null;
+            const isVoiceOrCall =
+              message.contentType === 'voice' ||
+              message.contentType === 'audio' ||
+              message.contentType === 'call';
+            onInboundScoring(account.orgId, friend.id, content, {
+              contentLength: content.length,
+              isVoiceOrCall,
+              responseSecondsFromLastOutbound: responseSecs,
+            });
+          }
+        } catch {
+          // silent — scoring is best-effort
+        }
+      })();
+    }
+
     // Auto-sync Zalo reminder → Appointment (fire-and-forget, dedup theo externalRef)
     void syncReminderFromMessage({
       orgId: account.orgId,
@@ -240,6 +329,67 @@ export async function handleIncomingMessage(
           : null,
         message: { id: message.id, content: message.content, contentType: message.contentType, senderType: message.senderType },
       });
+
+      // Phase 7 — emit AutomationEvent for engine triggers.
+      // Detect first_message_received (contact has 0 prior inbound msgs from this nick)
+      // and emit text-content payload so keyword_match triggers can filter.
+      void (async () => {
+        try {
+          const { automationEventBus } = await import('../automation/engine/event-bus.js');
+          // Count prior inbound messages from this contact to determine "first message"
+          const priorInbound = contactId
+            ? await prisma.message.count({
+                where: {
+                  conversationId: conversation.id,
+                  senderType: 'contact',
+                  id: { not: message.id },
+                },
+              })
+            : 1;
+          const isFirstMessage = priorInbound === 0;
+
+          const basePayload = {
+            messageId: message.id,
+            conversationId: conversation.id,
+            content: message.content ?? '',
+            contentType: message.contentType,
+            zaloAccountId: msg.accountId,
+          };
+
+          // Always emit generic message_received
+          automationEventBus.emit({
+            type: 'message_received',
+            orgId: account.orgId,
+            occurredAt: new Date(),
+            contactId: contactId ?? undefined,
+            payload: basePayload,
+          });
+
+          // Emit first_message_received only on the actual first inbound
+          if (isFirstMessage && contactId) {
+            automationEventBus.emit({
+              type: 'first_message_received',
+              orgId: account.orgId,
+              occurredAt: new Date(),
+              contactId,
+              payload: basePayload,
+            });
+          }
+
+          // Emit keyword_match if content non-empty (engine's eventFilter handles keyword matching)
+          if (message.content && message.contentType === 'text' && contactId) {
+            automationEventBus.emit({
+              type: 'keyword_match',
+              orgId: account.orgId,
+              occurredAt: new Date(),
+              contactId,
+              payload: basePayload,
+            });
+          }
+        } catch {
+          // engine not loaded — silent
+        }
+      })();
     }
 
     return {

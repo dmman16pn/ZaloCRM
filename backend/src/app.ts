@@ -21,6 +21,8 @@ import { authRoutes } from './modules/auth/auth-routes.js';
 import { brandingRoutes } from './modules/branding/branding-routes.js';
 import { zaloRoutes } from './modules/zalo/zalo-routes.js';
 import { chatRoutes } from './modules/chat/chat-routes.js';
+import { folderRoutes } from './modules/chat/folder-routes.js';
+import { presetRoutes } from './modules/chat/preset-routes.js';
 import { chatAttachmentRoutes } from './modules/chat/chat-attachment-routes.js';
 import { contactRoutes } from './modules/contacts/contact-routes.js';
 import { statusRoutes } from './modules/contacts/status-routes.js';
@@ -32,6 +34,7 @@ import { crmTagRoutes } from './modules/contacts/crm-tag-routes.js';
 import { crmTagGroupRoutes } from './modules/contacts/crm-tag-group-routes.js';
 import { userPreferenceRoutes } from './modules/auth/user-preference-routes.js';
 import { timelineRoutes } from './modules/activity/timeline-routes.js';
+import { scoringRoutes } from './modules/scoring/scoring-routes.js';
 import { zaloLabelsRoutes, startLabelsBackgroundSync } from './modules/zalo/zalo-labels-routes.js';
 import { startAppointmentReminder } from './modules/contacts/appointment-reminder.js';
 import { zinstantProxyRoutes } from './modules/contacts/zinstant-proxy-routes.js';
@@ -42,6 +45,7 @@ import { teamRoutes } from './modules/auth/team-routes.js';
 import { orgRoutes } from './modules/auth/org-routes.js';
 import { zaloAccessRoutes } from './modules/zalo/zalo-access-routes.js';
 import { zaloSyncRoutes } from './modules/zalo/zalo-sync-routes.js';
+import { zaloDashboardRoutes } from './modules/zalo/zalo-dashboard-routes.js';
 import { zaloPool } from './modules/zalo/zalo-pool.js';
 import { registerZaloSocketHandlers } from './modules/zalo/zalo-socket.js';
 import { notificationRoutes } from './modules/notifications/notification-routes.js';
@@ -55,6 +59,18 @@ import { savedReportRoutes } from './modules/analytics/saved-report-routes.js';
 import { integrationRoutes } from './modules/integrations/integration-routes.js';
 import { automationRoutes } from './modules/automation/automation-routes.js';
 import { templateRoutes } from './modules/automation/template-routes.js';
+// Phase 7 — Automation framework (Block / Sequence / Trigger / Broadcast)
+import { blockRoutes } from './modules/automation/blocks/block-routes.js';
+import { blockFolderRoutes } from './modules/automation/blocks/block-folder-routes.js';
+import { sequenceRoutes } from './modules/automation/sequences/sequence-routes.js';
+import { triggerRoutes } from './modules/automation/triggers/trigger-routes.js';
+import { broadcastRoutes } from './modules/automation/broadcasts/broadcast-routes.js';
+import { webhookRoutes as automationWebhookRoutes } from './modules/automation/webhooks/webhook-routes.js';
+// Tệp khách hàng (CustomerList) — Phase 7 audience layer
+import { customerListRoutes } from './modules/automation/lists/list-routes.js';
+import { customerListEntryRoutes } from './modules/automation/lists/list-entry-routes.js';
+import { startListEnrichmentWorker } from './modules/automation/lists/list-enrichment-service.js';
+import { registerCustomerListEventHandlers } from './modules/automation/lists/list-event-handlers.js';
 import { aiRoutes } from './modules/ai/ai-routes.js';
 import { chatOperationsRoutes, registerChatSocketHandlers } from './modules/chat/chat-operations-routes.js';
 import { groupRoutes } from './modules/zalo/group-routes.js';
@@ -136,6 +152,8 @@ async function bootstrap() {
   await app.register(brandingRoutes);
   await app.register(zaloRoutes);
   await app.register(chatRoutes);
+  await app.register(folderRoutes);
+  await app.register(presetRoutes);
   await app.register(chatAttachmentRoutes);
   await app.register(contactRoutes);
   await app.register(statusRoutes);
@@ -146,6 +164,10 @@ async function bootstrap() {
   await app.register(crmTagGroupRoutes);
   await app.register(userPreferenceRoutes);
   await app.register(timelineRoutes);
+  await app.register(scoringRoutes);
+  // Phase 8 — Engagement heatmap timeline + admin recompute/backfill
+  const { registerEngagementRoutes } = await import('./modules/engagement/engagement-routes.js');
+  await registerEngagementRoutes(app);
   await app.register(zaloLabelsRoutes);
   await app.register(zinstantProxyRoutes);
   await app.register(dashboardRoutes);
@@ -155,6 +177,7 @@ async function bootstrap() {
   await app.register(orgRoutes);
   await app.register(zaloAccessRoutes);
   await app.register(zaloSyncRoutes);
+  await app.register(zaloDashboardRoutes);
   await app.register(notificationRoutes);
   await app.register(searchRoutes);
   await app.register(publicApiRoutes);
@@ -164,6 +187,16 @@ async function bootstrap() {
   await app.register(integrationRoutes);
   await app.register(automationRoutes);
   await app.register(templateRoutes);
+  // Phase 7 — Block authoring layer (must register BEFORE sequence/trigger/broadcast in later phases)
+  await app.register(blockRoutes);
+  await app.register(blockFolderRoutes);
+  await app.register(sequenceRoutes);
+  await app.register(triggerRoutes);
+  await app.register(broadcastRoutes);
+  await app.register(automationWebhookRoutes);
+  // Tệp khách hàng — CustomerList CRUD + entries + enrichment + event handlers
+  await app.register(customerListRoutes);
+  await app.register(customerListEntryRoutes);
   await app.register(aiRoutes);
   await app.register(chatOperationsRoutes);
   await app.register(groupRoutes);
@@ -217,7 +250,31 @@ async function bootstrap() {
     startContactIntelligence();
     startLabelsBackgroundSync(60_000); // realtime-ish 2-way pull every 60s
     startInteractionCron(); // daily silent_30d detection (02:00 VN)
+    // Phase 8 — Engagement heatmap classification (02:30 VN daily)
+    const { startEngagementCron } = await import('./modules/engagement/engagement-cron.js');
+    startEngagementCron();
+    // Phase A — Real-time Zalo presence cache + bulk refresh 60s + socket emit
+    const { startPresenceCron } = await import('./modules/zalo/presence-service.js');
+    startPresenceCron(io);
+    // Friend full-sync periodic (*/15 min) — catch alias/name/avatar drift từ Zalo
+    // native app mà friend_event listener không bắt được (xem friend-sync-cron.ts)
+    const { startFriendSyncCron } = await import('./modules/zalo/friend-sync-cron.js');
+    startFriendSyncCron(io);
+    // Phase 6 — Lead Scoring background jobs (decay hourly + stuck detection 6am daily)
+    const { startScoringScheduler } = await import('./modules/scoring/scoring-scheduler.js');
+    startScoringScheduler({ enabled: config.nodeEnv !== 'test' });
     await eventBuffer.start(io);
+    // Phase 7 — Automation engine (event bus + materializer + task worker + 3 action handlers)
+    if (config.nodeEnv !== 'test') {
+      const { startAutomationEngine } = await import('./modules/automation/engine/index.js');
+      startAutomationEngine();
+      // Phase F — Broadcast scheduler: poll automation_broadcasts scheduled→running
+      const { startBroadcastScheduler } = await import('./modules/automation/broadcasts/broadcast-scheduler.js');
+      startBroadcastScheduler();
+      // Tệp khách hàng — enrichment worker + reverse-update event handlers
+      startListEnrichmentWorker();
+      registerCustomerListEventHandlers();
+    }
   } catch (err) {
     logger.error('Failed to start server:', err);
     process.exit(1);
