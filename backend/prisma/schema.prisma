@@ -10,6 +10,7 @@ datasource db {
 model Organization {
   id        String   @id @default(uuid())
   name      String
+  timezone  String   @default("Asia/Ho_Chi_Minh")
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
@@ -311,6 +312,9 @@ model Contact {
   // Avg dailyIntensity 28 days (0-100). Snapshot quality.
   engagementScore     Int?      @map("engagement_score")
   engagementUpdatedAt DateTime? @map("engagement_updated_at")
+  // Computed priority score: lead × engagement × trend signals. Read by inbox triage.
+  priorityScore       Int?      @map("priority_score")
+  priorityUpdatedAt   DateTime? @map("priority_updated_at")
 
   // Daily engagement aggregate rows (cascade delete)
   engagementDaily ContactEngagementDaily[]
