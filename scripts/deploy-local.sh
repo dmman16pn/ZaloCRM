@@ -82,17 +82,20 @@ if [[ $SKIP_FRONTEND -eq 0 ]]; then
   ok "dist/ updated"
 
   step "Frontend: clean stale + copy dist/ → container /app/static/"
-  # docker cp behaviors khó chịu:
-  #   1. `cp parent/. → /static/` KHÔNG xoá file cũ + KHÔNG overwrite index.html
-  #      (mtime preserved khiến server giữ bản cũ mặc dù content thay).
-  #   2. Vite build mỗi lần ra hash mới (index-XXX.js) → container tích luỹ
-  #      chunk cũ → index.html mới ref hash mới, nhưng nếu index.html không
-  #      được overwrite → browser load hash CŨ → MIME error trắng trang.
-  # Fix: wipe /app/static/ rồi copy lại sạch.
+  # docker cp quirks trên Windows/Git Bash:
+  #   - `cp parent/. → /static/` không reliable (Git Bash path conv mangles `.`
+  #     suffix, có khi tạo subdir dist/ thay vì copy content)
+  #   - Không overwrite existing files với mtime preserved → index.html cũ giữ
+  # Fix: wipe /app/static/* rồi copy từng artifact explicit (assets dir +
+  # index.html + brand dir + public files), tránh `cp folder/.` syntax.
   docker exec "$CONTAINER" sh -c 'find /app/static -mindepth 1 -delete' >/dev/null 2>&1 || true
-  docker cp "$ROOT/frontend/dist/." "$CONTAINER:/app/static/" >/dev/null
-  # docker cp `parent/.` không tự re-tạo subdir nếu vừa bị xoá → copy assets explicit
-  docker cp "$ROOT/frontend/dist/assets" "$CONTAINER:/app/static/" >/dev/null 2>&1 || true
+  docker cp "$ROOT/frontend/dist/assets"     "$CONTAINER:/app/static/" >/dev/null
+  docker cp "$ROOT/frontend/dist/index.html" "$CONTAINER:/app/static/index.html" >/dev/null
+  # Public assets (brand/, favicon, html mockups, xlsx). Copy folder + loose files.
+  [ -d "$ROOT/frontend/dist/brand" ] && docker cp "$ROOT/frontend/dist/brand" "$CONTAINER:/app/static/" >/dev/null 2>&1 || true
+  for f in "$ROOT"/frontend/dist/*.html "$ROOT"/frontend/dist/*.png "$ROOT"/frontend/dist/*.ico "$ROOT"/frontend/dist/*.svg "$ROOT"/frontend/dist/*.xlsx; do
+    [ -f "$f" ] && [ "$(basename "$f")" != "index.html" ] && docker cp "$f" "$CONTAINER:/app/static/" >/dev/null 2>&1 || true
+  done
   ok "copied (clean replace)"
 fi
 

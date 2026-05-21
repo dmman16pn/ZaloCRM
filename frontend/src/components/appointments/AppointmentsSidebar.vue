@@ -63,35 +63,8 @@
       </div>
     </div>
 
-    <div class="side-section">
-      <h4>Trạng thái</h4>
-      <div class="filter-grid">
-        <label v-for="opt in APPOINTMENT_STATUS_OPTIONS" :key="opt.value" class="filter-chip">
-          <input
-            type="checkbox"
-            :checked="selectedStatuses.has(opt.value)"
-            @change="toggleStatus(opt.value)"
-          />
-          <span class="pill" :class="`status-${opt.value}`">{{ opt.text }}</span>
-          <span class="count">{{ countByStatus[opt.value] || 0 }}</span>
-        </label>
-      </div>
-    </div>
-
-    <div class="side-section">
-      <h4>Loại lịch hẹn</h4>
-      <div class="filter-grid">
-        <label v-for="opt in APPOINTMENT_TYPE_OPTIONS" :key="opt.value" class="filter-chip">
-          <input
-            type="checkbox"
-            :checked="selectedTypes.has(opt.value)"
-            @change="toggleType(opt.value)"
-          />
-          <span class="pill type">{{ typeIcon(opt.value) }} {{ opt.text }}</span>
-          <span class="count">{{ countByType[opt.value] || 0 }}</span>
-        </label>
-      </div>
-    </div>
+    <!-- Trạng thái + Loại lịch hẹn: moved lên hero-row2 (chung hàng Tuần/Danh sách)
+         để sidebar focus vào filter "phạm vi & nguồn & ngày", không trùng UI -->
 
     <!-- Cream callout: keyboard tip -->
     <div class="side-section">
@@ -125,8 +98,6 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import {
-  APPOINTMENT_STATUS_OPTIONS,
-  APPOINTMENT_TYPE_OPTIONS,
   saleColor,
   typeIcon,
   typeLabel,
@@ -174,16 +145,8 @@ function toggleSale(id: string) {
   if (next.has(id)) next.delete(id); else next.add(id);
   emit('update:selectedSales', next);
 }
-function toggleStatus(v: string) {
-  const next = new Set(props.selectedStatuses);
-  if (next.has(v)) next.delete(v); else next.add(v);
-  emit('update:selectedStatuses', next);
-}
-function toggleType(v: string) {
-  const next = new Set(props.selectedTypes);
-  if (next.has(v)) next.delete(v); else next.add(v);
-  emit('update:selectedTypes', next);
-}
+// toggleStatus + toggleType moved up to AppointmentsView (dropdown filter ở hero-row2)
+// countByStatus + countByType cũng compute trên AppointmentsView level
 
 const countBySale = computed(() => {
   const m: Record<string, number> = {};
@@ -191,16 +154,6 @@ const countBySale = computed(() => {
     const id = ownerId(a);
     if (id) m[id] = (m[id] || 0) + 1;
   }
-  return m;
-});
-const countByStatus = computed(() => {
-  const m: Record<string, number> = {};
-  for (const a of props.appointments) m[a.status] = (m[a.status] || 0) + 1;
-  return m;
-});
-const countByType = computed(() => {
-  const m: Record<string, number> = {};
-  for (const a of props.appointments) m[a.type] = (m[a.type] || 0) + 1;
   return m;
 });
 

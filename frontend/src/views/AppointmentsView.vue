@@ -35,6 +35,55 @@
             @click="viewMode = v.value"
           >{{ v.label }}</button>
         </div>
+
+        <!-- Trạng thái filter dropdown -->
+        <v-menu :close-on-content-click="false">
+          <template #activator="{ props: act }">
+            <button v-bind="act" class="filter-trigger" :class="{ active: selectedStatuses.size < APPOINTMENT_STATUS_OPTIONS.length }">
+              Trạng thái <span class="trigger-count">{{ selectedStatuses.size }}/{{ APPOINTMENT_STATUS_OPTIONS.length }}</span>
+              <span class="caret">▾</span>
+            </button>
+          </template>
+          <v-list density="compact" min-width="220" class="filter-menu">
+            <v-list-item v-for="opt in APPOINTMENT_STATUS_OPTIONS" :key="opt.value" @click="toggleStatus(opt.value)">
+              <template #prepend>
+                <v-icon size="16" :color="selectedStatuses.has(opt.value) ? '#181d26' : '#9CA3AF'">
+                  {{ selectedStatuses.has(opt.value) ? 'mdi-checkbox-marked' : 'mdi-checkbox-blank-outline' }}
+                </v-icon>
+              </template>
+              <v-list-item-title>
+                <span class="menu-pill" :class="`status-${opt.value}`">{{ opt.text }}</span>
+                <span class="menu-count">{{ countByStatus[opt.value] || 0 }}</span>
+              </v-list-item-title>
+            </v-list-item>
+          </v-list>
+        </v-menu>
+
+        <!-- Loại lịch hẹn filter dropdown -->
+        <v-menu :close-on-content-click="false">
+          <template #activator="{ props: act }">
+            <button v-bind="act" class="filter-trigger" :class="{ active: selectedTypes.size < APPOINTMENT_TYPE_OPTIONS.length }">
+              Loại lịch hẹn <span class="trigger-count">{{ selectedTypes.size }}/{{ APPOINTMENT_TYPE_OPTIONS.length }}</span>
+              <span class="caret">▾</span>
+            </button>
+          </template>
+          <v-list density="compact" min-width="220" class="filter-menu">
+            <v-list-item v-for="opt in APPOINTMENT_TYPE_OPTIONS" :key="opt.value" @click="toggleType(opt.value)">
+              <template #prepend>
+                <v-icon size="16" :color="selectedTypes.has(opt.value) ? '#181d26' : '#9CA3AF'">
+                  {{ selectedTypes.has(opt.value) ? 'mdi-checkbox-marked' : 'mdi-checkbox-blank-outline' }}
+                </v-icon>
+              </template>
+              <v-list-item-title>
+                <span class="menu-pill type">{{ opt.text }}</span>
+                <span class="menu-count">{{ countByType[opt.value] || 0 }}</span>
+              </v-list-item-title>
+            </v-list-item>
+          </v-list>
+        </v-menu>
+
+        <div class="hero-row2-spacer" />
+
         <!-- Date nav (week view only) -->
         <div class="apt-date-nav" :class="{ hidden: viewMode !== 'week' }">
           <button class="icon-btn icon-btn--bordered" @click="shiftWeek(-1)">‹</button>
@@ -215,6 +264,30 @@ const selectedSales = ref<Set<string>>(new Set());
 const selectedStatuses = ref<Set<string>>(new Set(['scheduled', 'overdue']));
 const selectedTypes = ref<Set<string>>(new Set(APPOINTMENT_TYPE_OPTIONS.map(o => o.value)));
 const source = ref<'all' | 'manual' | 'zalo'>('all');
+
+function toggleStatus(v: string) {
+  const next = new Set(selectedStatuses.value);
+  if (next.has(v)) next.delete(v);
+  else next.add(v);
+  selectedStatuses.value = next;
+}
+function toggleType(v: string) {
+  const next = new Set(selectedTypes.value);
+  if (next.has(v)) next.delete(v);
+  else next.add(v);
+  selectedTypes.value = next;
+}
+// Counts cho dropdown — đếm trên scopedAppointments (đã filter scope/sale/source)
+const countByStatus = computed<Record<string, number>>(() => {
+  const m: Record<string, number> = {};
+  for (const a of scopedAppointments.value) m[a.status] = (m[a.status] || 0) + 1;
+  return m;
+});
+const countByType = computed<Record<string, number>>(() => {
+  const m: Record<string, number> = {};
+  for (const a of scopedAppointments.value) m[a.type] = (m[a.type] || 0) + 1;
+  return m;
+});
 
 // Quick create
 const quickCreateOpen = ref(false);
@@ -514,6 +587,76 @@ onBeforeUnmount(() => {
 }
 .at-segmented button:disabled { opacity: 0.35; cursor: not-allowed; }
 
+/* ── Filter dropdown trigger (Trạng thái / Loại lịch hẹn) ───────────── */
+.filter-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  background: var(--at-canvas);
+  border: 1px solid var(--at-hairline);
+  border-radius: var(--at-r-md);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--at-body);
+  cursor: pointer;
+  font-family: inherit;
+  white-space: nowrap;
+  height: 36px;
+}
+.filter-trigger:active { background: var(--at-surface-soft); }
+.filter-trigger.active {
+  border-color: var(--at-ink);
+  color: var(--at-ink);
+}
+.filter-trigger .trigger-count {
+  font-size: 11.5px;
+  background: var(--at-surface-soft);
+  color: var(--at-muted);
+  padding: 1px 7px;
+  border-radius: var(--at-r-pill);
+  font-variant-numeric: tabular-nums;
+}
+.filter-trigger.active .trigger-count {
+  background: var(--at-ink);
+  color: var(--at-on-primary);
+}
+.filter-trigger .caret { font-size: 10px; color: var(--at-muted); }
+
+/* Menu items inside dropdown */
+:global(.filter-menu .v-list-item) {
+  min-height: 36px !important;
+}
+:global(.filter-menu .v-list-item-title) {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 13px;
+}
+:global(.filter-menu .menu-pill) {
+  display: inline-flex; align-items: center;
+  padding: 2px 8px;
+  border-radius: var(--at-r-pill);
+  font-size: 11.5px;
+  font-weight: 500;
+  letter-spacing: 0.16px;
+  flex: 1;
+}
+:global(.filter-menu .menu-pill.status-scheduled) { background: #fdf0e3; color: #7a4115; }
+:global(.filter-menu .menu-pill.status-overdue)   { background: #fdf3df; color: #7a5818; }
+:global(.filter-menu .menu-pill.status-completed) { background: #e3ede4; color: #0a2e0e; }
+:global(.filter-menu .menu-pill.status-cancelled) { background: #e0e2e6; color: #41454d; text-decoration: line-through; }
+:global(.filter-menu .menu-pill.status-no_show)   { background: #fbe6dc; color: #7a2000; }
+:global(.filter-menu .menu-pill.type)             { background: #f8fafc; color: #333840; border: 1px solid #dddddd; }
+:global(.filter-menu .menu-count) {
+  margin-left: auto;
+  font-size: 11.5px;
+  color: #6B7280;
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+}
+
+/* Push date-nav qua phải */
+.hero-row2-spacer { flex: 1; }
+
 /* ── Date nav ────────────────────────────────────────────────────────── */
 .apt-date-nav { display: inline-flex; align-items: center; gap: var(--at-s-xs); }
 .apt-date-nav.hidden { display: none; }
@@ -651,12 +794,15 @@ onBeforeUnmount(() => {
   .apt-hero { padding: var(--at-s-md); }
   .apt-filter-strip { padding: var(--at-s-xs) var(--at-s-md); overflow-x: auto; flex-wrap: nowrap; }
   .apt-filter-strip .kb-hint, .apt-filter-strip .spacer { display: none; }
-  .at-segmented { flex: 1; }
+  .apt-hero-row2 { flex-wrap: wrap; gap: var(--at-s-xs); }
+  .at-segmented { flex: 1 1 100%; }
   .at-segmented button { flex: 1; padding: 6px 10px; font-size: 12px; }
+  .filter-trigger { padding: 6px 10px; font-size: 12px; height: 32px; }
+  .hero-row2-spacer { display: none; }
   .at-btn { padding: 9px 12px; font-size: 12.5px; }
-  /* Secondary "Xuất CSV" còn icon — primary "+ Tạo lịch hẹn" giữ label vì là main action */
   .apt-hero-actions .at-btn--secondary .btn-label { display: none; }
   .apt-hero-actions .at-btn--primary { flex: 1; }
+  .apt-date-nav { flex: 1 1 100%; justify-content: space-between; }
   .apt-date-nav .week-range { min-width: 100px; font-size: 12px; }
 }
 </style>
