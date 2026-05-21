@@ -104,6 +104,68 @@ openssl rand -hex 32
 openssl rand -hex 32
 ```
 
+## Nâng cấp từ v3.1 lên v3.2
+
+> ⚠️ **Backup database trước khi nâng cấp.** Schema v3.2 thêm các bảng Phase 7 (Block, Sequence, Trigger, Broadcast, Campaign, Task, CustomerList) và Phase 6 (ScoringConfig, ScoreSignalRule, StageTransitionRule, StuckThreshold, NbaTemplate) + field `Organization.timezone`, `Contact.priorityScore/priorityUpdatedAt`.
+
+```bash
+# 1. Backup database
+docker exec zalo-crm-db pg_dump -U crmuser zalocrm > backup-v3.1-$(date +%Y%m%d-%H%M).sql
+
+# 2. Pull code v3.2
+git pull origin main
+
+# 3. Rebuild + restart (entrypoint tự `prisma db push --accept-data-loss`)
+docker compose up -d --build app
+
+# 4. Verify
+curl http://localhost:3080/                                                              # HTTP 200
+docker logs zalo-crm-app --tail 30 | grep -E "broadcast-scheduler|list-enrichment|cron-scheduler"
+```
+
+### Tính năng mới v3.2
+
+#### 🤖 Bot-Auto framework (Phase 7) — top-level tab
+| Module | Mô tả |
+|--------|-------|
+| **Blocks** | Reusable content blocks + folders, dùng chung cho sequence/broadcast |
+| **Sequences** | Automated message sequences với cron + stop_on_accept gate |
+| **Triggers** | Event-driven: cron, scheduled_cron, webhook (order_success), birthday, request_friend Zalo SDK |
+| **Broadcasts** | CRUD + scheduler + UI, send batch tới audience |
+| **Lists (Tệp khách hàng)** | Import CSV/Excel với column mapping, inline edit, undo delete, 2-axis status (lifecycle + system) |
+| **Engine** | Action handlers, manual_run, block-bound trigger materializer, real Zalo SDK send |
+
+#### 📊 Lead Scoring (Phase 6) — chấm điểm + phát hiện KH đình trệ
+- Scoring engine: signal detect (inbound/outbound/meeting) + auto decay
+- Auto-tag 7 tags: `cold-lead`, `warm-lead`, `hot-lead`, `champion`, `cooling`, `at-risk`, `dormant`
+- Stuck detection cron + `/leads/stuck` dashboard riêng
+- Stage promotion logic + breakdown modal explainability
+- `/settings/crm/scoring` để cấu hình weights + thresholds
+
+#### 🎨 UI redesigns lớn
+- **AppointmentsView** redesign theo Airtable-design spec
+- **FriendsView** flat per-pair table + kind tabs
+- **ZaloAccountsView** dashboard 2-axis status
+- **Settings layout** overhaul: nav nhóm Personal / Team / CRM / Channels / Dev
+- **Bot-Auto** promoted to top-level primary tab (smax.ai parity)
+- **Responsive overhaul** per Airtable breakpoints
+
+#### ⚙️ Other
+- ContactProfileView, CustomerActivityLogView
+- Touch-profile endpoint: fill gender/phone/birthday/hasZalo từ SDK khi click conv
+- Alias 2-way sync: `Friend.aliasInNick` Zalo Real ↔ CRM (pagination 200/page)
+- Scripts mới: `deploy-local.sh`, `test-phase7-runner.sh`, `test-phase7-setup.sql`
+
+### Rollback về v3.1
+```bash
+docker compose down
+git checkout v3.1.2
+docker exec zalo-crm-db psql -U crmuser -d zalocrm < backup-v3.1-<datetime>.sql
+docker compose up -d --build
+```
+
+---
+
 ## Nâng cấp từ v3.0 lên v3.1
 
 > ⚠️ **Backup database trước khi nâng cấp.** Schema v3.1 thêm các bảng mới: `statuses`, `zalo_labels`, `notes`, `crm_tags` và một số field FK trên `contacts`, `friends`, `zalo_accounts`.
