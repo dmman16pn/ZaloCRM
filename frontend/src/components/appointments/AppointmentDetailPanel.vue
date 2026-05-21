@@ -7,7 +7,7 @@
     <div class="apt-panel-inner">
       <template v-if="appointment">
         <div class="panel-head">
-          <div class="ev-color" :style="{ background: saleColor(ownerId(appointment)).bg }" />
+          <div class="ev-color" :style="{ background: typeBgColor(appointment.type) }" />
           <h3>{{ appointment.contact?.fullName || 'Lịch hẹn' }} — {{ typeLabel(appointment.type) }}</h3>
           <button class="close" @click="$emit('close')">✕</button>
         </div>
@@ -16,8 +16,17 @@
           <div class="panel-section">
             <h5>Khách hàng</h5>
             <div class="cust-card">
-              <div class="av" :style="{ background: saleColor(ownerId(appointment)).bg }">
-                {{ initials(appointment.contact?.fullName) }}
+              <div
+                class="av"
+                :style="contactAvatarUrl ? {} : { background: saleColor(ownerId(appointment)).bg }"
+              >
+                <img
+                  v-if="contactAvatarUrl"
+                  :src="contactAvatarUrl"
+                  alt=""
+                  @error="onAvatarError"
+                />
+                <template v-else>{{ initials(appointment.contact?.fullName) }}</template>
               </div>
               <div class="info">
                 <div class="name">{{ appointment.contact?.fullName || 'Chưa rõ' }}</div>
@@ -119,13 +128,16 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref, watch } from 'vue';
+import { api } from '@/api/index';
 import {
   saleColor,
   typeIcon,
   typeLabel,
+  typeBgColor,
   statusLabel,
   initials,
+  resolveContactAvatar,
   appointmentOwnerId as ownerId,
   appointmentOwnerName as ownerName,
   appointmentStart,
@@ -149,6 +161,36 @@ defineEmits<{
 }>();
 
 const DOWS = ['Chủ nhật', 'Thứ 2', 'Thứ 3', 'Thứ 4', 'Thứ 5', 'Thứ 6', 'Thứ 7'];
+
+// Avatar resolve: ưu tiên data sẵn có trên appointment.contact (Contact.avatarUrl +
+// friends embed từ APPOINTMENT_INCLUDE). Nếu vẫn null → fetch /contacts/:id enrich.
+const enrichedAvatarUrl = ref<string | null>(null);
+const contactAvatarUrl = computed<string | null>(() => {
+  if (enrichedAvatarUrl.value) return enrichedAvatarUrl.value;
+  return resolveContactAvatar(props.appointment?.contact);
+});
+async function enrichAvatar(contactId: string) {
+  try {
+    const res = await api.get(`/contacts/${contactId}`);
+    const url = resolveContactAvatar(res.data);
+    if (url && props.appointment?.contact?.id === contactId) {
+      enrichedAvatarUrl.value = url;
+    }
+  } catch (err) {
+    console.warn('[detail-panel] avatar enrich failed', err);
+  }
+}
+function onAvatarError(e: Event) {
+  (e.target as HTMLImageElement).style.display = 'none';
+}
+// Reset + enrich khi đổi appointment
+watch(() => props.appointment?.id, (id) => {
+  enrichedAvatarUrl.value = null;
+  const c = props.appointment?.contact;
+  if (id && c?.id && !resolveContactAvatar(c)) {
+    enrichAvatar(c.id);
+  }
+}, { immediate: true });
 
 const timeRangeLabel = computed(() => {
   if (!props.appointment) return '';
@@ -281,13 +323,19 @@ function formatRelative(iso: string): string {
   align-items: center;
 }
 .cust-card .av {
-  width: 44px; height: 44px;
+  width: 48px; height: 48px;
   border-radius: var(--at-r-pill);
   color: var(--at-on-primary);
   display: grid; place-items: center;
   font-weight: 500;
-  font-size: 16px;
+  font-size: 17px;
   flex-shrink: 0;
+  overflow: hidden;
+}
+.cust-card .av img {
+  width: 100%; height: 100%; object-fit: cover;
+  border-radius: var(--at-r-pill);
+  display: block;
 }
 .cust-card .info { flex: 1; min-width: 0; }
 .cust-card .info .name {

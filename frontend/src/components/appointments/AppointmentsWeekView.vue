@@ -32,7 +32,7 @@
           :style="{
             top: ev.top + 'px',
             height: ev.height + 'px',
-            background: ev.appt.status === 'cancelled' ? '#94a3b8' : saleColor(ownerId(ev.appt)).bg,
+            background: ev.appt.status === 'cancelled' ? '#94a3b8' : typeBgColor(ev.appt.type),
             left: ev.left,
             width: ev.width,
           }"
@@ -78,11 +78,10 @@
 <script setup lang="ts">
 import { computed, onMounted, onBeforeUnmount, ref } from 'vue';
 import {
-  saleColor,
   typeIcon,
+  typeBgColor,
   initials,
   resolveContactAvatar,
-  appointmentOwnerId as ownerId,
   appointmentStart,
   appointmentEnd,
   type AppointmentEx as Appointment,

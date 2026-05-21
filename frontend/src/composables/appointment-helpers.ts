@@ -75,6 +75,30 @@ export function typeTint(type: string): { bg: string; text: string } {
   }
 }
 
+/**
+ * Type → dark bg color cho week-view event cards (saleColor không còn, thay bằng
+ * type color để sale phân biệt nhanh task call vs meeting vs message).
+ * Anh chốt 4 màu 2026-05-21:
+ *   call (📞)      → blue   — communication chuyên nghiệp
+ *   message (💬)   → green  — text nhanh gọn
+ *   meeting (🤝)   → violet — in-person quan trọng nhất, distinct
+ *   follow_up (👁) → amber  — gentle attention, watch
+ */
+export function typeBgColor(type: string | null | undefined): string {
+  switch (type) {
+    case 'call':         return '#2563eb'; // blue-600
+    case 'message':      return '#16a34a'; // green-600
+    case 'meeting':      return '#7c3aed'; // violet-600
+    case 'follow_up':    return '#d97706'; // amber-600
+    // Legacy values (pre-2026-05-21) — map về palette mới
+    case 'consultation': return '#16a34a';
+    case 'new_visit':    return '#7c3aed';
+    case 'reminder':     return '#d97706';
+    case 'tai_kham':     return '#d97706';
+    default:             return '#475569'; // slate-600 fallback
+  }
+}
+
 export function typeLabel(type: string): string {
   return APPOINTMENT_TYPE_OPTIONS.find(o => o.value === type)?.text ?? type;
 }
