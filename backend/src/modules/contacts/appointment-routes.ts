@@ -12,7 +12,21 @@ import { logActivity, computeDiff } from '../activity/activity-logger.js';
 type QueryParams = Record<string, string>;
 
 const APPOINTMENT_INCLUDE = {
-  contact: { select: { id: true, fullName: true, phone: true, avatarUrl: true } },
+  contact: {
+    select: {
+      id: true,
+      fullName: true,
+      phone: true,
+      avatarUrl: true,
+      // Per-nick Zalo avatar fallback — Contact.avatarUrl thường null cho KH import từ Zalo,
+      // avatar thật ở Friend.zaloAvatarUrl. FE resolveAvatarUrl chọn cái nào có trước.
+      friends: {
+        select: { id: true, zaloAvatarUrl: true, zaloDisplayName: true, lastInboundAt: true },
+        orderBy: { lastInboundAt: { sort: 'desc' as const, nulls: 'last' as const } },
+        take: 5,
+      },
+    },
+  },
   assignedUser: { select: { id: true, fullName: true } },
   statusChangedBy: { select: { id: true, fullName: true, email: true } },
 } as const;

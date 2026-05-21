@@ -424,6 +424,32 @@ function dismissCustSuggest() {
   custSuggestions.value = [];
 }
 
+/**
+ * Resolve avatar real:
+ *   1. Contact.avatarUrl (manual upload, hiếm)
+ *   2. Friend.zaloAvatarUrl đầu tiên (per-nick Zalo profile pic, common)
+ *   3. null → fallback initials
+ */
+function resolveAvatarUrl(c: any): string | null {
+  if (c?.avatarUrl) return c.avatarUrl;
+  const friends = c?.friends || [];
+  for (const f of friends) {
+    if (f?.zaloAvatarUrl) return f.zaloAvatarUrl;
+  }
+  return null;
+}
+
+function toContactLite(c: any): ContactLite {
+  return {
+    id: c.id,
+    fullName: c.fullName ?? null,
+    phone: c.phone ?? null,
+    zaloUid: c.zaloUid ?? null,
+    zaloUsername: c.zaloUsername || c.aggregateZaloUsername || null,
+    avatarUrl: resolveAvatarUrl(c),
+  };
+}
+
 let custSearchHandle: number | null = null;
 function onCustSearch() {
   if (custSearchHandle) window.clearTimeout(custSearchHandle);
@@ -433,7 +459,8 @@ function onCustSearch() {
   custSearchHandle = window.setTimeout(async () => {
     try {
       const res = await api.get('/contacts', { params: { search: q, limit: 8 } });
-      custSuggestions.value = (res.data.contacts ?? res.data ?? []).slice(0, 8);
+      const raw = (res.data.contacts ?? res.data ?? []).slice(0, 8);
+      custSuggestions.value = raw.map(toContactLite);
     } catch (err) {
       console.error('[editor] contact search failed', err);
       custSuggestions.value = [];
@@ -551,13 +578,7 @@ watch(() => props.modelValue, (open) => {
     form.location = (a as any).location || '';
     form.notes = a.notes || '';
     form.assignedUserId = (a as any).assignedUserId ?? (a as any).assignedTo?.id ?? null;
-    selectedContact.value = a.contact ? {
-      id: a.contact.id,
-      fullName: a.contact.fullName,
-      phone: a.contact.phone,
-      zaloUid: a.contact.zaloUid ?? null,
-      zaloUsername: (a.contact as any).zaloUsername ?? null,
-    } : null;
+    selectedContact.value = a.contact ? toContactLite(a.contact) : null;
     calMonth.value = a.appointmentDate ? new Date(a.appointmentDate) : new Date();
   } else {
     // Create mode
@@ -569,7 +590,11 @@ watch(() => props.modelValue, (open) => {
     form.location = '';
     form.notes = '';
     form.assignedUserId = currentUserId.value; // default sale = người tạo
-    selectedContact.value = props.prefillContact ?? null;
+    // Prefill: nếu parent truyền object có sẵn friends → resolve avatar fallback,
+    // không thì giữ nguyên (parent có thể đã set avatarUrl chuẩn)
+    selectedContact.value = props.prefillContact
+      ? toContactLite(props.prefillContact)
+      : null;
     // Tiêu đề default = template theo loại hiện tại (call), kèm tên KH nếu prefill
     form.title = buildTitleFromType(form.type);
     calMonth.value = new Date(base);
