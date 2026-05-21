@@ -685,7 +685,11 @@ export async function chatRoutes(app: FastifyInstance) {
   });
 
   // ── List messages for a conversation (paginated, newest first) ──────────
-  app.get('/api/v1/conversations/:id/messages', { preHandler: requireZaloAccess('read') }, async (request: FastifyRequest, reply: FastifyReply) => {
+  app.get('/api/v1/conversations/:id/messages', {
+    preHandler: requireZaloAccess('read'),
+    // Privacy phase integration: main-nick conv content sẽ bị redact ▒▒▒▒ ở middleware Privacy
+    config: { contentClass: 'content' as const, rbacResource: 'conversation' as const, rbacAction: 'access' as const },
+  }, async (request: FastifyRequest, reply: FastifyReply) => {
     const user = request.user!;
     const { id } = request.params as { id: string };
     const { page = '1', limit = '50' } = request.query as QueryParams;
