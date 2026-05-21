@@ -169,18 +169,18 @@ const {
 } = useAppointments();
 const { users, fetchUsers } = useUsers();
 
-// View state
-type ViewMode = 'week' | 'list';
-const viewMode = ref<ViewMode>('week');
-const viewOptions: { value: ViewMode; label: string }[] = [
-  { value: 'week', label: 'Tuần' },
-  { value: 'list', label: 'Danh sách' },
-];
-
 // Responsive: track viewport width — narrow under 900px, force list view & drawer-style sidebar
 const viewportWidth = ref<number>(typeof window !== 'undefined' ? window.innerWidth : 1440);
 const isNarrow = computed(() => viewportWidth.value < 900);
 const sidebarOpen = ref(false);
+
+// View state — initialize 'list' nếu load thẳng mobile (watch sau chỉ trigger on change)
+type ViewMode = 'week' | 'list';
+const viewMode = ref<ViewMode>(isNarrow.value ? 'list' : 'week');
+const viewOptions: { value: ViewMode; label: string }[] = [
+  { value: 'week', label: 'Tuần' },
+  { value: 'list', label: 'Danh sách' },
+];
 
 function onResize() { viewportWidth.value = window.innerWidth; }
 
@@ -653,8 +653,9 @@ onBeforeUnmount(() => {
   .apt-filter-strip .kb-hint, .apt-filter-strip .spacer { display: none; }
   .at-segmented { flex: 1; }
   .at-segmented button { flex: 1; padding: 6px 10px; font-size: 12px; }
-  .btn-label { display: none; }
-  .at-btn { padding: 8px 12px; }
+  .at-btn { padding: 9px 12px; font-size: 12.5px; }
+  /* Secondary "Xuất CSV" còn icon — primary "+ Tạo lịch hẹn" giữ label vì là main action */
+  .apt-hero-actions .at-btn--secondary .btn-label { display: none; }
   .apt-hero-actions .at-btn--primary { flex: 1; }
   .apt-date-nav .week-range { min-width: 100px; font-size: 12px; }
 }

@@ -81,7 +81,12 @@ if [[ $SKIP_FRONTEND -eq 0 ]]; then
   ( cd "$ROOT/frontend" && npm run build 2>&1 | tail -3 )
   ok "dist/ updated"
 
-  step "Frontend: copy dist/ → container /app/static/"
+  step "Frontend: clean stale assets + copy dist/ → container /app/static/"
+  # Xoá assets/ cũ để tránh container giữ chunk JS/CSS old hash song song với
+  # bản mới — index.html reference hash mới nhưng container có thể serve cả 2 →
+  # browser cache hash cũ. Clear all rồi copy lại đảm bảo container chỉ có
+  # exactly những gì local dist/ vừa build.
+  docker exec "$CONTAINER" sh -c 'rm -rf /app/static/assets' >/dev/null 2>&1 || true
   docker cp "$ROOT/frontend/dist/." "$CONTAINER:/app/static/" >/dev/null
   ok "copied"
 fi
