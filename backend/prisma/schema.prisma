@@ -59,6 +59,9 @@ model Organization {
   automationBroadcasts AutomationBroadcast[]
   automationCampaigns  AutomationCampaign[]
   automationTasks      AutomationTask[]
+  // RBAC Phase Phân Quyền 2026-05-21
+  departments          Department[]
+  permissionGroups     PermissionGroup[]
 
   @@map("organizations")
 }
@@ -84,7 +87,12 @@ model User {
   email        String   @unique
   passwordHash String   @map("password_hash")
   fullName     String   @map("full_name")
-  role         String   @default("member") // owner, admin, member
+  // RBAC Phase Phân Quyền 2026-05-21: legacy `role` còn giữ cho dual-read window 2 tuần,
+  // mã mới đọc `permissionGroupId`. Sau migration verify OK (~2 tuần) → drop legacy column.
+  role               String           @default("member") // legacy: owner, admin, member
+  permissionGroupId  String?          @map("permission_group_id")
+  permissionGroup    PermissionGroup? @relation(fields: [permissionGroupId], references: [id], onDelete: SetNull)
+  departmentMember   DepartmentMember?
   isActive     Boolean  @default(true) @map("is_active")
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
@@ -1802,4 +1810,75 @@ model CustomerListEntry {
   @@index([phoneE164]) // hot index for cross-list dedup + reverse update
   @@index([phoneLocal])
   @@map("customer_list_entries")
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// RBAC PHASE PHÂN QUYỀN — 2026-05-21
+// Department tree (org structure) + PermissionGroup tree (what actions)
+// Reference: GetflyCRM model. Decisions locked ở
+// ~/.gstack/projects/zalocrm/thanh-rbac-m2-design-20260521.md
+// ════════════════════════════════════════════════════════════════════════
+
+model Department {
+  id            String   @id @default(uuid())
+  orgId         String   @map("org_id")
+  name          String
+  parentId      String?  @map("parent_id")
+  // Materialized path "/<rootId>/<midId>/<thisId>/" — query subtree bằng LIKE.
+  // Auto recompute bởi trigger Postgres recompute_department_path() khi insert/update parent_id.
+  path          String
+  depth         Int      @default(0) // 0 = root, max 4 (5 level total per anh chốt)
+  displayOrder  Int      @default(0) @map("display_order")
+  archivedAt    DateTime? @map("archived_at")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  org      Organization       @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  parent   Department?        @relation("DeptTree", fields: [parentId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  children Department[]       @relation("DeptTree")
+  members  DepartmentMember[]
+
+  @@index([orgId, path])
+  @@index([parentId])
+  @@map("departments")
+}
+
+model DepartmentMember {
+  id           String   @id @default(uuid())
+  departmentId String   @map("department_id")
+  userId       String   @unique @map("user_id") // 1 user ∈ 1 dept (Q2 chốt)
+  // dept_role: leader / deputy / member. Partial unique index ensure
+  // tối đa 1 leader + 1 deputy mỗi dept (Q4 chốt).
+  deptRole     String   @default("member") @map("dept_role")
+  joinedAt     DateTime @default(now()) @map("joined_at")
+
+  department Department @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([departmentId, deptRole])
+  @@map("department_members")
+}
+
+model PermissionGroup {
+  id            String   @id @default(uuid())
+  orgId         String   @map("org_id")
+  name          String
+  parentId      String?  @map("parent_id") // tree UI grouping, mỗi node độc lập permission
+  isSystem      Boolean  @default(false) @map("is_system") // Admin = protected, không xóa
+  displayOrder  Int      @default(0) @map("display_order")
+  // FIX eng-review 2026-05-21: JSONB blob thay row-per-action (Issue 7).
+  // Shape: { "<resource>": { "access": true, "create": false, "view_all": true, ... } }
+  // 1 query lấy full matrix, parse in-memory, không N+1.
+  grants        Json     @default("{}")
+  archivedAt    DateTime? @map("archived_at")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  org      Organization       @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  parent   PermissionGroup?   @relation("PermGroupTree", fields: [parentId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  children PermissionGroup[]  @relation("PermGroupTree")
+  users    User[]
+
+  @@index([orgId])
+  @@map("permission_groups")
 }
