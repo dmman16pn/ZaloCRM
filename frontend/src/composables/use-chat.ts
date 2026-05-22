@@ -139,6 +139,9 @@ export interface Message {
   editedAt?: string | null;
   /** Privacy 2026-05-22 — true = server đã redact (non-owner xem nick privacy='main'). UI blur. */
   redacted?: boolean;
+  /** Read receipts (Wave 1+2) — chỉ có giá trị cho tin OUTGOING (senderType='self') */
+  deliveredAt?: string | null;
+  seenAt?: string | null;
 }
 
 /** Sort comparator: primary by zaloMsgIdNum (Zalo Snowflake), fallback sentAt cho row chưa echo */
@@ -222,6 +225,11 @@ export function useChat() {
   const loadingConvs = ref(false);
   const loadingMsgs = ref(false);
   const sendingMsg = ref(false);
+  // Wave 1 (2026-05-21) — KH đang gõ realtime. Key = conversationId (FE map từ
+  // threadId qua selectedConv). Value = timestamp ms cuối cùng nhận typing event.
+  // Auto-clear sau 5s không có event mới (timer per conv).
+  const typingConvIds = ref<Map<string, number>>(new Map());
+  const typingTimers = new Map<string, number>();
   const searchQuery = ref('');
   const accountFilter = ref<string | null>(null);
   const aiSuggestion = ref('');
@@ -713,6 +721,61 @@ export function useChat() {
     socket.on('chat:unpinned', () => {
       fetchConversations({ bypassCache: true });
     });
+
+    // ─── WAVE 1 — KH đang gõ tin nhắn ─────────────────────────────────────
+    // SDK fire mỗi ~2s khi KH còn gõ. Auto-clear sau 5s không có event mới
+    // (timer per conv, reset mỗi lần nhận event mới — tránh nháy).
+    socket.on('zalo:typing', (data: { accountId: string; threadId: string; threadType: string; ts: number }) => {
+      const conv = conversations.value.find(
+        c => c.externalThreadId === data.threadId && c.zaloAccount?.id === data.accountId,
+      );
+      if (!conv) return;
+      const m = new Map(typingConvIds.value);
+      m.set(conv.id, Date.now());
+      typingConvIds.value = m;
+      // Reset timer: nếu đã có timer cho conv này → clear, set timer mới 5s
+      const existingTimer = typingTimers.get(conv.id);
+      if (existingTimer) window.clearTimeout(existingTimer);
+      const newTimer = window.setTimeout(() => {
+        const m2 = new Map(typingConvIds.value);
+        m2.delete(conv.id);
+        typingConvIds.value = m2;
+        typingTimers.delete(conv.id);
+      }, 5000);
+      typingTimers.set(conv.id, newTimer);
+    });
+
+    // ─── WAVE 1+2 — bubble status update (delivered/seen) ─────────────────
+    socket.on('zalo:message-status', (data: {
+      accountId: string;
+      conversationId: string;
+      messageId: string;
+      zaloMsgId?: string | null;
+      deliveredAt?: string | null;
+      seenAt?: string | null;
+    }) => {
+      // Update local messages cache nếu đang mở conv đúng
+      if (messagesConvId.value === data.conversationId) {
+        const msg = messages.value.find(
+          m => m.id === data.messageId || (data.zaloMsgId && m.zaloMsgId === data.zaloMsgId),
+        );
+        if (msg) {
+          msg.deliveredAt = data.deliveredAt ?? msg.deliveredAt;
+          msg.seenAt = data.seenAt ?? msg.seenAt;
+        }
+      }
+      // Patch persistent cache (lần sau quay lại conv vẫn thấy status đúng)
+      const cached = messagesCache.get(data.conversationId);
+      if (cached) {
+        const msg = cached.find(
+          m => m.id === data.messageId || (data.zaloMsgId && m.zaloMsgId === data.zaloMsgId),
+        );
+        if (msg) {
+          msg.deliveredAt = data.deliveredAt ?? msg.deliveredAt;
+          msg.seenAt = data.seenAt ?? msg.seenAt;
+        }
+      }
+    });
   }
 
   function destroySocket() {
@@ -755,5 +818,6 @@ export function useChat() {
     initSocket,
     destroySocket,
     getSocket: () => socket,
+    typingConvIds,
   };
 }

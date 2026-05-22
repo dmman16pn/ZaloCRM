@@ -232,6 +232,117 @@ export function attachZaloListener(ctx: ListenerContext): void {
     logger.info(`[zalo:${accountId}] Listener connected`);
   });
 
+  // ─── WAVE 1+2 (2026-05-21) — typing / seen / delivered / disconnected ───────
+  // Trước đây SDK fire 4 events này mà code không subscribe → bỏ phí payload.
+  // Mục đích: bubble status icon (sent/delivered/seen) + typing dots realtime.
+
+  // KH đang gõ tin nhắn (chỉ user threads, không group). Auto-clear FE sau 5s
+  // không có event mới. SDK fire mỗi ~2s khi KH còn gõ.
+  listener.on('typing', (typing: any) => {
+    try {
+      // Chỉ cần forward {threadId, isPC, ts} — FE map sang conversationId qua threadId
+      io?.emit('zalo:typing', {
+        accountId,
+        threadId: typing?.threadId || '',
+        threadType: typing?.type === 1 ? 'group' : 'user',
+        ts: typing?.data?.ts ? Number(typing.data.ts) : Date.now(),
+      });
+    } catch (err) {
+      logger.warn(`[zalo:${accountId}] typing event error:`, err);
+    }
+  });
+
+  // KH đã đọc tin → set seen_at + emit socket bubble update.
+  // Payload: SeenMessage[] — mỗi item {msgId, idTo, ...} cho user threads.
+  // KH đọc tới msg N → tất cả msg ≤ N của ta đều được đánh dấu seen (Zalo behavior).
+  listener.on('seen_messages', async (messages: any[]) => {
+    try {
+      const seenIds: string[] = [];
+      for (const m of messages || []) {
+        const msgId = String(m?.data?.msgId || '');
+        if (msgId) seenIds.push(msgId);
+      }
+      if (!seenIds.length) return;
+      const now = new Date();
+      // Update tất cả msg ≤ msgId này → seen. Đơn giản: update các msg có zaloMsgId in list.
+      // (Sweep-to-msgId logic phức tạp, để wave sau nếu cần.)
+      const updated = await prisma.message.updateMany({
+        where: {
+          zaloMsgId: { in: seenIds },
+          senderType: 'self',
+          seenAt: null,
+        },
+        data: { seenAt: now, deliveredAt: now }, // seen implies delivered
+      });
+      if (updated.count > 0) {
+        // Emit để FE update bubble — gửi danh sách msgId được flip
+        const rows = await prisma.message.findMany({
+          where: { zaloMsgId: { in: seenIds }, senderType: 'self' },
+          select: { id: true, conversationId: true, zaloMsgId: true, deliveredAt: true, seenAt: true },
+        });
+        for (const r of rows) {
+          io?.emit('zalo:message-status', {
+            accountId,
+            conversationId: r.conversationId,
+            messageId: r.id,
+            zaloMsgId: r.zaloMsgId,
+            deliveredAt: r.deliveredAt,
+            seenAt: r.seenAt,
+          });
+        }
+      }
+    } catch (err) {
+      logger.warn(`[zalo:${accountId}] seen_messages error:`, err);
+    }
+  });
+
+  // KH device nhận packet (chưa đọc). Set delivered_at nếu chưa seen.
+  listener.on('delivered_messages', async (messages: any[]) => {
+    try {
+      const deliveredIds: string[] = [];
+      for (const m of messages || []) {
+        const msgId = String(m?.data?.msgId || '');
+        if (msgId) deliveredIds.push(msgId);
+      }
+      if (!deliveredIds.length) return;
+      const now = new Date();
+      const updated = await prisma.message.updateMany({
+        where: {
+          zaloMsgId: { in: deliveredIds },
+          senderType: 'self',
+          deliveredAt: null,
+          seenAt: null, // chỉ set delivered nếu chưa seen (seen > delivered)
+        },
+        data: { deliveredAt: now },
+      });
+      if (updated.count > 0) {
+        const rows = await prisma.message.findMany({
+          where: { zaloMsgId: { in: deliveredIds }, senderType: 'self' },
+          select: { id: true, conversationId: true, zaloMsgId: true, deliveredAt: true, seenAt: true },
+        });
+        for (const r of rows) {
+          io?.emit('zalo:message-status', {
+            accountId,
+            conversationId: r.conversationId,
+            messageId: r.id,
+            zaloMsgId: r.zaloMsgId,
+            deliveredAt: r.deliveredAt,
+            seenAt: r.seenAt,
+          });
+        }
+      }
+    } catch (err) {
+      logger.warn(`[zalo:${accountId}] delivered_messages error:`, err);
+    }
+  });
+
+  // Sớm hơn `closed` ~vài giây. Hiện chỉ log; reconnect logic vẫn ở `closed`.
+  // Nếu cần buffer outgoing messages giữa disconnected → reconnected, mở rộng ở đây.
+  listener.on('disconnected', (code: number, reason: string) => {
+    logger.warn(`[zalo:${accountId}] Listener disconnected (early): ${code} ${reason}`);
+    io?.emit('zalo:disconnected', { accountId, code, reason, phase: 'early' });
+  });
+
   listener.on('message', async (message: any) => {
     try {
       // ThreadType in zca-js: 0 = User, 1 = Group

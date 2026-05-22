@@ -500,6 +500,12 @@ model Message {
   // (Zalo expect cả msgId + cliMsgId). Tin cũ trước migration chưa có column này → null.
   zaloCliMsgId    String?   @map("zalo_cli_msg_id")
   sentAt          DateTime  @map("sent_at")
+  // Read receipts (2026-05-21 Wave 1+2 — wire `delivered_messages` + `seen_messages`
+  // SDK events). Cả 2 chỉ set cho tin OUTGOING (senderType='self'); KH-side luôn null.
+  //   deliveredAt — Zalo server confirm device KH đã nhận packet (1 tick xám)
+  //   seenAt      — KH mở conversation đọc tin (2 tick xanh)
+  deliveredAt     DateTime? @map("delivered_at")
+  seenAt          DateTime? @map("seen_at")
   repliedByUserId String?   @map("replied_by_user_id")
   createdAt       DateTime  @default(now()) @map("created_at")
 

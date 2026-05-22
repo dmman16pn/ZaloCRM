@@ -744,6 +744,9 @@ export async function chatRoutes(app: FastifyInstance) {
           // Edit audit (2026-05-21) — FE render badge "(đã sửa)" + tooltip nội dung gốc
           originalContent: true,
           editedAt: true,
+          // Read receipts (Wave 1+2 2026-05-21) — FE render tick xám / tick xanh
+          deliveredAt: true,
+          seenAt: true,
           quote: true,
           attachments: true,
           albumKey: true,

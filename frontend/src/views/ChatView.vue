@@ -136,6 +136,7 @@ const {
   fetchConversations, fetchAiConfig, fetchMessages, selectConversation, sendMessage,
   generateAiSuggestion, generateAiSummary, generateAiSentiment,
   initSocket, destroySocket, getSocket,
+  typingConvIds,
 } = useChat();
 
 const {
@@ -241,9 +242,20 @@ watch(
 );
 
 // ════════ Existing handlers ════════
-const currentTypers = computed(() =>
-  (selectedConvId.value ? typingUsers.value.get(selectedConvId.value) : null) || [],
-);
+// currentTypers: sale collab typing (typingUsers từ presence) + KH typing
+// (typingConvIds từ Wave 1 zalo:typing socket). KH hiện thành "KH" hoặc tên contact.
+const currentTypers = computed(() => {
+  const internal = (selectedConvId.value ? typingUsers.value.get(selectedConvId.value) : null) || [];
+  if (!selectedConvId.value || !typingConvIds.value.has(selectedConvId.value)) {
+    return internal;
+  }
+  const conv = selectedConv.value;
+  const customerName = conv?.contact?.fullName || (conv?.threadType === 'group' ? 'Thành viên' : 'Khách hàng');
+  return [
+    { userId: '__customer__', userName: customerName },
+    ...internal,
+  ];
+});
 
 async function onAddReaction(msgId: string, reaction: string) {
   if (!selectedConvId.value) return;

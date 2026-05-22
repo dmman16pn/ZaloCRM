@@ -210,6 +210,28 @@
             class="edited-badge"
             :title="message.originalContent ? `Trước khi sửa: ${message.originalContent}` : 'Đã chỉnh sửa'"
           >· đã sửa</span>
+          <!-- Wave 1+2 (2026-05-21): read-receipt icons cho tin OUTGOING.
+               sending  → ⏱ clock (chưa có deliveredAt sau 3s)
+               delivered → 1 tick xám mềm
+               seen      → 2 tick xanh primary (soft tone, không chói) -->
+          <span
+            v-if="isSelf"
+            class="bubble-receipt"
+            :class="receiptState"
+            :title="receiptTooltip"
+          >
+            <svg v-if="receiptState === 'sending'" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="9" />
+              <polyline points="12 7 12 12 15 14" />
+            </svg>
+            <svg v-else-if="receiptState === 'delivered'" width="14" height="10" viewBox="0 0 18 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="2 6 7 11 16 1" />
+            </svg>
+            <svg v-else-if="receiptState === 'seen'" width="18" height="10" viewBox="0 0 22 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="2 6 7 11 16 1" />
+              <polyline points="8 6 13 11 21 2" />
+            </svg>
+          </span>
         </div>
       </div>
 
@@ -406,6 +428,31 @@ function highlightText(raw: string): string {
 const formattedText = computed(() => {
   const raw = parseDisplayContent(props.message.content);
   return highlightText(raw);
+});
+
+/**
+ * Wave 1+2 (2026-05-21) — Read-receipt state cho tin OUTGOING (isSelf=true).
+ *   seen      — KH đã mở conversation đọc tin (2 tick xanh primary)
+ *   delivered — Zalo confirm device KH nhận packet, chưa đọc (1 tick xám)
+ *   sending   — chưa có deliveredAt VÀ tin > 3s tuổi (clock outline)
+ *   sent      — < 3s (vừa gửi, chưa có confirm) — hiện không icon (giảm noise)
+ */
+const receiptState = computed<'sending' | 'delivered' | 'seen' | 'sent'>(() => {
+  const m = props.message;
+  if (m.seenAt) return 'seen';
+  if (m.deliveredAt) return 'delivered';
+  const ageMs = Date.now() - new Date(m.sentAt).getTime();
+  return ageMs > 3000 ? 'sending' : 'sent';
+});
+
+const receiptTooltip = computed<string>(() => {
+  const m = props.message;
+  switch (receiptState.value) {
+    case 'seen':      return `KH đã xem${m.seenAt ? ' lúc ' + formatTime(m.seenAt) : ''}`;
+    case 'delivered': return `Đã gửi tới KH${m.deliveredAt ? ' lúc ' + formatTime(m.deliveredAt) : ''}`;
+    case 'sending':   return 'Đang gửi...';
+    default:          return '';
+  }
 });
 
 /**
@@ -703,6 +750,26 @@ function openFile(href: string) {
   margin-left: 2px;
   cursor: help;
 }
+
+/* Read-receipt icons (Wave 1+2 2026-05-21) — modern, soft, thin-stroke SVG.
+   Inline-flex sát timestamp, color tier:
+     sending   — xám nhạt mờ (đang chờ)
+     delivered — xám trung tính (1 tick, đã tới device)
+     seen      — xanh primary mềm (2 tick, KH đã đọc) */
+.bubble-receipt {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 4px;
+  vertical-align: middle;
+  line-height: 0;
+  cursor: help;
+  transition: color 0.18s ease;
+}
+.bubble-receipt.sending   { color: rgba(120, 130, 145, 0.55); }
+.bubble-receipt.delivered { color: rgba(90, 100, 120, 0.75); }
+.bubble-receipt.seen      { color: #2563eb; }            /* primary blue soft */
+.bubble-receipt.sent      { display: none; }              /* skip noise <3s */
+.bubble-receipt svg       { display: block; }
 
 .reminder-card {
   padding: 8px 12px;
