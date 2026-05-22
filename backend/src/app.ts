@@ -277,6 +277,13 @@ async function bootstrap() {
     // native app mà friend_event listener không bắt được (xem friend-sync-cron.ts)
     const { startFriendSyncCron } = await import('./modules/zalo/friend-sync-cron.js');
     startFriendSyncCron(io);
+    // Phase ZaloAccounts redesign 2026-05-22 — status log: backfill open records 1
+    // lần lúc startup (idempotent), rồi start checkpoint cron (*/5 min) reconcile
+    // orphan records sau crash. Uptime accuracy = 5p resolution.
+    const { backfillStatusLog } = await import('./modules/zalo/status-log-backfill.js');
+    backfillStatusLog().catch((err) => logger.error('[status-log-backfill] failed:', err));
+    const { startStatusLogCheckpointCron } = await import('./modules/zalo/status-log-checkpoint-cron.js');
+    startStatusLogCheckpointCron();
     // Phase 6 — Lead Scoring background jobs (decay hourly + stuck detection 6am daily)
     const { startScoringScheduler } = await import('./modules/scoring/scoring-scheduler.js');
     startScoringScheduler({ enabled: config.nodeEnv !== 'test' });

@@ -62,6 +62,8 @@ model Organization {
   // RBAC Phase Phân Quyền 2026-05-21
   departments          Department[]
   permissionGroups     PermissionGroup[]
+  // Phase ZaloAccounts redesign 2026-05-22 — status log uptime
+  zaloAccountStatusLog ZaloAccountStatusLog[]
 
   @@map("organizations")
 }
@@ -172,7 +174,42 @@ model ZaloAccount {
   lastFriendReqSentAt DateTime?            @map("last_friend_req_sent_at")
   lastMessageSentAt   DateTime?            @map("last_message_sent_at")
 
+  // Phase ZaloAccounts redesign 2026-05-22: status log để tính uptime thật.
+  // Xem design doc: ~/.gstack/projects/zalocrm/EVO-THANH-private-hs-design-20260522-184345.md
+  statusLogs       ZaloAccountStatusLog[]
+
   @@map("zalo_accounts")
+}
+
+// Phase ZaloAccounts redesign 2026-05-22 — event log + checkpoint hybrid.
+// MỖI lần status đổi (zaloPool emit) hook writeTransition() → close record cũ
+// (UPDATE endedAt=NOW WHERE endedAt IS NULL) + insert record mới (endedAt=NULL).
+// Cron 5p checkpoint dùng zaloPool.getAllStatuses() reconcile orphan open records
+// sau crash. Uptime = SUM(connected duration) / window × 100.
+model ZaloAccountStatusLog {
+  id        String    @id @default(uuid())
+  orgId     String    @map("org_id")
+  accountId String    @map("account_id")
+  // 'connected' | 'disconnected' | 'auth_failed' | 'qr_pending' | 'expired'
+  status    String
+  startedAt DateTime  @map("started_at")
+  // NULL = đang giữ status này. Đúng 1 record/account có endedAt=NULL ở mọi thời điểm.
+  endedAt   DateTime? @map("ended_at")
+  // 'login' | 'qr_scan' | 'reconnect_ok' | 'reconnect_failed' | 'disconnect'
+  // | 'auth_fail' | 'session_expired' | 'crash_recovery' | 'checkpoint' | 'manual'
+  reason    String?
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  org     Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  account ZaloAccount  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  // Query window uptime: WHERE accountId=? AND (endedAt IS NULL OR endedAt > since)
+  @@index([accountId, startedAt])
+  // Org-wide aggregate (team uptime)
+  @@index([orgId, startedAt])
+  // Find open record per account (partial index would be ideal — Prisma không hỗ trợ inline)
+  @@index([accountId, endedAt])
+  @@map("zalo_account_status_log")
 }
 
 // ACL: which users can access which Zalo accounts
