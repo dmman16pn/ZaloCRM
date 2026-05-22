@@ -290,7 +290,11 @@
           <div
             v-else
             class="msg-bubble-wrap"
-            :class="{ 'msg-privacy-blurred': privacyVisibility.shouldBlurMessage(item.msg, conversation) }"
+            :class="{
+              'msg-privacy-blurred': privacyVisibility.shouldBlurMessage(item.msg, conversation),
+              'msg-wrap-self': item.msg.senderType === 'self',
+              'msg-wrap-other': item.msg.senderType !== 'self',
+            }"
             @click="privacyVisibility.shouldBlurMessage(item.msg, conversation) ? onMessageLockClick($event) : null"
           >
             <MessageBubble
@@ -308,10 +312,6 @@
               @callback="onMessageCallback(item.msg)"
               @open-profile="onOpenProfileFromCard"
             />
-            <span
-              v-if="privacyVisibility.shouldBlurMessage(item.msg, conversation)"
-              class="msg-privacy-inline-tag"
-            >🔒 Riêng tư</span>
           </div>
         </template>
 
@@ -1885,63 +1885,77 @@ watch(() => props.editingMessage?.id, async (id) => {
 }
 
 /* ════════ Privacy blur — message bubble (cột 3) ════════ */
-/* Anh chốt 2026-05-22: chỉ blur text + avatar tròn KH, KHÔNG che cả row
-   bằng overlay ngang lớn. Inline tag "🔒 Riêng tư" cạnh bubble.
-   FIX 2026-05-22 v2: KHÔNG dùng display:flex cho wrapper kể cả khi blurred
-   — vì MessageBubble bên trong dùng .msg-row.self { justify-content:flex-end }
-   cần parent block. Inline tag dùng position:absolute → không phá layout. */
+/* Anh chốt 2026-05-22 v3: GIỮ NGUYÊN BOX BUBBLE (background xanh self / trắng
+   received) — chỉ blur TEXT bên trong, không blur container. Tag "🔒 Riêng tư"
+   dùng ::before cho self (đầu tin) và ::after cho received (cuối tin) qua
+   pseudo element trên bubble container. */
 .msg-bubble-wrap { position: relative; }
 .msg-bubble-wrap.msg-privacy-blurred { cursor: pointer; }
-/* Blur message bubble content + avatar (target VBubble + Avatar components inside MessageBubble) */
-.msg-privacy-blurred :deep(.message-bubble),
-.msg-privacy-blurred :deep(.bubble-text),
-.msg-privacy-blurred :deep(.bubble-content),
-.msg-privacy-blurred :deep(.v-card),
-.msg-privacy-blurred :deep(.message-text) {
+
+/* Blur CHỈ text/content/media bên trong bubble — KHÔNG blur .message-bubble (box) */
+.msg-privacy-blurred :deep(.text-content),
+.msg-privacy-blurred :deep(.media-caption),
+.msg-privacy-blurred :deep(.recall-body),
+.msg-privacy-blurred :deep(.reply-text),
+.msg-privacy-blurred :deep(.chat-image),
+.msg-privacy-blurred :deep(.chat-video),
+.msg-privacy-blurred :deep(.file-card),
+.msg-privacy-blurred :deep(.sticker-img),
+.msg-privacy-blurred :deep(.sticker-anim),
+.msg-privacy-blurred :deep(.reminder-card) {
   filter: blur(8px) saturate(0.4);
   opacity: 0.75;
   user-select: none;
   transition: filter 0.2s ease;
 }
-.msg-privacy-blurred :deep(.v-avatar),
-.msg-privacy-blurred :deep(.avatar),
-.msg-privacy-blurred :deep(.bubble-avatar) {
+/* Blur avatar tròn KH (msg-avatar bên trái received message) */
+.msg-privacy-blurred :deep(.msg-avatar) {
   filter: blur(6px);
   opacity: 0.8;
 }
-.msg-privacy-blurred:hover :deep(.message-bubble),
-.msg-privacy-blurred:hover :deep(.bubble-text),
-.msg-privacy-blurred:hover :deep(.bubble-content),
-.msg-privacy-blurred:hover :deep(.v-card) {
+.msg-privacy-blurred:hover :deep(.text-content),
+.msg-privacy-blurred:hover :deep(.media-caption),
+.msg-privacy-blurred:hover :deep(.recall-body),
+.msg-privacy-blurred:hover :deep(.chat-image),
+.msg-privacy-blurred:hover :deep(.chat-video) {
   filter: blur(10px) saturate(0.3);
-  opacity: 0.65;
 }
-/* Inline tag "🔒 Riêng tư" — position absolute để KHÔNG phá layout self/other.
-   Floating top-right of wrapper, z-index trên bubble. */
-.msg-privacy-inline-tag {
-  position: absolute;
-  top: -8px;
-  right: 16px;
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
+
+/* Tag "🔒 Riêng tư" qua pseudo element trên .message-bubble
+   - Self (gửi đi) → tag ĐẦU tin (trên cùng bubble)
+   - Other (gửi đến) → tag CUỐI tin (dưới cùng bubble) */
+.msg-privacy-blurred :deep(.message-bubble) {
+  position: relative;
+}
+.msg-privacy-blurred.msg-wrap-self :deep(.message-bubble)::before,
+.msg-privacy-blurred.msg-wrap-other :deep(.message-bubble)::after {
+  content: '🔒 Riêng tư';
+  display: inline-block;
   background: #fbe6dc;
   color: #7a2000;
   font-size: 10px;
-  font-weight: 600;
-  padding: 3px 8px;
+  font-weight: 700;
+  padding: 2px 8px;
   border-radius: 9999px;
   border: 1px solid rgba(170, 45, 0, 0.25);
   white-space: nowrap;
-  cursor: pointer;
-  z-index: 3;
+  margin: 0;
+  letter-spacing: 0.2px;
+  z-index: 2;
   pointer-events: none;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
 }
-.msg-privacy-blurred:hover .msg-privacy-inline-tag {
-  background: #aa2d00;
-  color: white;
-  border-color: #aa2d00;
+.msg-privacy-blurred.msg-wrap-self :deep(.message-bubble)::before {
+  margin-bottom: 6px;
+  align-self: flex-start;
+}
+.msg-privacy-blurred.msg-wrap-other :deep(.message-bubble)::after {
+  margin-top: 6px;
+  align-self: flex-start;
+}
+.msg-privacy-blurred.msg-wrap-self :deep(.message-bubble),
+.msg-privacy-blurred.msg-wrap-other :deep(.message-bubble) {
+  display: flex;
+  flex-direction: column;
 }
 
 /* ════════ Privacy composer lock — chỉ phủ input editor ════════ */
