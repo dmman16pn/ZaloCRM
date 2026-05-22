@@ -311,6 +311,7 @@
               @sender-click="onSenderClick(item.msg)"
               @callback="onMessageCallback(item.msg)"
               @open-profile="onOpenProfileFromCard"
+              @open-reaction-detail="onOpenReactionDetail"
             />
           </div>
         </template>
@@ -574,6 +575,13 @@
       :loading="actionLoading"
       @submit="onSendInviteSubmit"
     />
+
+    <!-- Reaction detail popup — Zalo native style, anh chốt 2026-05-22 -->
+    <ReactionDetailPopup
+      v-model="reactionPopupOpen"
+      :reactions="reactionPopupReactions"
+      :details="reactionPopupDetails"
+    />
   </div>
 </template>
 
@@ -588,8 +596,26 @@ import Avatar from '@/components/ui/Avatar.vue';
 import EmojiPicker from '@/components/chat/EmojiPicker.vue';
 import QuickTemplatePopup from '@/components/chat/quick-template-popup.vue';
 import MessageBubble from '@/components/chat/message-bubble.vue';
+import ReactionDetailPopup from '@/components/chat/reaction-detail-popup.vue';
 import { usePrivacyVisibility } from '@/composables/use-privacy-visibility';
 import NickAvatarLock from '@/components/privacy/NickAvatarLock.vue';
+
+// Reaction detail popup state — anh chốt 2026-05-22: click reaction box → popup
+const reactionPopupOpen = ref(false);
+const reactionPopupReactions = ref<Array<{ emoji: string; count: number; reacted: boolean }>>([]);
+const reactionPopupDetails = ref<Array<{ userId: string; userName?: string | null; emoji: string; source?: 'crm' | 'zalo' }>>([]);
+function onOpenReactionDetail(payload: { reactions: any[]; message: Message }) {
+  reactionPopupReactions.value = payload.reactions;
+  // Build details từ message.reactions (raw row per-user per-emoji)
+  const raw = (payload.message as any).reactions ?? [];
+  reactionPopupDetails.value = raw.map((r: any) => ({
+    userId: r.reactorId || r.userId || '',
+    userName: r.reactorName || r.userName || null,
+    emoji: r.emoji,
+    source: r.reactorSource || r.source,
+  }));
+  reactionPopupOpen.value = true;
+}
 
 const privacyVisibility = usePrivacyVisibility();
 function onMessageLockClick(_e: MouseEvent) {

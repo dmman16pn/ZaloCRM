@@ -213,13 +213,15 @@
         </div>
       </div>
 
-      <!-- Reaction display — Phase A UI fix (2026-05-21): absolute position
-           bottom-right, 50% trong / 50% ngoài bubble, nền trắng, size +10%. -->
+      <!-- Reaction display — Anh chốt 2026-05-22 Zalo native:
+           1 box duy nhất chứa icons + tổng count. self → align RIGHT, other → align LEFT. -->
       <reaction-display
         v-if="reactions && reactions.length > 0"
         :reactions="reactions"
         class="bubble-reaction-overlap"
+        :class="{ 'reaction-align-right': isSelf, 'reaction-align-left': !isSelf }"
         @toggle="(emoji) => emit('toggle-reaction', emoji)"
+        @open-detail="emit('open-reaction-detail', { reactions, message })"
       />
 
       <!-- Hover reaction picker — bubble hover → trigger button visible →
@@ -260,6 +262,7 @@ const emit = defineEmits<{
   'sender-click': [];
   callback: [message: Message];
   'open-profile': [uid: string];
+  'open-reaction-detail': [payload: { reactions: any[]; message: Message }];
 }>();
 
 const SPECIAL_TYPES = new Set([
@@ -917,37 +920,25 @@ function openFile(href: string) {
   right: -28px;
 }
 
-/* Phase A UI fix v3 (2026-05-22) — reaction display overlap bubble compact.
-   Anh chốt: 3 icon đầu tiên + +N overflow, không bị khuất ra ngoài bubble.
-   - Position: absolute, bottom-LEFT (anh chốt: icon đầu lề trái, grow ra phải).
-   - 50% trong / 50% ngoài bubble (overlap mép dưới).
-   - Nền trắng + viền + shadow nhẹ + COMPACT size cho fit nhiều chip vào bubble nhỏ.
-   - flex-nowrap → multi-reaction xếp NGANG, không stack dọc.
-   - max-width 90% để KHÔNG vượt qua bubble bên phải (clip bởi overflow-x:hidden parent). */
+/* Phase A UI fix v4 (2026-05-22) — Zalo native reaction box.
+   Anh chốt: 1 box duy nhất chứa icons sát nhau + tổng count cuối.
+   self → align RIGHT bubble, other → align LEFT bubble.
+   Overlap 50% dưới mép bubble. Click box → MessageThread mở popup detail. */
 .bubble-wrapper > .bubble-reaction-overlap {
   position: absolute;
-  bottom: -10px;
-  left: 8px;
+  bottom: -12px;
   margin: 0;
   z-index: 2;
   max-width: calc(100% - 12px);
 }
-.bubble-wrapper :deep(.bubble-reaction-overlap .v-chip) {
-  background: #ffffff !important;
-  border: 1px solid var(--smax-grey-300, #d4d8e0) !important;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
-  height: 20px !important;
-  font-size: 11px !important;
-  font-weight: 500 !important;
-  padding: 0 6px !important;
-  min-width: 0 !important;
-  border-radius: 10px !important;
+/* Tin self (gửi đi, bubble bên phải): align reaction box bên PHẢI bubble */
+.bubble-wrapper > .bubble-reaction-overlap.reaction-align-right {
+  right: 8px;
+  left: auto;
 }
-.bubble-wrapper :deep(.bubble-reaction-overlap .v-chip__content) {
-  padding: 0 !important;
-  gap: 2px;
-}
-.bubble-wrapper :deep(.bubble-reaction-overlap .v-chip:hover) {
-  background: var(--smax-grey-50, #fafbfc) !important;
+/* Tin received (gửi đến, bubble bên trái): align reaction box bên TRÁI bubble */
+.bubble-wrapper > .bubble-reaction-overlap.reaction-align-left {
+  left: 8px;
+  right: auto;
 }
 </style>
