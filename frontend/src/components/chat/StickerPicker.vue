@@ -7,9 +7,8 @@
   >
     <template #activator="{ props: actProps }">
       <button v-bind="actProps" class="icon-tool" title="Gửi sticker">
-        <!-- mdi-sticker-emoji có inherent square outline trong glyph (cảm giác "lệch"
-             so với các icon outline-style khác). Chuyển sang sticker-outline cho đồng nhất. -->
-        <v-icon size="18">mdi-sticker-outline</v-icon>
+        <!-- Anh chốt 2026-05-22: Lucide Smile đồng bộ với 7 nút Lucide khác trong toolbar -->
+        <SmileIcon :size="18" :stroke-width="1.5" />
       </button>
     </template>
 
@@ -72,6 +71,7 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 import { api } from '@/api/index';
+import { Smile as SmileIcon } from 'lucide-vue-next';
 
 interface StickerItem {
   id: number;
