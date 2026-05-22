@@ -213,12 +213,24 @@
         </div>
       </div>
 
+      <!-- Reaction display — Anh chốt 2026-05-22 Zalo native:
+           1 box duy nhất chứa icons + tổng count. self → align RIGHT, other → align LEFT. -->
+      <reaction-display
+        v-if="reactions && reactions.length > 0"
+        :reactions="reactions"
+        class="bubble-reaction-overlap"
+        :class="{ 'reaction-align-right': isSelf, 'reaction-align-left': !isSelf }"
+        @toggle="(emoji) => emit('toggle-reaction', emoji)"
+        @open-detail="emit('open-reaction-detail', { reactions, message })"
+      />
+
       <!-- Wave 1+2 (2026-05-22 anh chốt Zalo native UX): receipt chip CHỈ hiện
-           cho tin OUTGOING CUỐI CÙNG. Tin cuối seen ⇒ ngầm các tin trên cũng seen,
-           không cần duplicate UI từng bubble. Tin sent < 3s → ẩn để giảm noise. -->
+           cho tin OUTGOING CUỐI CÙNG. Render SAU reaction-display để chip nằm
+           DƯỚI reaction (anh feedback: reaction che chữ "Đã xem"). Tin sent < 3s → ẩn. -->
       <div
         v-if="isSelf && isLastSelf && receiptState !== 'sent'"
         class="receipt-chip-row"
+        :class="{ 'has-reaction-above': reactions && reactions.length > 0 }"
       >
         <span class="receipt-chip" :class="receiptState" :title="receiptTooltip">
           <svg v-if="receiptState === 'sending'" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
@@ -235,17 +247,6 @@
           <span class="receipt-label">{{ receiptLabel }}</span>
         </span>
       </div>
-
-      <!-- Reaction display — Anh chốt 2026-05-22 Zalo native:
-           1 box duy nhất chứa icons + tổng count. self → align RIGHT, other → align LEFT. -->
-      <reaction-display
-        v-if="reactions && reactions.length > 0"
-        :reactions="reactions"
-        class="bubble-reaction-overlap"
-        :class="{ 'reaction-align-right': isSelf, 'reaction-align-left': !isSelf }"
-        @toggle="(emoji) => emit('toggle-reaction', emoji)"
-        @open-detail="emit('open-reaction-detail', { reactions, message })"
-      />
 
       <!-- Hover reaction picker — bubble hover → trigger button visible →
            hover trigger → emoji picker mở (open-on-hover trong reaction-picker) -->
@@ -768,12 +769,17 @@ function openFile(href: string) {
 /* Read-receipt chip (Wave 1+2, anh chốt 2026-05-22 Zalo native UX):
    Chip nhỏ NẰM DƯỚI bubble cuối cùng outgoing — không chèn timestamp.
    Right-aligned, pill bo tròn, icon + text label.
-   Color tier modern soft: sending xám nhạt / delivered xám trung / seen xanh. */
+   Color tier modern soft: sending xám nhạt / delivered xám trung / seen xanh.
+   .has-reaction-above: reaction-display absolute overlap → chip cần margin lớn
+   để clear reaction height (~24px) thay vì 4px như default. */
 .receipt-chip-row {
   display: flex;
   justify-content: flex-end;
   margin-top: 4px;
   padding: 0 2px;
+}
+.receipt-chip-row.has-reaction-above {
+  margin-top: 24px;
 }
 .receipt-chip {
   display: inline-flex;
@@ -1024,10 +1030,11 @@ function openFile(href: string) {
 /* Phase A UI fix v4 (2026-05-22) — Zalo native reaction box.
    Anh chốt: 1 box duy nhất chứa icons sát nhau + tổng count cuối.
    self → align RIGHT bubble, other → align LEFT bubble.
-   Overlap 50% dưới mép bubble. Click box → MessageThread mở popup detail. */
+   Overlap ~6px dưới mép bubble (anh feedback 2026-05-22: cho sát box hơn).
+   Click box → MessageThread mở popup detail. */
 .bubble-wrapper > .bubble-reaction-overlap {
   position: absolute;
-  bottom: -12px;
+  bottom: -6px;
   margin: 0;
   z-index: 2;
   /* FIX 2026-05-22: BỎ max-width — bubble nhỏ (vd tin "1") + 4 icons + total
