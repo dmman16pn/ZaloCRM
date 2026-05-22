@@ -320,27 +320,25 @@ async function undoMessage(
 ) {
   return exec({ accountId, category: 'chat_action', operation: 'undo' },
     async (api) => {
-      // RACE CONDITION FIX 2026-05-21: Zalo trả error 112 khi tin vừa gửi (chưa kịp
-      // propagate qua hệ thống Zalo) — anh test xác nhận reload trang chờ ~5-10s thì
-      // undo work. Retry 2 lần với delay tăng dần (3s, 5s) → tổng 8s đủ Zalo index xong.
+      // RACE CONDITION FIX v2 (2026-05-22): Zalo trả error 112 cho tin <~30s
+      // (chưa kịp propagate index server). Em test: tin 65s → success, <60s → race.
+      // Retry 3 lần với delay tăng dần (3s, 5s, 7s) → tổng 15s đủ cover tin <15s old.
+      // Tin <0-15s old vẫn có thể fail nếu Zalo index chậm, FE catch error sẽ
+      // tự hiển thị message "đợi vài giây rồi thử lại".
       const tryUndo = async () => api.undo({ msgId, cliMsgId }, threadId, threadType);
+      const delays = [3000, 5000, 7000];
 
-      try {
-        return await tryUndo();
-      } catch (err: any) {
-        if (err?.code !== 112) throw err;
-        logger.info(`[zalo-ops:${accountId}] undo got [zalo:112], retry after 3s (msgId=${msgId})`);
-        await new Promise((resolve) => setTimeout(resolve, 3000));
+      for (let i = 0; i < delays.length; i++) {
+        try {
+          return await tryUndo();
+        } catch (err: any) {
+          if (err?.code !== 112) throw err;
+          logger.info(`[zalo-ops:${accountId}] undo got [zalo:112], retry ${i+1}/${delays.length} after ${delays[i]}ms (msgId=${msgId})`);
+          await new Promise((resolve) => setTimeout(resolve, delays[i]));
+        }
       }
 
-      try {
-        return await tryUndo();
-      } catch (err: any) {
-        if (err?.code !== 112) throw err;
-        logger.info(`[zalo-ops:${accountId}] undo got [zalo:112] again, retry after 5s (msgId=${msgId})`);
-        await new Promise((resolve) => setTimeout(resolve, 5000));
-      }
-
+      // Final attempt sau khi đã đợi 15s
       return tryUndo();
     });
 }
