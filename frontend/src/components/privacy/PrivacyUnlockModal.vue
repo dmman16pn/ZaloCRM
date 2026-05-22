@@ -71,16 +71,17 @@ const hasPin = computed(() => store.hasPin);
 const pin = ref('');
 const newPin = ref('');
 const currentPwd = ref('');
-const duration = ref<15 | 60 | 720 | 1440>(60);
+const duration = ref<5 | 15 | 480 | 720>(15);
 const submitting = ref(false);
 const error = ref('');
 const pinInput = ref<HTMLInputElement | null>(null);
 
+// Anh chốt 2026-05-22 v3: 4 options khớp backend DURATIONS_MIN
 const DURATIONS = [
+  { value: 5 as const, label: '5 phút' },
   { value: 15 as const, label: '15 phút' },
-  { value: 60 as const, label: '1 giờ' },
+  { value: 480 as const, label: '8 giờ' },
   { value: 720 as const, label: '12 giờ' },
-  { value: 1440 as const, label: '24 giờ' },
 ];
 
 const canSubmit = computed(() => /^\d{4}$/.test(pin.value));

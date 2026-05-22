@@ -582,6 +582,17 @@
       :reactions="reactionPopupReactions"
       :details="reactionPopupDetails"
     />
+
+    <!-- Privacy unlock popup — anh chốt 2026-05-22 v3 -->
+    <PrivacyUnlockDialog
+      v-model="privacyUnlockOpen"
+      :nick="privacyDialogNick"
+      @unlocked="onPrivacyUnlocked"
+    />
+    <PrivacyViewerDialog
+      v-model="privacyViewerOpen"
+      :nick="privacyDialogNick"
+    />
   </div>
 </template>
 
@@ -599,6 +610,37 @@ import MessageBubble from '@/components/chat/message-bubble.vue';
 import ReactionDetailPopup from '@/components/chat/reaction-detail-popup.vue';
 import { usePrivacyVisibility } from '@/composables/use-privacy-visibility';
 import NickAvatarLock from '@/components/privacy/NickAvatarLock.vue';
+import PrivacyUnlockDialog from '@/components/privacy/PrivacyUnlockDialog.vue';
+import PrivacyViewerDialog from '@/components/privacy/PrivacyViewerDialog.vue';
+import { useAuthStore as _useAuthStorePriv } from '@/stores/auth';
+
+// Privacy dialog state — anh chốt 2026-05-22 v3
+const privacyUnlockOpen = ref(false);
+const privacyViewerOpen = ref(false);
+const privacyDialogNick = ref<{ displayName?: string | null; avatarUrl?: string | null; zaloUid?: string | null } | null>(null);
+const _authStorePriv = _useAuthStorePriv();
+
+function openPrivacyDialog(conv: any) {
+  if (!conv?.zaloAccount) return;
+  const nickInfo = {
+    displayName: conv.zaloAccount.displayName,
+    avatarUrl: conv.zaloAccount.avatarUrl,
+    zaloUid: conv.zaloAccount.zaloUid,
+  };
+  privacyDialogNick.value = nickInfo;
+  // Owner → UnlockDialog (PIN keypad). Non-owner → ViewerDialog (read-only).
+  const myId = _authStorePriv.user?.id;
+  const isOwner = !!myId && conv.zaloAccount.ownerUserId === myId;
+  if (isOwner) privacyUnlockOpen.value = true;
+  else privacyViewerOpen.value = true;
+}
+function onPrivacyUnlocked() {
+  // Sau khi unlock — refetch messages để load lại content unlocked
+  if (props.conversation?.id) {
+    // emit a fetch hint or rely on FE socket; for now just close — refresh sẽ tự load
+    privacyUnlockOpen.value = false;
+  }
+}
 
 // Lucide icons (anh chốt 2026-05-22 — bộ icon đồng bộ thay MDI)
 import {
@@ -630,11 +672,11 @@ function onOpenReactionDetail(payload: { reactions: any[]; message: Message }) {
 
 const privacyVisibility = usePrivacyVisibility();
 function onMessageLockClick(_e: MouseEvent) {
-  // Anh chốt 2026-05-22: click bubble blur → toast/alert, KHÔNG redirect
-  alert('🔒 Riêng tư.\nChỉ chủ nick mới xem được tin nhắn này.');
+  // Anh chốt 2026-05-22 v3: click bubble blur → mở dialog (Owner unlock / Viewer read-only)
+  openPrivacyDialog(props.conversation);
 }
 function onComposerLockClick() {
-  alert('🔒 Riêng tư.\nChỉ chủ nick mới gửi được tin nhắn này. Bot và automation vẫn hoạt động bình thường.');
+  openPrivacyDialog(props.conversation);
 }
 import StickerPicker from '@/components/chat/StickerPicker.vue';
 import ZaloUserInfoDialog from '@/components/chat/ZaloUserInfoDialog.vue';

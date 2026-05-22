@@ -9,7 +9,9 @@ import { randomBytes, createHash } from 'node:crypto';
 import bcrypt from 'bcryptjs';
 import { prisma } from '../../shared/database/prisma-client.js';
 
-export const DURATIONS_MIN = [15, 60, 720, 1440] as const;
+// Anh chốt 2026-05-22: 4 mốc thời hạn (thay [15, 60, 720, 1440] cũ):
+// 5p (test/nhanh), 15p (khuyến nghị), 8h (ca làm việc), 12h (nửa ngày)
+export const DURATIONS_MIN = [5, 15, 480, 720] as const;
 export type SessionDuration = (typeof DURATIONS_MIN)[number];
 
 export const IDLE_TIMEOUT_MS = 30 * 60 * 1000;

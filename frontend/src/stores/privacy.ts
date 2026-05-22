@@ -51,7 +51,7 @@ export const usePrivacyStore = defineStore('privacy', {
       await api.post('/privacy/setup-pin', { currentPassword, pin });
       await this.fetchStatus(true);
     },
-    async unlock(pin: string, durationMinutes: 15 | 60 | 720 | 1440) {
+    async unlock(pin: string, durationMinutes: 5 | 15 | 480 | 720) {
       // HttpOnly cookie set by server, frontend chỉ track expiresAt
       const { data } = await api.post<{ ok: boolean; expiresAt: string }>('/privacy/unlock', {
         pin,
