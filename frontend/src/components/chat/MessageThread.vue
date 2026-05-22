@@ -1921,42 +1921,30 @@ watch(() => props.editingMessage?.id, async (id) => {
   filter: blur(10px) saturate(0.3);
 }
 
-/* Tag "🔒 Riêng tư" qua pseudo element trên .message-bubble
-   - Self (gửi đi) → tag ĐẦU tin (trên cùng bubble)
-   - Other (gửi đến) → tag CUỐI tin (dưới cùng bubble) */
-.msg-privacy-blurred :deep(.message-bubble) {
-  position: relative;
-}
-.msg-privacy-blurred.msg-wrap-self :deep(.message-bubble)::before,
-.msg-privacy-blurred.msg-wrap-other :deep(.message-bubble)::after {
+/* Tag "🔒 Riêng tư" qua pseudo element trên .msg-row (parent flex của bubble)
+   - Self (gửi đi, bubble bên phải) → tag bên TRÁI bubble (::before, render trước)
+   - Other (gửi đến, bubble bên trái) → tag bên PHẢI bubble (::after, render sau) */
+.msg-privacy-blurred :deep(.msg-row.self)::before,
+.msg-privacy-blurred :deep(.msg-row):not(.self)::after {
   content: '🔒 Riêng tư';
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  align-self: center;
   background: #fbe6dc;
   color: #7a2000;
   font-size: 10px;
   font-weight: 700;
-  padding: 2px 8px;
+  padding: 3px 8px;
   border-radius: 9999px;
   border: 1px solid rgba(170, 45, 0, 0.25);
   white-space: nowrap;
-  margin: 0;
   letter-spacing: 0.2px;
-  z-index: 2;
+  flex-shrink: 0;
   pointer-events: none;
+  box-shadow: 0 1px 2px rgba(170, 45, 0, 0.08);
 }
-.msg-privacy-blurred.msg-wrap-self :deep(.message-bubble)::before {
-  margin-bottom: 6px;
-  align-self: flex-start;
-}
-.msg-privacy-blurred.msg-wrap-other :deep(.message-bubble)::after {
-  margin-top: 6px;
-  align-self: flex-start;
-}
-.msg-privacy-blurred.msg-wrap-self :deep(.message-bubble),
-.msg-privacy-blurred.msg-wrap-other :deep(.message-bubble) {
-  display: flex;
-  flex-direction: column;
-}
+.msg-privacy-blurred :deep(.msg-row.self)::before { margin-right: 8px; }
+.msg-privacy-blurred :deep(.msg-row):not(.self)::after { margin-left: 8px; }
 
 /* ════════ Privacy composer lock — chỉ phủ input editor ════════ */
 /* Anh chốt 2026-05-22: KHÔNG che cả thanh dưới (toolbar gửi ảnh/file/emoji
