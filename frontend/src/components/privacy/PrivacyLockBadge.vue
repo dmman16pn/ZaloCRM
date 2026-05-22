@@ -56,23 +56,32 @@ onUnmounted(() => {
 });
 
 const countdown = computed(() => {
-  if (!expiresAt.value) return '--:--';
+  if (!expiresAt.value) return '--:--:--';
   const ms = new Date(expiresAt.value).getTime() - now.value;
-  if (ms <= 0) return '00:00';
-  const totalMin = Math.floor(ms / 60000);
-  const hh = Math.floor(totalMin / 60);
-  const mm = totalMin % 60;
-  return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+  if (ms <= 0) return '00:00:00';
+  const totalSec = Math.floor(ms / 1000);
+  const hh = Math.floor(totalSec / 3600);
+  const mm = Math.floor((totalSec % 3600) / 60);
+  const ss = totalSec % 60;
+  return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}`;
 });
 
 const badgeTitle = computed(() =>
   isUnlocked.value
-    ? `Đang mở khoá Riêng tư · còn ${countdown.value}`
+    ? `Đang mở khoá Riêng tư · còn ${countdown.value} · click để khoá lại`
     : 'Chế độ Riêng tư đang đóng · click để mở khoá',
 );
 
-function onClick() {
-  emit('click', isUnlocked.value);
+async function onClick() {
+  if (isUnlocked.value) {
+    // Đang mở → khoá lại ngay (bubble blur kích hoạt lại).
+    // Anh chốt 2026-05-22: click badge khi unlocked = lock ngay, KHÔNG mở dialog.
+    try { await store.lock(); } catch { /* silent */ }
+    emit('click', false);
+    return;
+  }
+  // Đang đóng → để parent mở dialog nhập PIN.
+  emit('click', false);
 }
 </script>
 

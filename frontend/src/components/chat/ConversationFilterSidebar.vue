@@ -763,11 +763,13 @@ const privacyDialogNick = computed(() => ({
   avatarUrl: null,
   zaloUid: null,
 }));
-async function onLockBadgeClick(_unlocked: boolean) {
-  // Luôn mở dialog. Nếu chưa có PIN, dialog sẽ điều hướng setup trong PrivacyUnlockDialog.
-  // Nếu đã unlock, vẫn mở dialog để user thấy options (extend / lock).
+async function onLockBadgeClick(_wasUnlocked: boolean) {
+  // Anh chốt 2026-05-22: badge tự lock khi đang unlocked. Parent chỉ mở dialog
+  // khi state hiện tại đang lock → user click để nhập PIN mở khoá.
   await _privacyStore.fetchStatus(true).catch(() => {});
-  privacyDialogOpen.value = true;
+  if (!_privacyStore.isUnlocked) {
+    privacyDialogOpen.value = true;
+  }
 }
 
 // ─── Collapse state ──────────────────────────────────────
