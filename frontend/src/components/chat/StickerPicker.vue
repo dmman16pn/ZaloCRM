@@ -131,6 +131,30 @@ watch(open, watchOpen);
 </script>
 
 <style scoped>
+/* Anh chốt 2026-05-22: .icon-tool CSS từ MessageThread.vue (scoped) KHÔNG penetrate
+   qua Vue scoped boundary xuống StickerPicker. Browser fallback default <button>
+   style: border 2px outset + bg gray + radius 0 → viền vuông xám lệch. Reset đây. */
+.icon-tool {
+  width: 32px; height: 32px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--smax-grey-700, #4b5563);
+  background: transparent;
+  border: none;
+  outline: none;
+  font-family: inherit;
+  padding: 0;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 0.12s, color 0.12s;
+}
+.icon-tool:hover { background: var(--smax-grey-100, #f5f6fa); color: var(--smax-primary, #2962ff); }
+.icon-tool:focus { outline: none; }
+.icon-tool:focus-visible {
+  outline: 2px solid var(--smax-primary-soft, #bbdefb);
+  outline-offset: -1px;
+}
+
 .sticker-picker {
   width: 340px;
   background: white;
