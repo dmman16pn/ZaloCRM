@@ -18,6 +18,7 @@ export interface IncomingMessage {
   content: string;
   contentType: string;      // text, image, sticker, video, voice, gif, link, file
   msgId: string;
+  cliMsgId?: string;        // Zalo client message id — cần cho api.undo (server check msgId+cliMsgId)
   timestamp: number;        // epoch ms
   isSelf: boolean;
   threadId: string;         // For user: contact UID. For group: group ID
@@ -120,6 +121,14 @@ export async function handleIncomingMessage(
             data: { zaloMsgId: msg.msgId, zaloMsgIdNum: dupNum },
           }).catch(() => {});
         }
+        // FIX 2026-05-21: row CRM-sent insert TRƯỚC khi nhận echo nên thiếu cliMsgId.
+        // Echo về có cliMsgId → backfill vào row dupe để undo hoạt động.
+        if (msg.cliMsgId) {
+          await prisma.message.update({
+            where: { id: recentDupe.id },
+            data: { zaloCliMsgId: msg.cliMsgId },
+          }).catch(() => {});
+        }
         logger.debug(`[message-handler] Skipping self echo: ${isAttachment ? 'attachment' : 'content'} match within 30s`);
         return null;
       }
@@ -136,6 +145,8 @@ export async function handleIncomingMessage(
           conversationId: conversation.id,
           zaloMsgId: msg.msgId || null,
           zaloMsgIdNum,
+          // 2026-05-21: cliMsgId Zalo client counter — cần cho api.undo
+          zaloCliMsgId: msg.cliMsgId || null,
           senderType: msg.isSelf ? 'self' : 'contact',
           senderUid: msg.senderUid,
           senderName: msg.senderName || null,
@@ -150,9 +161,17 @@ export async function handleIncomingMessage(
         },
       });
     } catch (err: any) {
-      // P2002 = unique constraint violation → duplicate zaloMsgId, skip silently
+      // P2002 = unique constraint violation → duplicate zaloMsgId, skip silently.
+      // 2026-05-21: trước khi skip, backfill cliMsgId vào row existing nếu chưa có
+      // (case CRM-sent row insert TRƯỚC + listener echo về SAU mang cliMsgId thật).
       if (err?.code === 'P2002') {
-        logger.debug(`[message-handler] Skipping duplicate zaloMsgId=${msg.msgId}`);
+        if (msg.cliMsgId && msg.msgId) {
+          await prisma.message.updateMany({
+            where: { zaloMsgId: msg.msgId, zaloCliMsgId: null },
+            data: { zaloCliMsgId: msg.cliMsgId },
+          }).catch(() => {});
+        }
+        logger.debug(`[message-handler] Skipping duplicate zaloMsgId=${msg.msgId} (cliMsgId backfill attempted)`);
         return null;
       }
       throw err;
@@ -585,31 +604,62 @@ async function updateConversationAfterMessage(
   await prisma.conversation.update({ where: { id: conversationId }, data: updateData });
 }
 
-// Soft-delete a message by its Zalo message ID
-export async function handleMessageUndo(accountId: string, zaloMsgId: string): Promise<void> {
+/**
+ * Soft-delete a message by its Zalo references. Zalo undo event reference tin gốc qua
+ * 2 id song song — match cái nào ra trước thì update.
+ *   globalMsgIdNum: server-side Snowflake (match Message.zaloMsgIdNum BigInt)
+ *   cliMsgIdNum:    client-side counter (match Message.zaloMsgId String hoặc zaloMsgIdNum)
+ * Phải dùng `OR` vì Zalo có lúc chỉ trả 1 trong 2 (vd undo tin do nick khác gửi → chỉ globalMsgId).
+ */
+export async function handleMessageUndo(
+  accountId: string,
+  refs: { globalMsgIdNum: bigint | null; cliMsgIdNum: bigint | null },
+): Promise<string[]> {
   try {
+    const orWhere: Array<Record<string, unknown>> = [];
+    if (refs.globalMsgIdNum) orWhere.push({ zaloMsgIdNum: refs.globalMsgIdNum });
+    if (refs.cliMsgIdNum) {
+      // cliMsgId có thể nằm ở zaloCliMsgId (column mới 2026-05-21) hoặc zaloMsgIdNum cũ
+      orWhere.push({ zaloCliMsgId: refs.cliMsgIdNum.toString() });
+      orWhere.push({ zaloMsgIdNum: refs.cliMsgIdNum });
+      orWhere.push({ zaloMsgId: refs.cliMsgIdNum.toString() });
+    }
+    if (orWhere.length === 0) return [];
+
     const recalledAt = new Date();
+
+    // Fetch rows TRƯỚC khi update để biết id để emit socket sau.
+    const affected = await prisma.message.findMany({
+      where: { OR: orWhere, isDeleted: false },
+      select: { id: true, conversationId: true, zaloMsgId: true },
+    });
+    if (affected.length === 0) {
+      logger.warn(
+        `[message-handler] Undo: no message matched (account=${accountId}, globalMsgId=${refs.globalMsgIdNum}, cliMsgId=${refs.cliMsgIdNum})`,
+      );
+      return [];
+    }
+
     await prisma.message.updateMany({
-      where: { zaloMsgId: String(zaloMsgId) },
+      where: { id: { in: affected.map((m) => m.id) } },
       data: { isDeleted: true, deletedAt: recalledAt },
     });
 
-    // Update lastInteraction* on the affected contact(s)
-    const affected = await prisma.message.findMany({
-      where: { zaloMsgId: String(zaloMsgId) },
-      select: { id: true, conversationId: true },
-    });
     for (const m of affected) {
       void applyContactInteraction({
         conversationId: m.conversationId,
         type: 'message_recalled',
         occurredAt: recalledAt,
-        payload: { messageId: m.id, zaloMsgId: String(zaloMsgId) },
+        payload: { messageId: m.id, zaloMsgId: m.zaloMsgId },
       });
     }
 
-    logger.info(`[message-handler] Undo message ${zaloMsgId} for account ${accountId}`);
+    logger.info(
+      `[message-handler] Undo ${affected.length} message(s) (account=${accountId}, globalMsgId=${refs.globalMsgIdNum}) → ${affected.map((m) => m.id).join(',')}`,
+    );
+    return affected.map((m) => m.id);
   } catch (err) {
     logger.error('[message-handler] handleMessageUndo error:', err);
+    return [];
   }
 }

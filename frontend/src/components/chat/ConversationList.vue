@@ -220,6 +220,7 @@ import Avatar from '@/components/ui/Avatar.vue';
 import NewMessageDialog from '@/components/chat/NewMessageDialog.vue';
 import ZaloBrandIcon from '@/components/icons/ZaloBrandIcon.vue';
 import { loadTagDefs, isZaloManaged, cleanTagName, tagColor } from '@/composables/use-crm-tag-defs';
+import { getOrgParts } from '@/composables/use-org-timezone';
 import PrivateBlur from '@/components/privacy/PrivateBlur.vue';
 import { usePrivacyVisibility } from '@/composables/use-privacy-visibility';
 
@@ -659,23 +660,22 @@ function formatTime(dateStr: string | null): string {
   if (diffMins < 1) return 'Vừa xong';
   if (diffMins < 60) return `${diffMins}p`;
   const diffHours = Math.floor(diffMins / 60);
+  // 2026-05-21 Phase B-5: hour/date/year đọc theo org TZ thay vì browser local.
+  // diffMs/diffMins/diffHours/diffDays là delta UTC → TZ-agnostic, OK giữ nguyên.
+  const p = getOrgParts(date);
+  const nowP = getOrgParts(now);
+  if (!p || !nowP) return '';
   if (diffHours < 24) {
-    const hh = date.getHours().toString().padStart(2, '0');
-    const mm = date.getMinutes().toString().padStart(2, '0');
-    return `${hh}:${mm}`;
+    return `${String(p.hour).padStart(2, '0')}:${String(p.minute).padStart(2, '0')}`;
   }
   const diffDays = Math.floor(diffHours / 24);
   if (diffDays === 1) return 'Hôm qua';
   if (diffDays < 7) return `${diffDays}d`;
-  // ≥ 7 ngày — phân biệt cùng năm vs năm cũ
-  const dd = date.getDate().toString().padStart(2, '0');
-  const mm = (date.getMonth() + 1).toString().padStart(2, '0');
-  if (date.getFullYear() === now.getFullYear()) {
-    // Cùng năm: "DD/MM" (vd "12/05")
-    return `${dd}/${mm}`;
-  }
-  // Khác năm: "MM/YYYY" (vd "11/2025") — bỏ ngày, hiện tháng+năm
-  return `${mm}/${date.getFullYear()}`;
+  // ≥ 7 ngày — phân biệt cùng năm vs năm cũ (so theo org TZ)
+  const dd = String(p.day).padStart(2, '0');
+  const mm = String(p.month).padStart(2, '0');
+  if (p.year === nowP.year) return `${dd}/${mm}`;
+  return `${mm}/${p.year}`;
 }
 
 // ─── Phase 8 — Engagement pattern badge ──────────────────

@@ -204,6 +204,7 @@ export async function sendMessageHandler(ctx: ActionContext): Promise<ActionResu
         id: randomUUID(),
         conversationId: conversation.id,
         zaloMsgId: zaloMsgId || null,
+        zaloMsgIdNum: zaloMsgId && /^\d+$/.test(zaloMsgId) ? BigInt(zaloMsgId) : null,
         senderType: 'self',
         senderUid: '',
         senderName: 'Bot-Auto',

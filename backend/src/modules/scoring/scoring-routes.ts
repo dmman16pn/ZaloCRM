@@ -562,6 +562,7 @@ export async function scoringRoutes(app: FastifyInstance): Promise<void> {
           id: randomUUID(),
           conversationId: conv.id,
           zaloMsgId: zaloMsgId || null,
+          zaloMsgIdNum: zaloMsgId && /^\d+$/.test(zaloMsgId) ? BigInt(zaloMsgId) : null,
           senderType: 'self',
           senderUid: null,
           senderName: 'NBA',

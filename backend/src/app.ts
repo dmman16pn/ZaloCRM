@@ -3,6 +3,13 @@
  * Bootstraps Fastify server with all plugins, Socket.IO, and route handlers.
  * The process never exits — all errors are caught and logged.
  */
+
+// BigInt → string khi JSON.stringify (Fastify response serializer).
+// Cần thiết cho Message.zaloMsgIdNum (Prisma trả BigInt, JSON native fail without this).
+(BigInt.prototype as unknown as { toJSON: () => string }).toJSON = function () {
+  return this.toString();
+};
+
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import fastifyJwt from '@fastify/jwt';

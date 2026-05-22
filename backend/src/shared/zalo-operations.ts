@@ -194,6 +194,16 @@ async function exec<T>(opts: ExecOptions, fn: (api: any) => Promise<T>): Promise
   logger.error(`[zalo-ops:${accountId}] ${operation} failed:`, lastError);
   const zaloCode = lastError?.code; // ZaloApiError exposes .code = Zalo error_code (e.g., 113, 222)
   const msg = lastError?.message || String(lastError);
+
+  // User-friendly message cho 1 số Zalo error code phổ biến (2026-05-21).
+  if (operation === 'undo' && zaloCode === 112) {
+    throw new ZaloOpError(
+      'Tin vừa gửi cần Zalo vài giây xử lý. Đợi ~10s sau khi gửi rồi thử thu hồi lại.',
+      'INVALID_PARAMS',
+      400,
+    );
+  }
+
   throw new ZaloOpError(
     `${operation} failed: ${msg}${zaloCode != null ? ` [zalo:${zaloCode}]` : ''}`,
     'API_ERROR',
@@ -254,9 +264,26 @@ async function uploadAttachment(accountId: string, threadId: string, threadType:
     (api) => api.uploadAttachment(paths, threadId, threadType) as Promise<unknown[]>);
 }
 
-async function forwardMessage(accountId: string, msgId: string, threadId: string, threadType: 0 | 1) {
+// FIX 2026-05-21 round-2: zca-js forwardMessage trả [zalo:112] nếu thiếu reference của tin
+// gốc. Zalo server kiểm tra forward phải có msgId+ts của tin nguồn. Truyền reference object.
+async function forwardMessage(
+  accountId: string,
+  text: string,
+  threadIds: string[],
+  threadType: 0 | 1,
+  reference?: { id: string; ts: number; logSrcType?: number; fwLvl?: number },
+) {
   return exec({ accountId, category: 'message', operation: 'forwardMessage' },
-    (api) => api.forwardMessage(msgId, threadId, threadType));
+    (api) => api.forwardMessage(
+      {
+        message: text,
+        reference: reference
+          ? { id: reference.id, ts: reference.ts, logSrcType: reference.logSrcType ?? 0, fwLvl: reference.fwLvl ?? 0 }
+          : undefined,
+      },
+      threadIds,
+      threadType,
+    ));
 }
 
 // ─── Chat Actions ───────────────────────────────────────────────────────────
@@ -280,14 +307,58 @@ async function deleteMessage(accountId: string, msgId: string, cliMsgId: string,
     (api) => api.deleteMessage(msgId, cliMsgId, ownerId, threadId, threadType, onlyMe));
 }
 
-async function undoMessage(accountId: string, msgId: string, cliMsgId: string, ownerId: string, threadId: string, threadType: 0 | 1) {
+// FIX 2026-05-21: zca-js api.undo(payload, threadId, type) — payload object { msgId, cliMsgId }.
+// Trước đây gọi positional `api.undo(msgId, cliMsgId, ownerId, threadId, threadType)` → SDK throw
+// (signature mismatch) → nút thu hồi không hoạt động.
+async function undoMessage(
+  accountId: string,
+  msgId: string,
+  cliMsgId: string,
+  _ownerId: string, // giữ tham số cho backward compat — zca-js không cần
+  threadId: string,
+  threadType: 0 | 1,
+) {
   return exec({ accountId, category: 'chat_action', operation: 'undo' },
-    (api) => api.undo(msgId, cliMsgId, ownerId, threadId, threadType));
+    async (api) => {
+      // RACE CONDITION FIX 2026-05-21: Zalo trả error 112 khi tin vừa gửi (chưa kịp
+      // propagate qua hệ thống Zalo) — anh test xác nhận reload trang chờ ~5-10s thì
+      // undo work. Retry 2 lần với delay tăng dần (3s, 5s) → tổng 8s đủ Zalo index xong.
+      const tryUndo = async () => api.undo({ msgId, cliMsgId }, threadId, threadType);
+
+      try {
+        return await tryUndo();
+      } catch (err: any) {
+        if (err?.code !== 112) throw err;
+        logger.info(`[zalo-ops:${accountId}] undo got [zalo:112], retry after 3s (msgId=${msgId})`);
+        await new Promise((resolve) => setTimeout(resolve, 3000));
+      }
+
+      try {
+        return await tryUndo();
+      } catch (err: any) {
+        if (err?.code !== 112) throw err;
+        logger.info(`[zalo-ops:${accountId}] undo got [zalo:112] again, retry after 5s (msgId=${msgId})`);
+        await new Promise((resolve) => setTimeout(resolve, 5000));
+      }
+
+      return tryUndo();
+    });
 }
 
-async function editMessage(accountId: string, msgId: string, cliMsgId: string, content: string, threadId: string, threadType: 0 | 1) {
-  return exec({ accountId, category: 'chat_action', operation: 'editMessage' },
-    (api) => api.sendMessage({ msg: content, editMsgId: msgId, editCliMsgId: cliMsgId }, threadId, threadType));
+// NOTE 2026-05-21: zca-js KHÔNG support edit message thật. Trước đây gọi
+// `api.sendMessage({msg, editMsgId, editCliMsgId})` — editMsgId/editCliMsgId bị ignore →
+// sendMessage gửi TIN MỚI → hiện 2 tin giống nhau trong UI. Giải pháp: NGỪNG gọi Zalo SDK,
+// chỉ update DB + đánh dấu editedAt. Sale phải hiểu edit chỉ áp dụng trên CRM, KHÔNG sync Zalo.
+// Hàm này no-op để route compile, route tự handle DB write.
+async function editMessage(
+  _accountId: string,
+  _msgId: string,
+  _cliMsgId: string,
+  _content: string,
+  _threadId: string,
+  _threadType: 0 | 1,
+) {
+  return { skipped: true } as const;
 }
 
 async function pinConversation(accountId: string, pin: boolean, threadId: string, threadType: 0 | 1) {
