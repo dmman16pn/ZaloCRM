@@ -100,7 +100,6 @@
               <div class="cell-name-text">
                 <div class="cell-name-main">{{ u.fullName || '(chưa đặt tên)' }}</div>
                 <div v-if="u.role === 'owner'" class="cell-name-sub owner-tag">👑 Chủ tổ chức</div>
-                <div v-else-if="u.role === 'admin'" class="cell-name-sub admin-tag">🛡 Quản trị viên</div>
               </div>
             </td>
             <td class="cell-email">{{ u.email }}</td>
