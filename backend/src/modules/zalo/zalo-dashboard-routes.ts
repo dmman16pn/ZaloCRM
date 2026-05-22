@@ -155,7 +155,21 @@ export async function zaloDashboardRoutes(app: FastifyInstance): Promise<void> {
         proxyUrl: true,
         lastConnectedAt: true,
         createdAt: true,
-        owner: { select: { id: true, fullName: true, email: true } },
+        // Phase 4 redesign 2026-05-22: include owner's department để FE hiển thị
+        // cột Department + cascade visibility filter chip "Phòng ban".
+        owner: {
+          select: {
+            id: true,
+            fullName: true,
+            email: true,
+            departmentMember: {
+              select: {
+                deptRole: true,
+                department: { select: { id: true, name: true, path: true } },
+              },
+            },
+          },
+        },
         access: {
           select: {
             id: true,
@@ -202,6 +216,8 @@ export async function zaloDashboardRoutes(app: FastifyInstance): Promise<void> {
       const uptime7d = u?.uptimePct ?? 0;
       const msgToday = todayMap.get(a.id) ?? 0;
       const lastActivity = lastActivityMap.get(a.id) ?? a.lastConnectedAt;
+      // Owner's department — FE dùng cho cột Department + filter chip Phòng ban.
+      const ownerDept = a.owner?.departmentMember?.department ?? null;
 
       return {
         id: a.id,
@@ -214,8 +230,10 @@ export async function zaloDashboardRoutes(app: FastifyInstance): Promise<void> {
         hasProxy: !!a.proxyUrl,
         lastConnectedAt: a.lastConnectedAt,
         createdAt: a.createdAt,
-        owner: a.owner,
+        owner: a.owner ? { id: a.owner.id, fullName: a.owner.fullName, email: a.owner.email } : null,
         ownerUserId: a.ownerUserId,
+        ownerDepartment: ownerDept,
+        ownerDeptRole: a.owner?.departmentMember?.deptRole ?? null,
         privacyMode: a.privacyMode,
         // RBAC 2026-05-22: gate Action buttons trên frontend
         canManage: canManageAccount(a.ownerUserId, userId, user.role),

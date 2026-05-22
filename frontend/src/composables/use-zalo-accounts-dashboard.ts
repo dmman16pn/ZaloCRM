@@ -28,6 +28,9 @@ export interface EnrichedAccount {
   createdAt: string;
   owner: { id: string; fullName: string | null; email: string } | null;
   ownerUserId: string | null;
+  /** Phase 4 2026-05-22: phòng ban của owner (cho cột Department + filter chip Phòng ban) */
+  ownerDepartment: { id: string; name: string; path: string } | null;
+  ownerDeptRole: 'leader' | 'deputy' | 'member' | null;
   /** True nếu user hiện tại có quyền edit/delete nick (owner-of-nick HOẶC org admin) */
   canManage: boolean;
   /** True nếu user hiện tại là owner của nick (chính chủ) */

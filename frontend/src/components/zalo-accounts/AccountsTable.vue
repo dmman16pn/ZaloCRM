@@ -8,7 +8,8 @@
           </th>
           <th>Nick Zalo</th>
           <th>Trạng thái</th>
-          <th>Sale phụ trách</th>
+          <th>Sale phụ trách (Owner)</th>
+          <th>Phòng ban</th>
           <th>Đội ngũ chia sẻ</th>
           <th>Msg today</th>
           <th>Hoạt động 7d</th>
@@ -17,8 +18,18 @@
         </tr>
       </thead>
       <tbody>
+        <template v-for="group in rowGroups" :key="group.key">
+          <!-- Group header (chỉ hiện khi groupByDept=true) -->
+          <tr v-if="groupByDept && group.label" class="group-row">
+            <td colspan="9">
+              <div class="group-head">
+                <span class="group-name">{{ group.label }}</span>
+                <span class="group-count">{{ group.accounts.length }} nick</span>
+              </div>
+            </td>
+          </tr>
         <tr
-          v-for="acct in accounts"
+          v-for="acct in group.accounts"
           :key="acct.id"
           :class="[
             { selected: isSelected(acct.id) },
@@ -62,8 +73,14 @@
             </span>
           </td>
           <td>
-            <!-- Sale phụ trách (chính chủ — ownerUserId) -->
-            <div v-if="acct.owner" class="owner-cell">
+            <!-- Sale phụ trách (chính chủ — ownerUserId). Click → mở reassign drawer nếu canManage. -->
+            <div
+              v-if="acct.owner"
+              class="owner-cell"
+              :class="{ clickable: acct.canManage }"
+              :title="acct.canManage ? 'Click để chuyển nhượng owner' : ''"
+              @click.stop="acct.canManage && $emit('reassign-owner', acct)"
+            >
               <span class="avatar-mini owner-avatar" :style="{ background: avatarColor(acct.owner.fullName || acct.owner.email, 0) }">
                 {{ shortName(acct.owner.fullName || acct.owner.email) }}
               </span>
@@ -74,8 +91,18 @@
                   <span v-if="acct.isOwnedByMe" class="badge-self">Bạn</span>
                 </div>
               </div>
+              <svg v-if="acct.canManage" class="owner-edit-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
             </div>
             <span v-else class="muted-italic">Chưa có owner</span>
+          </td>
+          <td>
+            <!-- Phòng ban của owner — Phase 4 2026-05-22 -->
+            <div v-if="acct.ownerDepartment" class="dept-cell">
+              <span class="dept-name">{{ acct.ownerDepartment.name }}</span>
+              <span v-if="acct.ownerDeptRole === 'leader'" class="dept-role leader">Trưởng phòng</span>
+              <span v-else-if="acct.ownerDeptRole === 'deputy'" class="dept-role deputy">Phó phòng</span>
+            </div>
+            <span v-else class="muted-italic">—</span>
           </td>
           <td>
             <!-- Đội ngũ chia sẻ (crew không gồm owner) -->
@@ -133,8 +160,9 @@
             </template>
           </td>
         </tr>
+        </template>
         <tr v-if="!accounts.length">
-          <td colspan="8" class="empty-row">
+          <td colspan="9" class="empty-row">
             <div class="empty-msg">
               <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/></svg>
               <div>Không có nick nào khớp bộ lọc</div>
@@ -155,6 +183,7 @@ import NickAvatarLock from '@/components/privacy/NickAvatarLock.vue';
 const props = defineProps<{
   accounts: EnrichedAccount[];
   uptimeCache: Record<string, UptimeBucket[]>;
+  groupByDept?: boolean;
   isSelected: (id: string) => boolean;
   toggleSelect: (id: string) => void;
   selectAll: (ids: string[]) => void;
@@ -167,7 +196,31 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'open-detail', id: string): void;
   (e: 'action', payload: { account: EnrichedAccount; action: 'reconnect' | 'sync' }): void;
+  (e: 'reassign-owner', account: EnrichedAccount): void;
 }>();
+
+// Phase 4 2026-05-22: group rows theo phòng ban khi groupByDept=true.
+// Return 1 group "all" khi flag tắt, hoặc list groups theo department name khi bật.
+const rowGroups = computed(() => {
+  if (!props.groupByDept) {
+    return [{ key: 'all', label: '', accounts: props.accounts }];
+  }
+  const map = new Map<string, { key: string; label: string; accounts: EnrichedAccount[] }>();
+  for (const a of props.accounts) {
+    const deptKey = a.ownerDepartment?.id ?? '__no_dept__';
+    const deptLabel = a.ownerDepartment?.name ?? 'Chưa thuộc phòng ban';
+    if (!map.has(deptKey)) {
+      map.set(deptKey, { key: deptKey, label: deptLabel, accounts: [] });
+    }
+    map.get(deptKey)!.accounts.push(a);
+  }
+  // Sort: "Chưa thuộc phòng ban" cuối cùng
+  return Array.from(map.values()).sort((a, b) => {
+    if (a.key === '__no_dept__') return 1;
+    if (b.key === '__no_dept__') return -1;
+    return a.label.localeCompare(b.label);
+  });
+});
 
 const allChecked = computed(() =>
   props.accounts.length > 0 && props.accounts.every((a) => props.isSelected(a.id)),
@@ -471,9 +524,44 @@ tbody tr.alert:hover { background: #FFF5F5 }
 .icon-btn:hover { background: #F3F4F6; color: #111827 }
 .icon-btn svg { width: 14px; height: 14px }
 
-/* Owner cell (chính chủ) */
-.owner-cell { display: flex; align-items: center; gap: 8px; }
+/* Owner cell (chính chủ) — Phase 4 clickable */
+.owner-cell {
+  display: flex; align-items: center; gap: 8px;
+  padding: 4px 6px; border-radius: 6px; margin: -4px -6px;
+  transition: background 0.1s;
+}
+.owner-cell.clickable { cursor: pointer; }
+.owner-cell.clickable:hover { background: #EEF0FF; }
+.owner-cell.clickable:hover .owner-edit-icon { opacity: 1; }
+.owner-edit-icon { color: #5E6AD2; opacity: 0; transition: opacity 0.15s; flex-shrink: 0; }
 .owner-avatar { margin-left: 0 !important; flex-shrink: 0; }
+
+/* Department cell — Phase 4 2026-05-22 */
+.dept-cell { display: inline-flex; flex-direction: column; gap: 3px; }
+.dept-name { font-size: 12px; font-weight: 600; color: #1F2937; }
+.dept-role {
+  font-size: 9px; font-weight: 700; padding: 1px 6px; border-radius: 9999px;
+  text-transform: uppercase; letter-spacing: 0.3px; width: max-content;
+}
+.dept-role.leader { background: #DBEAFE; color: #1D4ED8; }
+.dept-role.deputy { background: #FEF3C7; color: #92400E; }
+
+/* Group row (groupByDept=true) */
+.group-row td {
+  background: #F9FAFB !important;
+  border-bottom: 1px solid #E5E7EB;
+  padding: 8px 14px !important;
+}
+.group-head { display: flex; align-items: center; gap: 10px; }
+.group-name {
+  font-size: 12px; font-weight: 700; color: #374151;
+  text-transform: uppercase; letter-spacing: 0.04em;
+}
+.group-count {
+  font-size: 10.5px; color: #6B7280;
+  background: #E5E7EB; padding: 2px 8px; border-radius: 9999px; font-weight: 600;
+}
+
 .owner-info { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .owner-name {
   font-size: 12px;

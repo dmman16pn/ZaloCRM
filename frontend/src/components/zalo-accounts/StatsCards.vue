@@ -9,15 +9,13 @@
     <div class="stat-card green">
       <div class="lab"><span class="d ok"></span>Active</div>
       <div class="val">{{ stats?.active ?? '—' }}</div>
-      <div class="delta" v-if="stats?.totalNick">
-        {{ pct(stats.active, stats.totalNick) }}% online + có hoạt động
-      </div>
+      <div class="delta">connected + có gửi/nhận tin 24h</div>
     </div>
 
-    <div class="stat-card">
+    <div class="stat-card yellow">
       <div class="lab"><span class="d idle"></span>Idle</div>
       <div class="val">{{ stats?.idle ?? '—' }}</div>
-      <div class="delta">online nhưng không gửi 24h</div>
+      <div class="delta">connected nhưng im 24h</div>
     </div>
 
     <div class="stat-card red">
@@ -41,7 +39,7 @@
     <div class="stat-card green">
       <div class="lab">Uptime team 7d</div>
       <div class="val">{{ stats?.uptimeTeam ?? '—' }}<span class="small" v-if="stats">%</span></div>
-      <div class="delta">tỉ lệ ngày có hoạt động</div>
+      <div class="delta">% thời gian connected trong 7 ngày</div>
     </div>
   </div>
 </template>
@@ -103,6 +101,7 @@ function formatNum(n: number): string {
 }
 .stat-card.green .val { color: #047857 }
 .stat-card.red .val { color: #B91C1C }
+.stat-card.yellow .val { color: #B45309 }
 .d {
   width: 6px;
   height: 6px;
