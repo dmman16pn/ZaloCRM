@@ -90,6 +90,8 @@ const routes = [
       { path: 'rbac/departments',       name: 'Settings.RbacDepartments',       component: () => import('@/views/rbac/DepartmentsView.vue') },
       { path: 'rbac/permission-groups', name: 'Settings.RbacPermissionGroups',  component: () => import('@/views/rbac/PermissionGroupsView.vue') },
       { path: 'rbac/users',             name: 'Settings.RbacUsers',             component: () => import('@/views/rbac/UsersRbacView.vue') },
+      // Phase Riêng Tư 2026-05-22
+      { path: 'privacy',                name: 'Settings.Privacy',               component: () => import('@/views/privacy/PrivacySettingsView.vue') },
 
       // ⚙ CRM Config
       { path: 'crm/statuses',    name: 'Settings.Statuses',    component: () => import('@/components/settings/StatusManagement.vue') },
