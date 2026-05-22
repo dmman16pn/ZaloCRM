@@ -1886,9 +1886,15 @@ watch(() => props.editingMessage?.id, async (id) => {
 
 /* ════════ Privacy blur — message bubble (cột 3) ════════ */
 /* Anh chốt 2026-05-22: chỉ blur text + avatar tròn KH, KHÔNG che cả row
-   bằng overlay ngang lớn. Inline tag "🔒 Riêng tư" cạnh bubble. */
-.msg-bubble-wrap { position: relative; display: flex; align-items: flex-start; gap: 6px; }
+   bằng overlay ngang lớn. Inline tag "🔒 Riêng tư" cạnh bubble.
+   FIX 2026-05-22: KHÔNG set display:flex cho wrapper default — sẽ phá
+   layout self/other của MessageBubble (msg-row.self justify-content:flex-end
+   cần parent là block để self align right). Chỉ flex khi blurred. */
+.msg-bubble-wrap { position: relative; }
 .msg-bubble-wrap.msg-privacy-blurred {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
   cursor: pointer;
 }
 /* Blur message bubble content + avatar (target VBubble + Avatar components inside MessageBubble) */
