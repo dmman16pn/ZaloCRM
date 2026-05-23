@@ -114,13 +114,14 @@ const privateCount = computed(() => privateNicks.value.length);
 async function loadAll() {
   loading.value = true;
   try {
-    const [myNicks, meContact] = await Promise.all([
-      api.get<MyNick[]>('/privacy/my-nicks'),
+    const [myNicksRes, meContactRes] = await Promise.all([
+      api.get<{ nicks: MyNick[] }>('/privacy/my-nicks'),
       api.get<{ internalContactZaloAccountId: string | null; maxPrivacyNicks: number }>('/me/internal-contact'),
     ]);
-    nicks.value = myNicks.data;
-    internalContactId.value = meContact.data.internalContactZaloAccountId;
-    maxPrivacyNicks.value = meContact.data.maxPrivacyNicks;
+    // BE wraps response trong { nicks: [...] } — fix bug load lỗi 2026-05-23
+    nicks.value = Array.isArray(myNicksRes.data) ? myNicksRes.data : (myNicksRes.data?.nicks ?? []);
+    internalContactId.value = meContactRes.data.internalContactZaloAccountId;
+    maxPrivacyNicks.value = meContactRes.data.maxPrivacyNicks;
   } catch (err: any) {
     errorMsg.value = err?.response?.data?.error || 'Không tải được danh sách nick';
   } finally {

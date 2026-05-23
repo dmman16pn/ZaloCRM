@@ -311,8 +311,10 @@ const privacyCounter = ref<{ used: number; max: number; atMax: boolean } | null>
 async function loadPrivacyCounter() {
   try {
     const { data } = await api.get<{ maxPrivacyNicks: number }>('/me/internal-contact');
-    const myNicks = await api.get<Array<{ privacyMode: string }>>('/privacy/my-nicks');
-    const used = myNicks.data.filter((n) => n.privacyMode === 'main').length;
+    const myNicksRes = await api.get<{ nicks: Array<{ privacyMode: string }> }>('/privacy/my-nicks');
+    // BE wraps response trong { nicks: [...] }
+    const list = Array.isArray(myNicksRes.data) ? myNicksRes.data : (myNicksRes.data?.nicks ?? []);
+    const used = list.filter((n) => n.privacyMode === 'main').length;
     privacyCounter.value = { used, max: data.maxPrivacyNicks, atMax: used >= data.maxPrivacyNicks };
   } catch { /* silent — counter optional */ }
 }
