@@ -30,7 +30,7 @@ Hệ thống quản lý tập trung nhiều tài khoản Zalo cá nhân trên 1 
 - **Cloudflare R2 support** — `.env.example` có block R2, dùng chung cấu hình S3-compatible với MinIO/Amazon S3
 - **Env parser chắc hơn** — Secret/password có ký tự `#` không còn bị hiểu nhầm là comment khi đọc `.env`
 - **Video thumbnail + drag/drop** — Sửa thumbnail video và khôi phục kéo thả file/hình/video vào màn hình chat
-- **Privacy/RBAC/Zalo redesign** — Hợp nhất upstream hsholding: Privacy PIN V2, RBAC phòng ban, Zalo Accounts metrics/status, reaction/read receipt/typing dots
+- **Privacy/RBAC/Zalo redesign** — Privacy PIN V2, RBAC phòng ban, Zalo Accounts metrics/status, reaction/read receipt/typing dots
 - **Fix issues #24/#25** — Fallback JSON lỗi từ `getFriendOnlines` và nhận diện message type `webchat`
 
 ### v3.2 (21/05/2026)
@@ -135,7 +135,7 @@ openssl rand -hex 32
 
 ## Nâng cấp từ v3.x lên v3.3
 
-> ⚠️ **Backup database trước khi nâng cấp.** v3.3 đã merge upstream `hsholding/main` và `feat/fb-lead-ingestion`, có thêm Facebook Lead Ingestion, Privacy/RBAC/Zalo UI, media forward và object storage mirror. Không commit `.env` thật lên git.
+> ⚠️ **Backup database trước khi nâng cấp.** v3.3 có thêm Facebook Lead Ingestion, Privacy/RBAC/Zalo UI, media forward và object storage mirror. Không commit `.env` thật lên git.
 
 ```bash
 # 1. Backup database
