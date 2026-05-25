@@ -6,88 +6,61 @@
     </div>
 
     <!-- Empty state -->
-    <div v-else-if="forms.length === 0" class="text-center pa-4 text-medium-emphasis">
+    <div v-else-if="mappings.length === 0" class="text-center pa-4 text-medium-emphasis">
       <v-icon size="32" aria-hidden="true">mdi-form-select</v-icon>
-      <p class="mt-1 text-body-2">Trang này chưa có Lead Form nào.</p>
+      <p class="mt-1 text-body-2">
+        Chưa có form nào — nếu vừa connect FB Page, đợi 10s cho hệ thống đồng bộ rồi reload.
+      </p>
     </div>
 
-    <!-- Forms list -->
+    <!-- Forms table (read-only) -->
     <v-table v-else density="compact">
       <thead>
         <tr>
-          <th>Tên form</th>
-          <th>Trạng thái</th>
-          <th>Leads</th>
-          <th>Mapping</th>
-          <th>Hành động</th>
+          <th>Form</th>
+          <th>Tệp liên kết</th>
+          <th class="text-right">Số lead</th>
+          <th>Lead gần nhất</th>
         </tr>
       </thead>
       <tbody>
-        <tr v-for="form in forms" :key="form.id">
+        <tr v-for="mapping in mappings" :key="mapping.id">
+          <!-- Form name + id -->
           <td>
-            <div class="font-weight-medium">{{ form.name }}</div>
-            <div class="text-caption text-medium-emphasis">ID: {{ form.id }}</div>
-          </td>
-          <td>
+            <div class="font-weight-medium">{{ mapping.formName }}</div>
+            <div class="text-caption text-medium-emphasis">ID: {{ mapping.formId }}</div>
             <v-chip
-              :color="form.status === 'ACTIVE' ? 'success' : 'default'"
+              v-if="!mapping.enabled"
               size="x-small"
+              color="error"
               variant="flat"
+              class="mt-1"
             >
-              {{ form.status }}
+              Đã tắt
             </v-chip>
           </td>
-          <td class="text-body-2">{{ form.leads_count ?? '—' }}</td>
+
+          <!-- Linked CustomerList -->
           <td>
-            <template v-if="getMappingForForm(form.id)">
-              <v-chip
-                size="x-small"
-                color="primary"
-                variant="flat"
-                class="mr-1"
-              >
-                {{ getMappingForForm(form.id)!.customerList.name }}
-              </v-chip>
-              <v-chip
-                v-if="!hasSale(form.id)"
-                size="x-small"
-                color="warning"
-                variant="flat"
-                title="Pool sale trống — lead sẽ không được phân công"
-              >
-                ⚠️ Chưa có sale
-              </v-chip>
-              <v-chip
-                v-if="!getMappingForForm(form.id)!.enabled"
-                size="x-small"
-                color="error"
-                variant="flat"
-              >
-                Đã tắt
-              </v-chip>
-            </template>
-            <span v-else class="text-caption text-medium-emphasis">Chưa map</span>
+            <router-link
+              v-if="mapping.customerList"
+              :to="`/automation/bot/lists/${mapping.customerList.id}`"
+              class="list-link"
+            >
+              <v-icon size="16" color="blue" class="me-1" aria-hidden="true">mdi-facebook</v-icon>
+              {{ mapping.customerList.name }}
+            </router-link>
+            <span v-else class="text-caption text-medium-emphasis">—</span>
           </td>
-          <td>
-            <v-btn
-              size="x-small"
-              variant="text"
-              :color="getMappingForForm(form.id) ? 'primary' : 'default'"
-              :aria-label="getMappingForForm(form.id) ? `Chỉnh sửa mapping form ${form.name}` : `Tạo mapping cho form ${form.name}`"
-              @click="$emit('map-form', form)"
-            >
-              {{ getMappingForForm(form.id) ? 'Sửa' : 'Map' }}
-            </v-btn>
-            <v-btn
-              v-if="getMappingForForm(form.id)"
-              size="x-small"
-              variant="text"
-              color="error"
-              :aria-label="`Xóa mapping form ${form.name}`"
-              @click="$emit('delete-mapping', getMappingForForm(form.id)!.id)"
-            >
-              Xóa
-            </v-btn>
+
+          <!-- Lead count -->
+          <td class="text-right text-body-2">
+            {{ mapping.leadCount > 0 ? mapping.leadCount.toLocaleString('vi-VN') : '—' }}
+          </td>
+
+          <!-- Last lead relative time -->
+          <td class="text-caption text-medium-emphasis">
+            {{ mapping.lastLeadAt ? formatRelativeTime(mapping.lastLeadAt) : '—' }}
           </td>
         </tr>
       </tbody>
@@ -96,26 +69,42 @@
 </template>
 
 <script setup lang="ts">
-import type { FacebookLeadgenForm, FacebookFormMappingDto } from '@/api/facebook-api';
+import type { FacebookFormMappingDto } from '@/api/facebook-api';
 
-const props = defineProps<{
-  forms: FacebookLeadgenForm[];
+defineProps<{
   mappings: FacebookFormMappingDto[];
-  /** Set of formIds that have ≥1 sale in pool */
-  formIdsWithSale: Set<string>;
   loading?: boolean;
 }>();
 
-defineEmits<{
-  'map-form': [form: FacebookLeadgenForm];
-  'delete-mapping': [mappingId: string];
-}>();
-
-function getMappingForForm(formId: string): FacebookFormMappingDto | undefined {
-  return props.mappings.find((m) => m.formId === formId);
-}
-
-function hasSale(formId: string): boolean {
-  return props.formIdsWithSale.has(formId);
+function formatRelativeTime(iso: string): string {
+  try {
+    const diff = Date.now() - new Date(iso).getTime();
+    const minutes = Math.floor(diff / 60_000);
+    if (minutes < 1) return 'vừa xong';
+    if (minutes < 60) return `${minutes} phút trước`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `${hours} giờ trước`;
+    const days = Math.floor(hours / 24);
+    if (days < 30) return `${days} ngày trước`;
+    return new Intl.DateTimeFormat('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' }).format(
+      new Date(iso),
+    );
+  } catch {
+    return iso;
+  }
 }
 </script>
+
+<style scoped>
+.list-link {
+  display: inline-flex;
+  align-items: center;
+  color: inherit;
+  text-decoration: none;
+  font-weight: 500;
+}
+.list-link:hover {
+  text-decoration: underline;
+  color: #1565c0;
+}
+</style>

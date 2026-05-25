@@ -14,6 +14,7 @@ import {
   unsubscribePage,
 } from './facebook-graph-client.js';
 import { logActivity } from '../../../activity/activity-logger.js';
+import { enqueueFormDiscovery } from './facebook-form-discovery-worker.js';
 
 const OAUTH_SCOPES = [
   'pages_show_list',
@@ -134,6 +135,16 @@ export async function handleCallback(
       // Step 4b: subscribe page to leadgen events
       await subscribePage(page.id, page.access_token);
       connectedPages++;
+
+      // Step 4c: enqueue form discovery (fire-and-forget — don't block OAuth callback)
+      // Fetch the connection record's ID for the worker
+      const connRecord = await prisma.facebookPageConnection.findUnique({
+        where: { orgId_pageId: { orgId, pageId: page.id } },
+        select: { id: true },
+      });
+      if (connRecord) {
+        void enqueueFormDiscovery({ orgId, pageConnectionId: connRecord.id, pageId: page.id });
+      }
 
       logger.info('[fb-oauth] Connected page %s (%s) for org %s', page.name, page.id, orgId);
     } catch (err) {

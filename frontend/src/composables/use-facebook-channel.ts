@@ -1,35 +1,28 @@
 /**
  * use-facebook-channel.ts — State + actions for the Facebook channel settings page.
  *
+ * FB-11: Manual mapping removed. Forms are auto-discovered on OAuth callback.
+ *
  * Owns:
  *  - pages list (FacebookPageConnectionDto[])
- *  - forms per page (keyed by pageId)
- *  - mappings list (FacebookFormMappingDto[])
- *  - loading / error state
+ *  - mappings list (FacebookFormMappingDto[]) — read-only, auto-populated
+ *  - per-page rediscover loading state
  *
  * Actions:
- *  - connectPage  — redirect browser to OAuth start URL
- *  - refreshPages — reload page list from API
- *  - fetchForms   — load live forms for a page (lazy, cached in formsMap)
- *  - saveMapping  — create or update a form mapping
- *  - deleteMapping — soft-delete a mapping
- *  - disconnect   — disconnect a page (returns { disabledMappings })
+ *  - connectPage      — redirect browser to OAuth start URL
+ *  - refreshPages     — reload page list + mappings from API
+ *  - rediscoverPage   — POST /pages/:pageId/rediscover, then refresh after delay
+ *  - disconnectPage   — disconnect a page
  */
 import { ref, computed } from 'vue';
 import {
   listPages,
-  listPageForms,
   listMappings,
-  createMapping,
-  updateMapping,
-  deleteMapping as apiDeleteMapping,
+  rediscoverPage as apiRediscoverPage,
   disconnectPage as apiDisconnectPage,
   startFbOAuth,
   type FacebookPageConnectionDto,
-  type FacebookLeadgenForm,
   type FacebookFormMappingDto,
-  type CreateMappingInput,
-  type UpdateMappingInput,
 } from '@/api/facebook-api';
 
 export function useFacebookChannel() {
@@ -37,29 +30,21 @@ export function useFacebookChannel() {
 
   const pages = ref<FacebookPageConnectionDto[]>([]);
   const mappings = ref<FacebookFormMappingDto[]>([]);
-  const formsMap = ref<Record<string, FacebookLeadgenForm[]>>({});
-  const formsLoading = ref<Record<string, boolean>>({});
 
   const loading = ref(false);
   const error = ref('');
 
+  /** pageId → true while rediscover is in-flight */
+  const rediscoveringPages = ref<Record<string, boolean>>({});
+
   // ── Derived ──────────────────────────────────────────────────────────────
 
-  /** mappings keyed by pageConnectionId for quick lookup */
+  /** Mappings keyed by pageConnectionId for quick lookup per page */
   const mappingsByPageConnection = computed<Record<string, FacebookFormMappingDto[]>>(() => {
     const result: Record<string, FacebookFormMappingDto[]> = {};
     for (const m of mappings.value) {
       if (!result[m.pageConnectionId]) result[m.pageConnectionId] = [];
       result[m.pageConnectionId].push(m);
-    }
-    return result;
-  });
-
-  /** mappings keyed by formId */
-  const mappingByFormId = computed<Record<string, FacebookFormMappingDto>>(() => {
-    const result: Record<string, FacebookFormMappingDto> = {};
-    for (const m of mappings.value) {
-      result[m.formId] = m;
     }
     return result;
   });
@@ -90,56 +75,32 @@ export function useFacebookChannel() {
     }
   }
 
-  async function fetchForms(pageId: string): Promise<void> {
-    if (formsLoading.value[pageId]) return;
-    formsLoading.value[pageId] = true;
+  /**
+   * Trigger manual re-discovery for a page.
+   * Shows loading state for 5s then refreshes the page list.
+   */
+  async function rediscoverPage(pageId: string): Promise<void> {
+    rediscoveringPages.value = { ...rediscoveringPages.value, [pageId]: true };
     try {
-      const forms = await listPageForms(pageId);
-      formsMap.value = { ...formsMap.value, [pageId]: forms };
+      await apiRediscoverPage(pageId);
+      // Give the worker ~5s to finish, then reload
+      await new Promise((resolve) => setTimeout(resolve, 5000));
+      await refreshPages();
     } catch (err) {
-      error.value = `Không thể tải forms của trang: ${(err as Error).message}`;
+      error.value = (err as Error).message ?? 'Không thể đồng bộ form';
     } finally {
-      formsLoading.value[pageId] = false;
+      const { [pageId]: _, ...rest } = rediscoveringPages.value;
+      rediscoveringPages.value = rest;
     }
   }
 
-  async function saveMapping(
-    input: CreateMappingInput,
-    existingId?: string,
-  ): Promise<FacebookFormMappingDto> {
-    let result: FacebookFormMappingDto;
-    if (existingId) {
-      const patch: UpdateMappingInput = {
-        customerListId: input.customerListId,
-        fieldMap: input.fieldMap,
-        enabled: true,
-      };
-      result = await updateMapping(existingId, patch);
-      mappings.value = mappings.value.map((m) => (m.id === existingId ? result : m));
-    } else {
-      result = await createMapping(input);
-      mappings.value = [...mappings.value, result];
-    }
-    return result;
-  }
-
-  async function deleteMappingById(id: string): Promise<void> {
-    await apiDeleteMapping(id);
-    // Reflect soft-delete locally (set enabled=false)
-    mappings.value = mappings.value.map((m) =>
-      m.id === id ? { ...m, enabled: false } : m,
-    );
-  }
-
-  async function disconnectPage(
-    pageId: string,
-  ): Promise<{ disabledMappings: number }> {
+  async function disconnectPage(pageId: string): Promise<{ disabledMappings: number }> {
     const result = await apiDisconnectPage(pageId);
-    // Remove page from local list
     pages.value = pages.value.filter((p) => p.pageId !== pageId);
-    // Clear forms cache for this page
-    const { [pageId]: _, ...rest } = formsMap.value;
-    formsMap.value = rest;
+    // Remove mappings for this page from local state
+    mappings.value = mappings.value.filter(
+      (m) => !pages.value.find((p) => p.id === m.pageConnectionId && p.pageId === pageId),
+    );
     return result;
   }
 
@@ -147,19 +108,15 @@ export function useFacebookChannel() {
     // state
     pages,
     mappings,
-    formsMap,
-    formsLoading,
     loading,
     error,
+    rediscoveringPages,
     // derived
     mappingsByPageConnection,
-    mappingByFormId,
     // actions
     connectPage,
     refreshPages,
-    fetchForms,
-    saveMapping,
-    deleteMappingById,
+    rediscoverPage,
     disconnectPage,
   };
 }

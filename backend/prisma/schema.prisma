@@ -1766,11 +1766,28 @@ model CustomerListEntry {
   errorMessage String?   @map("error_message")
   enrichedAt   DateTime? @map("enriched_at")
 
+  // ── Facebook Lead Ads metadata (populated when source is FB form) ─────────
+  fbLeadgenId     String?  @map("fb_leadgen_id")
+  fbAdId          String?  @map("fb_ad_id")
+  fbAdName        String?  @map("fb_ad_name")
+  fbAdsetId       String?  @map("fb_adset_id")
+  fbAdsetName     String?  @map("fb_adset_name")
+  fbCampaignId    String?  @map("fb_campaign_id")
+  fbCampaignName  String?  @map("fb_campaign_name")
+  fbFormId        String?  @map("fb_form_id")
+  fbFormName      String?  @map("fb_form_name")
+  fbInboxUrl      String?  @map("fb_inbox_url")
+  fbPlatform      String?  @map("fb_platform")
+  fbIsOrganic     Boolean? @map("fb_is_organic")
+  fbCustomAnswers Json?    @map("fb_custom_answers") // Array<{question:string,answer:string}>
+
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
   @@unique([customerListId, rowIndex])
   @@index([customerListId, status])
+  @@index([customerListId, fbCampaignId])
+  @@index([customerListId, fbFormId])
   @@index([phoneE164]) // hot index for cross-list dedup + reverse update
   @@index([phoneLocal])
   @@map("customer_list_entries")

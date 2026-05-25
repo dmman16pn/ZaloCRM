@@ -22,6 +22,7 @@
 
 import { Worker, type Job } from 'bullmq';
 import { Redis } from 'ioredis';
+import { Prisma } from '@prisma/client';
 import { prisma } from '../../../../shared/database/prisma-client.js';
 import { getRedis } from '../../../../shared/redis-client.js';
 import { logger } from '../../../../shared/utils/logger.js';
@@ -32,6 +33,11 @@ import { normalizeVnPhone } from '../../../../shared/phone/normalize-vn-phone.js
 import { assignSale } from './round-robin-assigner.js';
 import { notifySaleAssigned } from './notification-dispatcher.js';
 import { normalizePhone } from '../../../../shared/utils/phone.js';
+import { enqueueFormDiscovery } from './facebook-form-discovery-worker.js';
+
+// Max attempts to retry an UNMAPPED lead while waiting for discovery to map the form.
+// Beyond this, give up + mark UNMAPPED_AFTER_RETRY (form likely deleted in FB).
+const UNMAPPED_RETRY_LIMIT = 2;
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -80,7 +86,7 @@ function mergeContactNotes(
 
 // ── Worker process function ───────────────────────────────────────────────────
 
-async function processLeadJob(job: Job<LeadIngestionJobData>): Promise<void> {
+export async function processLeadJob(job: Job<LeadIngestionJobData>): Promise<void> {
   const { leadgenId, formId, pageId } = job.data;
   let { orgId } = job.data;
 
@@ -97,7 +103,10 @@ async function processLeadJob(job: Job<LeadIngestionJobData>): Promise<void> {
     orgId = conn.orgId;
   }
 
-  // ── Step 2: Idempotency insert ────────────────────────────────────────────
+  // ── Step 2: Idempotency insert (upsert-style: tolerate retry) ──────────────
+  // Lazy on-demand discovery may throw + retry this job. On retry, the event
+  // row already exists from the first attempt — fetch its id instead of acking.
+  // Only ack if `processedAt IS NOT NULL` (truly completed previously).
   let eventId: string;
   try {
     const event = await prisma.facebookLeadEvent.create({
@@ -106,36 +115,76 @@ async function processLeadJob(job: Job<LeadIngestionJobData>): Promise<void> {
         leadgenId,
         formId,
         pageId,
-        rawPayload: { leadgenId, formId, pageId }, // partial — updated after Graph fetch
+        rawPayload: { leadgenId, formId, pageId },
       },
       select: { id: true },
     });
     eventId = event.id;
   } catch (err: unknown) {
-    // P2002 = unique constraint violation (leadgenId already exists)
     if (
       err &&
       typeof err === 'object' &&
       'code' in err &&
       (err as { code: string }).code === 'P2002'
     ) {
-      logger.info('[fb-lead-worker] leadgenId=%s already processed — acking', leadgenId);
-      return;
+      const existing = await prisma.facebookLeadEvent.findUnique({
+        where: { leadgenId },
+        select: { id: true, processedAt: true },
+      });
+      if (!existing) throw err; // shouldn't happen but guard
+      if (existing.processedAt) {
+        logger.info('[fb-lead-worker] leadgenId=%s already processed — acking', leadgenId);
+        return;
+      }
+      // Existing event row, not yet completed (retry path) — reuse its id
+      eventId = existing.id;
+      logger.info('[fb-lead-worker] retrying leadgenId=%s (attempt %d)', leadgenId, job.attemptsMade);
+    } else {
+      throw err;
     }
-    throw err;
   }
 
-  // ── Step 3: Form mapping lookup ───────────────────────────────────────────
+  // ── Step 3: Form mapping lookup (lazy on-demand discovery on miss) ────────
   const mapping = await prisma.facebookFormMapping.findFirst({
     where: { orgId, formId, enabled: true },
   });
   if (!mapping) {
-    logger.warn('[fb-lead-worker] no form mapping for formId=%s orgId=%s', formId, orgId);
+    // Try lazy discovery: enqueue form discovery for this page, then retry lead.
+    // BullMQ exponential backoff (configured on producer: 2s, 4s, 8s...) gives
+    // the discovery worker time to finish before we re-process.
+    if (job.attemptsMade < UNMAPPED_RETRY_LIMIT) {
+      const pageConn = await prisma.facebookPageConnection.findFirst({
+        where: { orgId, pageId },
+        select: { id: true, status: true },
+      });
+      if (pageConn && pageConn.status !== 'revoked') {
+        logger.info(
+          '[fb-lead-worker] UNMAPPED formId=%s — triggering lazy discovery for pageId=%s (attempt %d)',
+          formId,
+          pageId,
+          job.attemptsMade + 1,
+        );
+        await enqueueFormDiscovery({
+          orgId,
+          pageConnectionId: pageConn.id,
+          pageId,
+        });
+        await prisma.facebookLeadEvent.update({
+          where: { id: eventId },
+          data: { error: `UNMAPPED_DISCOVERING_${job.attemptsMade + 1}` },
+        });
+        // Throw → BullMQ retries with exponential backoff (gives discovery time)
+        throw new Error(`UNMAPPED_RETRYING_FOR_DISCOVERY:${formId}`);
+      }
+    }
+    // Exhausted retries (or page revoked) — give up
+    const finalError = job.attemptsMade >= UNMAPPED_RETRY_LIMIT ? 'UNMAPPED_AFTER_RETRY' : 'UNMAPPED';
+    logger.warn('[fb-lead-worker] no form mapping for formId=%s after %d attempts — giving up', formId, job.attemptsMade);
     await prisma.facebookLeadEvent.update({
       where: { id: eventId },
-      data: { error: 'UNMAPPED' },
+      data: { error: finalError },
     });
-    return; // ack, no retry
+    return; // ack, no further retry
   }
 
   // ── Step 4: Page connection + decrypt token ───────────────────────────────
@@ -295,6 +344,14 @@ async function processLeadJob(job: Job<LeadIngestionJobData>): Promise<void> {
     },
   ];
 
+  // Build fbCustomAnswers: field_data entries NOT resolved by fieldMap (custom Q&A)
+  const mappedFieldNames = new Set(Object.keys(fieldMap));
+  // Core identity fields that are always excluded from custom answers
+  const coreFields = new Set(['phone_number', 'full_name', 'email', ...mappedFieldNames]);
+  const fbCustomAnswers = (graphLead.field_data ?? [])
+    .filter((f) => !coreFields.has(f.name))
+    .map((f) => ({ question: f.name, answer: f.values[0] ?? '' }));
+
   const entry = await prisma.customerListEntry.create({
     data: {
       customerListId: mapping.customerListId,
@@ -309,6 +366,20 @@ async function processLeadJob(job: Job<LeadIngestionJobData>): Promise<void> {
       contactId,
       systemMessages: systemMessages as object[],
       status: phoneValid ? 'enriched' : 'invalid',
+      // FB metadata columns
+      fbLeadgenId: leadgenId,
+      fbAdId: graphLead.ad_id ?? null,
+      fbAdName: graphLead.ad_name ?? null,
+      fbAdsetId: graphLead.adset_id ?? null,
+      fbAdsetName: graphLead.adset_name ?? null,
+      fbCampaignId: graphLead.campaign_id ?? null,
+      fbCampaignName: graphLead.campaign_name ?? null,
+      fbFormId: graphLead.form_id ?? null,
+      fbFormName: graphLead.form_name ?? mapping.formName ?? null,
+      fbInboxUrl: null, // not available via Graph API
+      fbPlatform: graphLead.platform ?? null,
+      fbIsOrganic: graphLead.is_organic ?? null,
+      fbCustomAnswers: fbCustomAnswers.length > 0 ? (fbCustomAnswers as Prisma.InputJsonValue) : Prisma.DbNull,
     },
     select: { id: true },
   });

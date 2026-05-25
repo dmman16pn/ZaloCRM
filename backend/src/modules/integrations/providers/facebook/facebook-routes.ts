@@ -2,20 +2,20 @@
  * facebook-routes.ts — Fastify plugin for all Facebook integration endpoints.
  *
  * Routes registered under /api/v1/integrations/facebook:
- *   GET  /oauth/start                      — redirect to Meta OAuth dialog
+ *   POST /oauth/start                      — get Meta OAuth dialog URL
  *   GET  /oauth/callback                   — Meta redirects back here with code
  *   GET  /webhook                          — Meta webhook verification challenge
  *   POST /webhook                          — Meta webhook lead events (raw body HMAC)
  *   GET  /pages                            — list connected pages for org
  *   POST /pages/:pageId/disconnect         — disconnect a page
- *   GET  /pages/:pageId/forms              — live form list from Graph (cache 60s)
- *   GET  /mappings                         — list FacebookFormMapping for org
- *   POST /mappings                         — create mapping (form → CustomerList)
- *   PUT  /mappings/:id                     — update mapping fields
- *   DELETE /mappings/:id                   — soft-delete mapping (enabled=false)
- *   GET  /customer-lists/:listId/sale-assignments — list assignments for a list
- *   PUT  /customer-lists/:listId/sale-assignments — upsert assignment pool
+ *   POST /pages/:pageId/rediscover         — manually trigger form discovery for a page
+ *   GET  /mappings                         — list form mappings with lead stats (read-only)
  *   POST /admin/refresh-tokens             — manual trigger token refresh for org (admin only)
+ *
+ * REMOVED (FB-11 auto-discovery replaces manual mapping flow):
+ *   POST /mappings, PUT /mappings/:id, DELETE /mappings/:id
+ *   GET  /pages/:pageId/forms
+ *   GET/PUT /customer-lists/:listId/sale-assignments
  */
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { authMiddleware } from '../../../auth/auth-middleware.js';
@@ -36,6 +36,7 @@ import {
   disconnectPage,
 } from './facebook-oauth-service.js';
 import { runRefreshForOrg } from './facebook-token-refresh-cron.js';
+import { enqueueFormDiscovery } from './facebook-form-discovery-worker.js';
 
 const PREFIX = '/api/v1/integrations/facebook';
 const FRONTEND_FB_PATH = '/settings/channels/facebook';
@@ -254,68 +255,9 @@ export async function facebookRoutes(app: FastifyInstance): Promise<void> {
     },
   );
 
-  // ── GET /pages/:pageId/forms ──────────────────────────────────────────────
-  // Fetch live leadgen forms from Graph API for a connected page.
-  // In-memory cache 60s to avoid hammering Graph rate limits.
-  // Auth required (admin+ not needed — any authenticated user can view forms).
-  const formsCache = new Map<string, { data: unknown[]; expiresAt: number }>();
-
-  app.get<{ Params: { pageId: string } }>(
-    `${PREFIX}/pages/:pageId/forms`,
-    { preHandler: authMiddleware },
-    async (request, reply) => {
-      try {
-        const { orgId } = request.user!;
-        const { pageId } = request.params;
-
-        const cacheKey = `${orgId}:${pageId}`;
-        const cached = formsCache.get(cacheKey);
-        if (cached && cached.expiresAt > Date.now()) {
-          return cached.data;
-        }
-
-        // Verify the connection belongs to this org
-        const conn = await prisma.facebookPageConnection.findFirst({
-          where: { orgId, pageId },
-          select: { accessTokenEnc: true, status: true },
-        });
-        if (!conn) {
-          return reply.status(404).send({ error: 'Page not connected to this org' });
-        }
-        if (conn.status !== 'connected' || !conn.accessTokenEnc) {
-          return reply.status(400).send({ error: 'Page token not available — reconnect required' });
-        }
-
-        const { decrypt } = await import('../../../../shared/crypto/aes-gcm.js');
-        const pageToken = decrypt(conn.accessTokenEnc);
-
-        const GRAPH_BASE = `https://graph.facebook.com/${process.env.FB_GRAPH_API_VERSION ?? 'v23.0'}`;
-        const url = `${GRAPH_BASE}/${pageId}/leadgen_forms?fields=id,name,status,created_time,leads_count&access_token=${encodeURIComponent(pageToken)}`;
-
-        const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
-        if (!res.ok) {
-          const body = await res.text();
-          logger.warn('[fb-routes] Graph forms fetch failed %d: %s', res.status, body.slice(0, 200));
-          if (res.status >= 400 && res.status < 500) {
-            return reply.status(502).send({ error: 'Facebook API rejected request — token may be expired' });
-          }
-          return reply.status(502).send({ error: 'Facebook API error' });
-        }
-
-        const json = await res.json() as { data: unknown[] };
-        const forms = json.data ?? [];
-
-        formsCache.set(cacheKey, { data: forms, expiresAt: Date.now() + 60_000 });
-        return forms;
-      } catch (err) {
-        logger.error('[fb-routes] GET forms error:', err);
-        return reply.status(500).send({ error: 'Failed to fetch forms' });
-      }
-    },
-  );
-
   // ── GET /mappings ─────────────────────────────────────────────────────────
-  // List all FacebookFormMapping for current org.
+  // List all FacebookFormMapping for current org (read-only, auto-populated by discovery).
+  // Returns enriched DTOs: customerListName, leadCount, lastLeadAt.
   app.get(
     `${PREFIX}/mappings`,
     { preHandler: authMiddleware },
@@ -334,7 +276,28 @@ export async function facebookRoutes(app: FastifyInstance): Promise<void> {
             },
           },
         });
-        return mappings;
+
+        // Enrich with lead counts
+        const formIds = mappings.map((m) => m.formId);
+        const leadStats = await prisma.facebookLeadEvent.groupBy({
+          by: ['formId'],
+          where: { formId: { in: formIds }, processedAt: { not: null } },
+          _count: { id: true },
+          _max: { processedAt: true },
+        });
+        const statsByFormId = new Map(
+          leadStats.map((s) => [s.formId, { count: s._count.id, lastLeadAt: s._max.processedAt }]),
+        );
+
+        return mappings.map((m) => {
+          const stat = statsByFormId.get(m.formId);
+          return {
+            ...m,
+            customerListName: m.customerList?.name ?? null,
+            leadCount: stat?.count ?? 0,
+            lastLeadAt: stat?.lastLeadAt ?? null,
+          };
+        });
       } catch (err) {
         logger.error('[fb-routes] GET mappings error:', err);
         return reply.status(500).send({ error: 'Failed to fetch mappings' });
@@ -342,221 +305,33 @@ export async function facebookRoutes(app: FastifyInstance): Promise<void> {
     },
   );
 
-  // ── POST /mappings ────────────────────────────────────────────────────────
-  // Create a new form → CustomerList mapping.
-  app.post<{
-    Body: { pageConnectionId: string; formId: string; formName: string; customerListId: string; fieldMap?: Record<string, string> };
-  }>(
-    `${PREFIX}/mappings`,
+  // ── POST /pages/:pageId/rediscover ────────────────────────────────────────
+  // Manually trigger form discovery for a connected page.
+  // Returns 202 with jobId. Admin+ only.
+  app.post<{ Params: { pageId: string } }>(
+    `${PREFIX}/pages/:pageId/rediscover`,
     { preHandler: [authMiddleware, requireRole('owner', 'admin')] },
     async (request, reply) => {
       try {
         const { orgId } = request.user!;
-        const { pageConnectionId, formId, formName, customerListId, fieldMap } = request.body;
+        const { pageId } = request.params;
 
-        if (!pageConnectionId || !formId || !formName || !customerListId) {
-          return reply.status(400).send({ error: 'pageConnectionId, formId, formName, customerListId required' });
-        }
-
-        // Verify pageConnection belongs to this org
         const conn = await prisma.facebookPageConnection.findFirst({
-          where: { id: pageConnectionId, orgId },
+          where: { orgId, pageId },
+          select: { id: true, status: true },
         });
         if (!conn) {
           return reply.status(404).send({ error: 'Page connection not found' });
         }
+        if (conn.status !== 'connected') {
+          return reply.status(400).send({ error: 'Page is not connected — reconnect first' });
+        }
 
-        const mapping = await prisma.facebookFormMapping.create({
-          data: {
-            orgId,
-            pageConnectionId,
-            formId,
-            formName,
-            customerListId,
-            fieldMap: (fieldMap ?? {}) as object,
-            enabled: true,
-          },
-        });
-        return reply.status(201).send(mapping);
+        const jobId = await enqueueFormDiscovery({ orgId, pageConnectionId: conn.id, pageId });
+        return reply.status(202).send({ jobId: jobId ?? null, message: 'Discovery job enqueued' });
       } catch (err) {
-        const msg = (err as Error).message;
-        if (msg.includes('Unique constraint')) {
-          return reply.status(409).send({ error: 'A mapping for this form already exists' });
-        }
-        logger.error('[fb-routes] POST mappings error:', err);
-        return reply.status(500).send({ error: 'Failed to create mapping' });
-      }
-    },
-  );
-
-  // ── PUT /mappings/:id ─────────────────────────────────────────────────────
-  // Update an existing form mapping (customerListId, fieldMap, enabled).
-  app.put<{
-    Params: { id: string };
-    Body: { customerListId?: string; fieldMap?: Record<string, string>; enabled?: boolean };
-  }>(
-    `${PREFIX}/mappings/:id`,
-    { preHandler: [authMiddleware, requireRole('owner', 'admin')] },
-    async (request, reply) => {
-      try {
-        const { orgId } = request.user!;
-        const { id } = request.params;
-        const { customerListId, fieldMap, enabled } = request.body;
-
-        const existing = await prisma.facebookFormMapping.findFirst({
-          where: { id, orgId },
-        });
-        if (!existing) {
-          return reply.status(404).send({ error: 'Mapping not found' });
-        }
-
-        const updated = await prisma.facebookFormMapping.update({
-          where: { id },
-          data: {
-            ...(customerListId !== undefined && { customerListId }),
-            ...(fieldMap !== undefined && { fieldMap: fieldMap as object }),
-            ...(enabled !== undefined && { enabled }),
-          },
-        });
-        return updated;
-      } catch (err) {
-        logger.error('[fb-routes] PUT mappings error:', err);
-        return reply.status(500).send({ error: 'Failed to update mapping' });
-      }
-    },
-  );
-
-  // ── DELETE /mappings/:id ──────────────────────────────────────────────────
-  // Soft-delete: set enabled=false (preserves history, stops lead processing).
-  app.delete<{ Params: { id: string } }>(
-    `${PREFIX}/mappings/:id`,
-    { preHandler: [authMiddleware, requireRole('owner', 'admin')] },
-    async (request, reply) => {
-      try {
-        const { orgId } = request.user!;
-        const { id } = request.params;
-
-        const existing = await prisma.facebookFormMapping.findFirst({
-          where: { id, orgId },
-        });
-        if (!existing) {
-          return reply.status(404).send({ error: 'Mapping not found' });
-        }
-
-        await prisma.facebookFormMapping.update({
-          where: { id },
-          data: { enabled: false },
-        });
-        return { success: true };
-      } catch (err) {
-        logger.error('[fb-routes] DELETE mappings error:', err);
-        return reply.status(500).send({ error: 'Failed to delete mapping' });
-      }
-    },
-  );
-
-  // ── GET /customer-lists/:listId/sale-assignments ─────────────────────────
-  // List sale assignments for a customer list (join with user display info).
-  app.get<{ Params: { listId: string } }>(
-    `${PREFIX}/customer-lists/:listId/sale-assignments`,
-    { preHandler: authMiddleware },
-    async (request, reply) => {
-      try {
-        const { orgId } = request.user!;
-        const { listId } = request.params;
-
-        // Verify list belongs to org
-        const list = await prisma.customerList.findFirst({
-          where: { id: listId, orgId },
-          select: { id: true },
-        });
-        if (!list) {
-          return reply.status(404).send({ error: 'Customer list not found' });
-        }
-
-        const assignments = await prisma.customerListSaleAssignment.findMany({
-          where: { customerListId: listId },
-          include: {
-            user: { select: { id: true, fullName: true, email: true, role: true } },
-          },
-          orderBy: { createdAt: 'asc' },
-        });
-        return assignments;
-      } catch (err) {
-        logger.error('[fb-routes] GET sale-assignments error:', err);
-        return reply.status(500).send({ error: 'Failed to fetch sale assignments' });
-      }
-    },
-  );
-
-  // ── PUT /customer-lists/:listId/sale-assignments ─────────────────────────
-  // Upsert assignment pool: delete removed entries, upsert provided ones.
-  app.put<{
-    Params: { listId: string };
-    Body: { assignments: Array<{ userId: string; weight?: number; enabled?: boolean }> };
-  }>(
-    `${PREFIX}/customer-lists/:listId/sale-assignments`,
-    { preHandler: [authMiddleware, requireRole('owner', 'admin')] },
-    async (request, reply) => {
-      try {
-        const { orgId } = request.user!;
-        const { listId } = request.params;
-        const { assignments } = request.body;
-
-        if (!Array.isArray(assignments)) {
-          return reply.status(400).send({ error: 'assignments must be an array' });
-        }
-
-        // Verify list belongs to org
-        const list = await prisma.customerList.findFirst({
-          where: { id: listId, orgId },
-          select: { id: true },
-        });
-        if (!list) {
-          return reply.status(404).send({ error: 'Customer list not found' });
-        }
-
-        const incomingUserIds = assignments.map((a) => a.userId);
-
-        await prisma.$transaction(async (tx) => {
-          // Delete assignments not in incoming list
-          await tx.customerListSaleAssignment.deleteMany({
-            where: {
-              customerListId: listId,
-              userId: { notIn: incomingUserIds },
-            },
-          });
-
-          // Upsert each provided assignment
-          for (const a of assignments) {
-            await tx.customerListSaleAssignment.upsert({
-              where: { customerListId_userId: { customerListId: listId, userId: a.userId } },
-              create: {
-                customerListId: listId,
-                userId: a.userId,
-                weight: a.weight ?? 1,
-                enabled: a.enabled ?? true,
-              },
-              update: {
-                weight: a.weight ?? 1,
-                enabled: a.enabled ?? true,
-              },
-            });
-          }
-        });
-
-        // Return updated list
-        const updated = await prisma.customerListSaleAssignment.findMany({
-          where: { customerListId: listId },
-          include: {
-            user: { select: { id: true, fullName: true, email: true, role: true } },
-          },
-          orderBy: { createdAt: 'asc' },
-        });
-        return updated;
-      } catch (err) {
-        logger.error('[fb-routes] PUT sale-assignments error:', err);
-        return reply.status(500).send({ error: 'Failed to update sale assignments' });
+        logger.error('[fb-routes] POST rediscover error:', err);
+        return reply.status(500).send({ error: 'Failed to enqueue discovery' });
       }
     },
   );

@@ -1,6 +1,8 @@
 /**
  * facebook-api.ts — Axios wrappers for Facebook integration endpoints.
  * All paths relative to /api/v1 (baseURL set in api/index.ts).
+ *
+ * FB-11: Manual mapping removed. Discovery is auto on OAuth callback.
  */
 import { api } from '@/api/index';
 
@@ -21,14 +23,6 @@ export interface FacebookPageConnectionDto {
   lastLeadAt: string | null;
 }
 
-export interface FacebookLeadgenForm {
-  id: string;
-  name: string;
-  status: string;
-  created_time: string;
-  leads_count?: number;
-}
-
 export interface FacebookFormMappingDto {
   id: string;
   orgId: string;
@@ -39,6 +33,9 @@ export interface FacebookFormMappingDto {
   fieldMap: Record<string, string>;
   enabled: boolean;
   createdAt: string;
+  customerListName: string | null;
+  leadCount: number;
+  lastLeadAt: string | null;
   pageConnection: {
     pageId: string;
     pageName: string;
@@ -48,21 +45,7 @@ export interface FacebookFormMappingDto {
     id: string;
     name: string;
     iconEmoji: string | null;
-  };
-}
-
-export interface CreateMappingInput {
-  pageConnectionId: string;
-  formId: string;
-  formName: string;
-  customerListId: string;
-  fieldMap?: Record<string, string>;
-}
-
-export interface UpdateMappingInput {
-  customerListId?: string;
-  fieldMap?: Record<string, string>;
-  enabled?: boolean;
+  } | null;
 }
 
 export interface TokenRefreshSummary {
@@ -95,36 +78,19 @@ export async function disconnectPage(
   return data;
 }
 
-/** Fetch live leadgen forms for a connected page (backend caches 60s). */
-export async function listPageForms(pageId: string): Promise<FacebookLeadgenForm[]> {
-  const { data } = await api.get<FacebookLeadgenForm[]>(`${FB}/pages/${pageId}/forms`);
-  return data;
-}
-
-/** List all form mappings for current org. */
+/** List all form mappings for current org (auto-discovered, read-only). */
 export async function listMappings(): Promise<FacebookFormMappingDto[]> {
   const { data } = await api.get<FacebookFormMappingDto[]>(`${FB}/mappings`);
   return data;
 }
 
-/** Create a new form → CustomerList mapping. */
-export async function createMapping(input: CreateMappingInput): Promise<FacebookFormMappingDto> {
-  const { data } = await api.post<FacebookFormMappingDto>(`${FB}/mappings`, input);
+/**
+ * Manually trigger form re-discovery for a connected page.
+ * Returns jobId (may be null if Redis unavailable).
+ */
+export async function rediscoverPage(pageId: string): Promise<{ jobId: string | null }> {
+  const { data } = await api.post<{ jobId: string | null }>(`${FB}/pages/${pageId}/rediscover`);
   return data;
-}
-
-/** Update an existing mapping. */
-export async function updateMapping(
-  id: string,
-  patch: UpdateMappingInput,
-): Promise<FacebookFormMappingDto> {
-  const { data } = await api.put<FacebookFormMappingDto>(`${FB}/mappings/${id}`, patch);
-  return data;
-}
-
-/** Soft-delete a mapping (sets enabled=false). */
-export async function deleteMapping(id: string): Promise<void> {
-  await api.delete(`${FB}/mappings/${id}`);
 }
 
 /** Manual trigger: refresh tokens for all connected pages in current org. */

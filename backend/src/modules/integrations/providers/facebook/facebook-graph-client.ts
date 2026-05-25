@@ -25,6 +25,13 @@ export interface ManagedPage {
   category?: string;
 }
 
+export interface LeadgenForm {
+  id: string;
+  name: string;
+  status: 'ACTIVE' | 'ARCHIVED' | string;
+  created_time: string;
+}
+
 export interface LeadFieldData {
   name: string;
   values: string[];
@@ -34,9 +41,14 @@ export interface LeadDetail {
   id: string;
   field_data: LeadFieldData[];
   form_id: string;
+  form_name?: string;
   created_time: string;
   ad_id?: string;
+  ad_name?: string;
+  adset_id?: string;
+  adset_name?: string;
   campaign_id?: string;
+  campaign_name?: string;
   platform?: string;
   is_organic?: boolean;
 }
@@ -165,11 +177,43 @@ export async function unsubscribePage(pageId: string, pageToken: string): Promis
 }
 
 /**
+ * Fetch all leadgen forms for a page. Paginates until cursor exhausted.
+ */
+export async function getLeadgenForms(
+  pageId: string,
+  pageToken: string,
+): Promise<LeadgenForm[]> {
+  const results: LeadgenForm[] = [];
+  let url = `${GRAPH_BASE()}/${pageId}/leadgen_forms?${new URLSearchParams({
+    access_token: pageToken,
+    fields: 'id,name,status,created_time',
+    limit: '100',
+  }).toString()}`;
+
+  for (let page = 0; page < 20; page++) {
+    const res = await fetchWithRetry(url, { method: 'GET' });
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error(`[fb-graph] GET leadgen_forms failed ${res.status}: ${body.slice(0, 300)}`);
+    }
+    const json = (await res.json()) as {
+      data: LeadgenForm[];
+      paging?: { cursors?: { after?: string }; next?: string };
+    };
+    results.push(...(json.data ?? []));
+    if (!json.paging?.next) break;
+    url = json.paging.next;
+  }
+
+  return results;
+}
+
+/**
  * Fetch full lead detail by leadgen_id.
  */
 export async function getLeadById(leadgenId: string, pageToken: string): Promise<LeadDetail> {
   return graphGet<LeadDetail>(`/${leadgenId}`, {
     access_token: pageToken,
-    fields: 'field_data,form_id,created_time,ad_id,campaign_id,platform,is_organic',
+    fields: 'field_data,form_id,form_name,created_time,ad_id,ad_name,adset_id,adset_name,campaign_id,campaign_name,platform,is_organic',
   });
 }

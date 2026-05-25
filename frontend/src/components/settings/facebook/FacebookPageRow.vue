@@ -45,6 +45,18 @@
           <v-btn
             size="small"
             variant="text"
+            color="primary"
+            prepend-icon="mdi-sync"
+            :loading="rediscovering"
+            :disabled="page.status !== 'connected'"
+            aria-label="Đồng bộ form từ Facebook"
+            @click="onRediscover"
+          >
+            Đồng bộ form
+          </v-btn>
+          <v-btn
+            size="small"
+            variant="text"
             color="error"
             prepend-icon="mdi-link-off"
             aria-label="Ngắt kết nối trang này"
@@ -54,6 +66,11 @@
           </v-btn>
         </div>
       </div>
+
+      <!-- Rediscover in-progress hint -->
+      <div v-if="rediscovering" class="text-caption text-medium-emphasis mt-1 ps-13">
+        Đang đồng bộ form từ Facebook... sẽ tự reload sau vài giây.
+      </div>
     </v-card-text>
 
     <!-- Expanded forms section -->
@@ -61,12 +78,8 @@
       <v-divider />
       <v-card-text class="pa-0">
         <FacebookFormsTable
-          :forms="forms"
           :mappings="mappings"
-          :form-ids-with-sale="formIdsWithSale"
-          :loading="formsLoading"
-          @map-form="$emit('map-form', $event)"
-          @delete-mapping="$emit('delete-mapping', $event)"
+          :loading="false"
         />
       </v-card-text>
     </template>
@@ -76,21 +89,17 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue';
 import FacebookFormsTable from './FacebookFormsTable.vue';
-import type { FacebookPageConnectionDto, FacebookLeadgenForm, FacebookFormMappingDto } from '@/api/facebook-api';
+import type { FacebookPageConnectionDto, FacebookFormMappingDto } from '@/api/facebook-api';
 
 const props = defineProps<{
   page: FacebookPageConnectionDto;
-  forms: FacebookLeadgenForm[];
   mappings: FacebookFormMappingDto[];
-  formIdsWithSale: Set<string>;
-  formsLoading?: boolean;
+  rediscovering?: boolean;
 }>();
 
 const emit = defineEmits<{
   disconnect: [page: FacebookPageConnectionDto];
-  'map-form': [form: FacebookLeadgenForm];
-  'delete-mapping': [mappingId: string];
-  expand: [pageId: string];
+  rediscover: [pageId: string];
 }>();
 
 const expanded = ref(false);
@@ -115,9 +124,10 @@ const statusLabel = computed(() => {
 
 function toggleExpand(): void {
   expanded.value = !expanded.value;
-  if (expanded.value) {
-    emit('expand', props.page.pageId);
-  }
+}
+
+function onRediscover(): void {
+  emit('rediscover', props.page.pageId);
 }
 
 function formatDate(iso: string): string {

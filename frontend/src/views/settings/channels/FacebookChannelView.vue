@@ -7,7 +7,7 @@
           <v-icon color="#1877F2" class="mr-1" aria-hidden="true">mdi-facebook</v-icon>
           Kênh Facebook
         </h2>
-        <p class="page-desc">Kết nối Facebook Page, cấu hình form mapping và phân sale tự động.</p>
+        <p class="page-desc">Kết nối Facebook Page để nhận lead tự động vào Tệp khách hàng.</p>
       </div>
       <v-btn
         color="primary"
@@ -30,7 +30,7 @@
       @click:close="clearOauthStatus"
     >
       <template v-if="oauthStatus === 'success'">
-        Kết nối thành công {{ oauthPages }} trang Facebook!
+        Kết nối thành công {{ oauthPages }} trang Facebook! Hệ thống đang đồng bộ form tự động...
       </template>
       <template v-else>
         Kết nối thất bại: {{ oauthReason }}
@@ -76,14 +76,10 @@
         v-for="page in pages"
         :key="page.id"
         :page="page"
-        :forms="formsMap[page.pageId] ?? []"
         :mappings="mappingsByPageConnection[page.id] ?? []"
-        :form-ids-with-sale="formIdsWithSale"
-        :forms-loading="!!formsLoading[page.pageId]"
+        :rediscovering="!!rediscoveringPages[page.pageId]"
         @disconnect="onDisconnectIntent"
-        @expand="fetchForms"
-        @map-form="onMapForm(page, $event)"
-        @delete-mapping="onDeleteMapping"
+        @rediscover="onRediscover"
       />
     </template>
 
@@ -96,24 +92,6 @@
       :error="disconnectError"
       @confirm="onDisconnectConfirm"
     />
-
-    <!-- Form mapping dialog -->
-    <FacebookFormMappingDialog
-      v-if="mappingDialog.open"
-      v-model="mappingDialog.open"
-      :page-connection-id="mappingDialog.pageConnectionId"
-      :form-id="mappingDialog.formId"
-      :form-name="mappingDialog.formName"
-      :form-questions="mappingDialog.formQuestions"
-      :existing-mapping="mappingDialog.existingMapping"
-      :customer-lists="customerListOptions"
-      :lists-loading="listsLoading"
-      :org-users="orgUsers"
-      :sale-loading="saleAssignments.loading.value"
-      :sale-error="saleAssignments.error.value"
-      :saving="mappingSaving"
-      @save="onMappingSave"
-    />
   </div>
 </template>
 
@@ -121,63 +99,19 @@
 import { ref, computed, onMounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useFacebookChannel } from '@/composables/use-facebook-channel';
-import { useListSaleAssignments } from '@/composables/use-list-sale-assignments';
-import { api } from '@/api/index';
 import FacebookPageRow from '@/components/settings/facebook/FacebookPageRow.vue';
 import FacebookDisconnectDialog from '@/components/settings/facebook/FacebookDisconnectDialog.vue';
-import FacebookFormMappingDialog from '@/components/settings/facebook/FacebookFormMappingDialog.vue';
-import type { FacebookPageConnectionDto, FacebookLeadgenForm, FacebookFormMappingDto } from '@/api/facebook-api';
-import { upsertSaleAssignments } from '@/api/list-sale-assignment-api';
+import type { FacebookPageConnectionDto } from '@/api/facebook-api';
 
 const route = useRoute();
 const router = useRouter();
 
 // ── Facebook channel composable ───────────────────────────────────────────────
 const {
-  pages, mappings, formsMap, formsLoading, loading, error,
-  mappingsByPageConnection, mappingByFormId,
-  connectPage, refreshPages, fetchForms, saveMapping, deleteMappingById, disconnectPage,
+  pages, loading, error,
+  mappingsByPageConnection, rediscoveringPages,
+  connectPage, refreshPages, rediscoverPage, disconnectPage,
 } = useFacebookChannel();
-
-// ── Sale assignments composable ───────────────────────────────────────────────
-const saleAssignments = useListSaleAssignments();
-const { orgUsers } = saleAssignments;
-
-// ── Customer lists (for dropdown) ─────────────────────────────────────────────
-interface ListOption { id: string; displayLabel: string; }
-const customerListOptions = ref<ListOption[]>([]);
-const listsLoading = ref(false);
-
-async function loadCustomerLists(): Promise<void> {
-  listsLoading.value = true;
-  try {
-    const { data } = await api.get<{ lists: Array<{ id: string; name: string; iconEmoji: string | null }> }>(
-      '/customer-lists',
-    );
-    customerListOptions.value = (data.lists ?? []).map((l) => ({
-      id: l.id,
-      displayLabel: l.iconEmoji ? `${l.iconEmoji} ${l.name}` : l.name,
-    }));
-  } catch {
-    // non-fatal — user sees empty dropdown
-  } finally {
-    listsLoading.value = false;
-  }
-}
-
-// ── Set of formIds that have ≥1 enabled sale in pool ─────────────────────────
-// Populated lazily when a page expands (we load sale-assignments per list)
-const salePoolByListId = ref<Record<string, boolean>>({});
-
-const formIdsWithSale = computed<Set<string>>(() => {
-  const result = new Set<string>();
-  for (const m of mappings.value) {
-    if (m.enabled && salePoolByListId.value[m.customerListId]) {
-      result.add(m.formId);
-    }
-  }
-  return result;
-});
 
 // ── Disconnect flow ───────────────────────────────────────────────────────────
 const showDisconnect = ref(false);
@@ -213,95 +147,9 @@ async function onDisconnectConfirm(): Promise<void> {
   }
 }
 
-// ── Mapping dialog ────────────────────────────────────────────────────────────
-interface MappingDialogState {
-  open: boolean;
-  pageConnectionId: string;
-  formId: string;
-  formName: string;
-  formQuestions: string[];
-  existingMapping: FacebookFormMappingDto | null;
-  customerListId: string;
-}
-
-const mappingDialog = ref<MappingDialogState>({
-  open: false,
-  pageConnectionId: '',
-  formId: '',
-  formName: '',
-  formQuestions: [],
-  existingMapping: null,
-  customerListId: '',
-});
-const mappingSaving = ref(false);
-
-async function onMapForm(page: FacebookPageConnectionDto, form: FacebookLeadgenForm): Promise<void> {
-  const existing = mappingByFormId.value[form.id] ?? null;
-
-  mappingDialog.value = {
-    open: true,
-    pageConnectionId: page.id,
-    formId: form.id,
-    formName: form.name,
-    formQuestions: [], // form questions not available from list API — auto-map uses empty
-    existingMapping: existing,
-    customerListId: existing?.customerListId ?? '',
-  };
-
-  // Load sale assignments if editing existing mapping
-  if (existing) {
-    await saleAssignments.load(existing.customerListId);
-  } else {
-    await saleAssignments.load(''); // pre-load org users
-    saleAssignments.reset();
-  }
-}
-
-async function onMappingSave(payload: {
-  pageConnectionId: string;
-  formId: string;
-  formName: string;
-  customerListId: string;
-  fieldMap: Record<string, string>;
-  pool: Array<{ userId: string; weight: number; enabled: boolean }>;
-  existingId?: string;
-}): Promise<void> {
-  mappingSaving.value = true;
-  try {
-    await saveMapping(
-      {
-        pageConnectionId: payload.pageConnectionId,
-        formId: payload.formId,
-        formName: payload.formName,
-        customerListId: payload.customerListId,
-        fieldMap: payload.fieldMap,
-      },
-      payload.existingId,
-    );
-
-    // Upsert sale assignment pool
-    await upsertSaleAssignments(payload.customerListId, payload.pool);
-
-    // Update local sale pool status
-    salePoolByListId.value = {
-      ...salePoolByListId.value,
-      [payload.customerListId]: payload.pool.length > 0,
-    };
-
-    mappingDialog.value.open = false;
-  } catch (err) {
-    error.value = (err as Error).message ?? 'Không thể lưu mapping';
-  } finally {
-    mappingSaving.value = false;
-  }
-}
-
-async function onDeleteMapping(mappingId: string): Promise<void> {
-  try {
-    await deleteMappingById(mappingId);
-  } catch (err) {
-    error.value = (err as Error).message ?? 'Không thể xóa mapping';
-  }
+// ── Rediscover ────────────────────────────────────────────────────────────────
+async function onRediscover(pageId: string): Promise<void> {
+  await rediscoverPage(pageId);
 }
 
 // ── OAuth status from URL query params ───────────────────────────────────────
@@ -334,11 +182,7 @@ function onConnectPage(): void {
 // ── Lifecycle ─────────────────────────────────────────────────────────────────
 onMounted(async () => {
   readOauthStatus();
-  await Promise.all([
-    refreshPages(),
-    loadCustomerLists(),
-    saleAssignments.load(''),
-  ]);
+  await refreshPages();
 });
 </script>
 
