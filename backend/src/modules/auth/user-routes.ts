@@ -2,13 +2,34 @@
  * User management routes — CRUD for users within an org.
  * All routes require authentication via authMiddleware.
  * Role-based access: owner > admin > member.
+ *
+ * Security notes (phase 06 of security plan):
+ *  - PUT /users/:id uses a per-role field allowlist so a member can only
+ *    edit their own fullName, never email/teamId/role (which previously
+ *    enabled email hijack for password-reset interception).
+ *  - Email uniqueness check returns a generic response to remove the
+ *    cross-org enumeration oracle. The DB still enforces global @unique;
+ *    we just don't reveal whether a collision was the reason.
  */
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
+import { Prisma } from '@prisma/client';
 import { prisma } from '../../shared/database/prisma-client.js';
 import { authMiddleware } from './auth-middleware.js';
 import bcrypt from 'bcryptjs';
 import { randomUUID } from 'node:crypto';
 import { logger } from '../../shared/utils/logger.js';
+
+// Generic message used for any validation rejection on user mutation.
+// Don't differentiate "email exists" vs "invalid format" — that's the oracle.
+const GENERIC_VALIDATION_ERROR = 'Dữ liệu không hợp lệ';
+
+/**
+ * Catch Prisma P2002 (unique constraint violation) and rethrow as a
+ * regular 400 with the generic message. Anything else propagates.
+ */
+function isUniqueViolation(err: unknown): boolean {
+  return err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002';
+}
 
 export async function userRoutes(app: FastifyInstance) {
   app.addHook('preHandler', authMiddleware);
@@ -45,34 +66,40 @@ export async function userRoutes(app: FastifyInstance) {
       return reply.status(400).send({ error: 'Email, họ tên, mật khẩu là bắt buộc' });
     }
 
-    const existing = await prisma.user.findUnique({ where: { email } });
-    if (existing) return reply.status(400).send({ error: 'Email đã tồn tại' });
-
     if (role === 'owner') return reply.status(400).send({ error: 'Không thể tạo thêm owner' });
     if (role === 'admin' && currentUser.role !== 'owner') {
       return reply.status(403).send({ error: 'Chỉ owner có thể tạo admin' });
     }
 
     const passwordHash = await bcrypt.hash(password, 10);
-    const user = await prisma.user.create({
-      data: {
-        id: randomUUID(),
-        orgId: currentUser.orgId,
-        email,
-        fullName,
-        passwordHash,
-        role,
-        teamId: teamId || null,
-      },
-      select: {
-        id: true,
-        email: true,
-        fullName: true,
-        role: true,
-        isActive: true,
-        createdAt: true,
-      },
-    });
+    let user;
+    try {
+      user = await prisma.user.create({
+        data: {
+          id: randomUUID(),
+          orgId: currentUser.orgId,
+          email,
+          fullName,
+          passwordHash,
+          role,
+          teamId: teamId || null,
+        },
+        select: {
+          id: true,
+          email: true,
+          fullName: true,
+          role: true,
+          isActive: true,
+          createdAt: true,
+        },
+      });
+    } catch (err) {
+      if (isUniqueViolation(err)) {
+        // Don't reveal whether the email already exists in another org.
+        return reply.status(400).send({ error: GENERIC_VALIDATION_ERROR });
+      }
+      throw err;
+    }
 
     logger.info(`User created: ${user.email} by ${currentUser.email}`);
     return user;
@@ -83,35 +110,68 @@ export async function userRoutes(app: FastifyInstance) {
     const currentUser = request.user!;
     const { id } = request.params as { id: string };
 
-    if (!['owner', 'admin'].includes(currentUser.role) && currentUser.id !== id) {
+    const isSelf = currentUser.id === id;
+    const isAdmin = ['owner', 'admin'].includes(currentUser.role);
+    const isOwner = currentUser.role === 'owner';
+
+    if (!isAdmin && !isSelf) {
       return reply.status(403).send({ error: 'Không có quyền' });
     }
 
     const { fullName, email, role, teamId, isActive } = request.body as any;
 
-    if (id === currentUser.id && role && role !== currentUser.role) {
-      return reply.status(400).send({ error: 'Không thể thay đổi role của chính mình' });
+    // Field allowlist by role. Self-edit (non-admin) is restricted to fullName.
+    // Admin can edit email + teamId of anyone in their org. Owner adds role + isActive.
+    // Email change of self is blocked even for owners — owners go through a
+    // separate flow (or change DB directly) to avoid accidental self-lockout.
+    const updateData: Record<string, unknown> = {};
+
+    if (fullName !== undefined) updateData.fullName = fullName;
+
+    if (email !== undefined) {
+      if (!isAdmin) return reply.status(403).send({ error: 'Không có quyền đổi email' });
+      if (isSelf) return reply.status(400).send({ error: 'Không thể đổi email của chính mình' });
+      updateData.email = email;
     }
 
-    const updateData: any = {};
-    if (fullName !== undefined) updateData.fullName = fullName;
-    if (email !== undefined) updateData.email = email;
-    if (role !== undefined && currentUser.role === 'owner') updateData.role = role;
-    if (teamId !== undefined) updateData.teamId = teamId || null;
-    if (isActive !== undefined && currentUser.role === 'owner') updateData.isActive = isActive;
+    if (teamId !== undefined) {
+      if (!isAdmin) return reply.status(403).send({ error: 'Không có quyền đổi nhóm' });
+      updateData.teamId = teamId || null;
+    }
 
-    const user = await prisma.user.update({
-      where: { id, orgId: currentUser.orgId },
-      data: updateData,
-      select: {
-        id: true,
-        email: true,
-        fullName: true,
-        role: true,
-        isActive: true,
-        teamId: true,
-      },
-    });
+    if (role !== undefined) {
+      if (!isOwner) return reply.status(403).send({ error: 'Chỉ owner có quyền đổi vai trò' });
+      if (isSelf && role !== currentUser.role) {
+        return reply.status(400).send({ error: 'Không thể thay đổi role của chính mình' });
+      }
+      updateData.role = role;
+    }
+
+    if (isActive !== undefined) {
+      if (!isOwner) return reply.status(403).send({ error: 'Chỉ owner có quyền kích hoạt/khóa tài khoản' });
+      updateData.isActive = isActive;
+    }
+
+    let user;
+    try {
+      user = await prisma.user.update({
+        where: { id, orgId: currentUser.orgId },
+        data: updateData,
+        select: {
+          id: true,
+          email: true,
+          fullName: true,
+          role: true,
+          isActive: true,
+          teamId: true,
+        },
+      });
+    } catch (err) {
+      if (isUniqueViolation(err)) {
+        return reply.status(400).send({ error: GENERIC_VALIDATION_ERROR });
+      }
+      throw err;
+    }
 
     return user;
   });
