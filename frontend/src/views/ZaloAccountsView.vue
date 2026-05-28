@@ -236,15 +236,6 @@
       </div>
     </div>
 
-    <!-- TOAST -->
-    <div v-if="toast.show" class="toast" :class="toast.type">
-      <span class="toast-icon" v-if="toast.type === 'success'">✅</span>
-      <span class="toast-icon" v-else-if="toast.type === 'error'">❌</span>
-      <span class="toast-icon" v-else-if="toast.type === 'warning'">⚠️</span>
-      <span class="toast-icon" v-else>ℹ️</span>
-      <span class="toast-text">{{ toast.text }}</span>
-      <button class="toast-close" @click="toast.show = false">✕</button>
-    </div>
 
     <!-- ACCESS DIALOG (reuse existing) -->
     <ZaloAccessDialog
@@ -259,6 +250,7 @@
 <script setup lang="ts">
 import { ref, onMounted, computed, onUnmounted } from 'vue';
 import { useZaloAccountsDashboard } from '@/composables/use-zalo-accounts-dashboard';
+import { useToast } from '@/composables/use-toast';
 import StatsCards from '@/components/zalo-accounts/StatsCards.vue';
 import AccountsTable from '@/components/zalo-accounts/AccountsTable.vue';
 import AccountDetailDrawer from '@/components/zalo-accounts/AccountDetailDrawer.vue';
@@ -301,12 +293,11 @@ const showDeleteDialog = ref(false);
 const deleteTargetId = ref<string | null>(null);
 const deletePurge = ref(false);
 const bulkLoading = ref(false);
-const toast = ref({ show: false, text: '', type: 'success' as 'success' | 'error' });
-let toastTimer: ReturnType<typeof setTimeout> | null = null;
-function showToast(text: string, type: 'success' | 'error' = 'success') {
-  if (toastTimer) clearTimeout(toastTimer);
-  toast.value = { show: true, text, type };
-  toastTimer = setTimeout(() => { toast.value.show = false; }, 3500);
+const _toast = useToast();
+function showToast(text: string, type: 'success' | 'error' | 'warning' = 'success') {
+  if (type === 'success') _toast.success(text);
+  else if (type === 'error') _toast.error(text);
+  else _toast.warning(text);
 }
 const lastRefresh = ref(new Date());
 
@@ -927,28 +918,4 @@ onMounted(async () => {
 }
 .purge-check input { margin-top: 2px; flex-shrink: 0; }
 .hint-danger { color: #B91C1C; font-weight: 500; margin-top: 8px; }
-.toast {
-  position: fixed; top: 20px; right: 20px;
-  display: flex; align-items: center; gap: 10px;
-  padding: 12px 16px; border-radius: 8px; font-size: 13px; font-weight: 500;
-  z-index: 9999; box-shadow: 0 2px 12px rgba(0,0,0,0.08);
-  border: 1px solid; border-left-width: 4px;
-  animation: toast-in 0.3s ease; min-width: 280px; max-width: 420px;
-  background: white;
-}
-.toast.success { border-color: #BBF7D0; border-left-color: #22C55E; color: #15803D; }
-.toast.error { border-color: #FECACA; border-left-color: #EF4444; color: #B91C1C; }
-.toast.warning { border-color: #FDE68A; border-left-color: #F59E0B; color: #92400E; }
-.toast.info { border-color: #BFDBFE; border-left-color: #3B82F6; color: #1D4ED8; }
-.toast-icon { font-size: 16px; flex-shrink: 0; }
-.toast-text { flex: 1; line-height: 1.4; }
-.toast-close {
-  background: none; border: none; cursor: pointer; color: #9CA3AF;
-  font-size: 14px; padding: 0 2px; flex-shrink: 0;
-}
-.toast-close:hover { color: #6B7280; }
-@keyframes toast-in {
-  from { opacity: 0; transform: translateY(-10px); }
-  to { opacity: 1; transform: translateY(0); }
-}
 </style>
