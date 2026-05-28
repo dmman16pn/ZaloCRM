@@ -2,6 +2,31 @@
 
 Tất cả thay đổi đáng chú ý của ZaloCRM được ghi lại tại đây. Dự án dùng nhánh `main` làm dòng phát hành chính.
 
+## v3.3.1 — 28/05/2026
+
+### Security
+
+- **CRITICAL** Sửa SQL injection trong custom analytics report — `filters.source`/`filters.userId` từ request body bị concat thẳng vào `$queryRawUnsafe`, cho phép UNION-based extraction cross-tenant. Chuyển sang `prisma.$queryRaw` tagged template + `Prisma.sql` bound parameters.
+- **CRITICAL** Nâng cấp `fast-jwt` lên 6.2.4 (vá CVE crit-header bypass) và 18 dependency backend khác qua `npm audit fix`. Frontend audit giảm từ 7 → 2 vuln.
+- **HIGH** Bắt buộc xác thực trên các endpoint Zalo PII (`/api/v1/zalo-user-info/batch`, `/api/v1/zalo-user-info/:uid`, `/api/v1/zalo-sticker-list`) — trước đây không cần token, cho phép liệt kê số điện thoại/ngày sinh hàng loạt. Giới hạn batch từ 200 → 50 UID.
+- **HIGH** Thêm SSRF guard cho webhook URL do org admin cấu hình (`modules/api/webhook-service.ts`) — chặn loopback, RFC1918, link-local (169.254/16), IPv6 ULA/link-local, non-HTTPS. Shared util `ssrf-guard.ts` cũng thay thế regex inline trong `zapier-webhook.ts`.
+- **HIGH** Sửa IDOR và email enumeration oracle trong user-routes — member có thể tự đổi `email`/`teamId` của mình để chiếm password-reset. Thêm per-role field allowlist: member chỉ sửa `fullName`; admin thêm `email`+`teamId` (không tự sửa email); owner thêm `role`+`isActive`. Lỗi unique constraint trả về message chung, không lộ email tồn tại.
+- **HIGH** Thay thế `xlsx` (SheetJS community, GHSA-4r6h-8v6p-xvw6 prototype pollution + ReDoS, không có bản vá) bằng `exceljs` trong modal import danh sách khách hàng. Lazy-import để giữ bundle nhỏ.
+- **HIGH** MinIO: hard-fail khi thiếu `MINIO_ROOT_USER`/`MINIO_ROOT_PASSWORD` trong `.env` thay vì fallback về `minioadmin/minioadmin`.
+
+### Hygiene
+
+- Thêm `.env.bak*` và `.env.*.bak` vào `.gitignore` — ngăn commit nhầm file backup env.
+- Bổ sung biến Facebook integration (`FB_GRAPH_API_VERSION`, `FB_APP_ID`, `FB_APP_SECRET`, `FB_WEBHOOK_VERIFY_TOKEN`, `FB_TOKEN_ENC_KEY`, `FB_OAUTH_REDIRECT_URI`) vào `.env.example` kèm hướng dẫn tạo.
+
+### Upgrade notes
+
+Thêm vào `.env` trước khi `docker compose up`:
+```
+MINIO_ROOT_USER=<admin-user>
+MINIO_ROOT_PASSWORD=<strong-password>
+```
+
 ## v3.3.0 — 25/05/2026
 
 ### Added
