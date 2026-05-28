@@ -5,6 +5,9 @@
         <h1 class="hero-title">Nhân viên</h1>
         <p class="hero-sub">Quản lý người dùng tổ chức · Phân phòng ban · Gán nhóm quyền · Vô hiệu hóa khi nghỉ việc</p>
       </div>
+      <div class="hero-right" v-if="canCreateUser">
+        <button class="btn-primary" @click="openCreate">＋ Thêm nhân viên</button>
+      </div>
     </header>
 
     <section class="stats-row" v-if="!loading && stats.total > 0">
@@ -164,6 +167,36 @@
       @close="closePanel"
       @changed="onChanged"
     />
+
+    <!-- Create user dialog -->
+    <div v-if="showCreate" class="modal-backdrop" @click.self="showCreate = false">
+      <div class="modal-card">
+        <div class="modal-head">
+          <h3>Thêm nhân viên</h3>
+          <button class="modal-close" @click="showCreate = false">✕</button>
+        </div>
+        <div class="modal-body">
+          <label class="field-label">Họ tên *</label>
+          <input v-model="createForm.fullName" class="field-input" placeholder="Nguyễn Văn A" />
+          <label class="field-label">Email *</label>
+          <input v-model="createForm.email" class="field-input" type="email" placeholder="user@company.com" />
+          <label class="field-label">Mật khẩu *</label>
+          <input v-model="createForm.password" class="field-input" type="password" placeholder="Tối thiểu 8 ký tự" />
+          <label class="field-label">Vai trò</label>
+          <select v-model="createForm.role" class="field-input">
+            <option value="member">Nhân viên</option>
+            <option value="admin">Quản trị viên</option>
+          </select>
+          <p v-if="createError" class="field-error">{{ createError }}</p>
+        </div>
+        <div class="modal-foot">
+          <button class="btn-ghost" @click="showCreate = false">Huỷ</button>
+          <button class="btn-primary" :disabled="creating" @click="handleCreate">
+            {{ creating ? 'Đang tạo...' : 'Tạo' }}
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -178,6 +211,8 @@ import {
 } from '@/stores/rbac';
 import { useAuthStore } from '@/stores/auth';
 import UserEditPanel from '@/components/rbac/UserEditPanel.vue';
+import { useUsers } from '@/composables/use-users';
+import { useToast } from '@/composables/use-toast';
 
 const store = useRbacStore();
 const authStore = useAuthStore();
@@ -192,6 +227,40 @@ const selectedUser = ref<RbacUser | null>(null);
 
 const currentUserId = computed(() => authStore.user?.id ?? '');
 const currentUserRole = computed(() => authStore.user?.role ?? 'member');
+const canCreateUser = computed(() => currentUserRole.value === 'owner' || currentUserRole.value === 'admin');
+
+// Create user dialog state — Owner/Admin only
+const { createUser } = useUsers();
+const toast = useToast();
+const showCreate = ref(false);
+const creating = ref(false);
+const createError = ref('');
+const createForm = ref({ fullName: '', email: '', password: '', role: 'member' as 'member' | 'admin' });
+
+function openCreate() {
+  createForm.value = { fullName: '', email: '', password: '', role: 'member' };
+  createError.value = '';
+  showCreate.value = true;
+}
+
+async function handleCreate() {
+  createError.value = '';
+  const { fullName, email, password } = createForm.value;
+  if (!fullName.trim() || !email.trim() || !password.trim()) {
+    createError.value = 'Vui lòng nhập đầy đủ họ tên, email, mật khẩu';
+    return;
+  }
+  creating.value = true;
+  const res = await createUser(createForm.value);
+  creating.value = false;
+  if (res.ok) {
+    showCreate.value = false;
+    toast.success(`Đã tạo nhân viên "${fullName}"`);
+    await store.loadUsers();
+  } else {
+    createError.value = res.error || 'Không tạo được nhân viên';
+  }
+}
 
 onMounted(async () => {
   await Promise.all([
@@ -478,5 +547,62 @@ function avatarColor(name: string): string {
   background: #181d26;
   color: white;
   border-color: #181d26;
+}
+
+/* Hero right + Create user button */
+.page-hero { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
+.hero-right { flex-shrink: 0; }
+.btn-primary {
+  background: #181d26; color: white; border: 1px solid #181d26;
+  padding: 8px 16px; border-radius: 7px; font-size: 13px; font-weight: 600;
+  cursor: pointer; transition: all 0.12s;
+}
+.btn-primary:hover:not(:disabled) { background: #2c3441; border-color: #2c3441; }
+.btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-ghost {
+  background: white; color: #41454d; border: 1px solid #d8d9dd;
+  padding: 8px 16px; border-radius: 7px; font-size: 13px; font-weight: 500;
+  cursor: pointer;
+}
+.btn-ghost:hover { background: #f3f4f6; }
+
+/* Create user modal */
+.modal-backdrop {
+  position: fixed; inset: 0; background: rgba(17, 24, 39, 0.4);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 1000;
+}
+.modal-card {
+  background: white; border-radius: 12px; width: 440px; max-width: 92vw;
+  box-shadow: 0 20px 50px rgba(0,0,0,0.15);
+  display: flex; flex-direction: column;
+}
+.modal-head {
+  padding: 16px 20px; border-bottom: 1px solid #f3f4f6;
+  display: flex; justify-content: space-between; align-items: center;
+}
+.modal-head h3 { margin: 0; font-size: 15px; font-weight: 700; color: #111827; }
+.modal-close {
+  background: transparent; border: none; cursor: pointer;
+  font-size: 16px; color: #6b7280; padding: 4px 8px; border-radius: 6px;
+}
+.modal-close:hover { background: #f3f4f6; color: #111827; }
+.modal-body { padding: 16px 20px; display: flex; flex-direction: column; gap: 6px; }
+.field-label { font-size: 12px; font-weight: 600; color: #41454d; margin-top: 8px; }
+.field-input {
+  padding: 8px 11px; border: 1px solid #d8d9dd; border-radius: 7px;
+  font-size: 13px; font-family: inherit; color: #181d26;
+  outline: none; transition: border-color 0.12s;
+}
+.field-input:focus { border-color: #181d26; }
+.field-error {
+  color: #b91c1c; font-size: 12px; font-weight: 500;
+  background: #fef2f2; border: 1px solid #fecaca; border-radius: 7px;
+  padding: 8px 11px; margin: 8px 0 0; line-height: 1.4;
+}
+.modal-foot {
+  padding: 12px 20px; border-top: 1px solid #f3f4f6;
+  display: flex; justify-content: flex-end; gap: 8px;
+  background: #fafbfc; border-radius: 0 0 12px 12px;
 }
 </style>

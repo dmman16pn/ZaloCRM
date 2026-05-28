@@ -220,7 +220,7 @@ export async function chatRoutes(app: FastifyInstance) {
                 OR: [
                   { crmTagsPerNick: { array_contains: tagList } },
                   ...cleanTagList.map((name) => ({
-                    zaloLabels: { path: ['$[*].name'], array_contains: [name] },
+                    zaloLabels: { array_contains: [{ name }] },
                   })),
                 ],
               },
@@ -290,10 +290,11 @@ export async function chatRoutes(app: FastifyInstance) {
       if (labelList.length > 0) {
         const existingFriends = (contactWhere.friends as any) || {};
         const someClause = existingFriends.some || {};
-        // zaloLabels là array of {id,name,color} — cần raw match
-        // Workaround: array_contains check
+        // zaloLabels là JSONB array of {id,name,color,emoji}. Dùng @> containment
+        // (Prisma array_contains với object element) — match SQL: zalo_labels @> '[{"name":X}]'.
+        // KHÔNG dùng path+array_contains combo (broken pattern, return 0 results).
         const orConditions = labelList.map((name) => ({
-          zaloLabels: { path: ['$[*].name'], array_contains: [name] },
+          zaloLabels: { array_contains: [{ name }] },
         }));
         contactWhere.friends = {
           some: { ...someClause, OR: orConditions },
