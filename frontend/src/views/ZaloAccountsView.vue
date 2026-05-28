@@ -576,6 +576,7 @@ async function handleDelete() {
     showDeleteDialog.value = false;
     deleteTargetId.value = null;
     deletePurge.value = false;
+    drawerOpen.value = false;
     showToast(purge ? 'Đã xoá nick và dữ liệu' : 'Đã ẩn nick khỏi quản lý');
     await refreshAll();
   } catch (e: any) {
