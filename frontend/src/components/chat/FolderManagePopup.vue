@@ -110,10 +110,18 @@
                 <div v-if="viewAccountId === acc.id && viewFolderId === null" class="np-check">✓</div>
               </button>
               <div class="np-actions" @click.stop>
-                <button type="button" class="np-act" title="Sync danh bạ" @click="onSyncContacts(acc.id)">👥</button>
-                <button type="button" class="np-act" title="Sync lịch sử chat" @click="onSyncHistory(acc.id)" :disabled="acc.status !== 'connected'">💬</button>
-                <button type="button" class="np-act" title="Reconnect" :disabled="acc.status === 'connected'" @click="onReconnect(acc.id)">🔄</button>
-                <button type="button" class="np-act" title="Đăng nhập QR" :disabled="acc.status === 'connected'" @click="onQRLogin(acc.id)">📱</button>
+                <button type="button" class="np-act" title="Sync danh bạ" @click="onSyncContacts(acc.id)">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/></svg>
+                </button>
+                <button type="button" class="np-act" title="Sync lịch sử chat" @click="onSyncHistory(acc.id)" :disabled="acc.status !== 'connected'">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                </button>
+                <button type="button" class="np-act" title="Reconnect" :disabled="acc.status === 'connected'" @click="onReconnect(acc.id)">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v6h-6"/></svg>
+                </button>
+                <button type="button" class="np-act" title="Đăng nhập QR" :disabled="acc.status === 'connected'" @click="onQRLogin(acc.id)">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+                </button>
               </div>
             </div>
           </div>
@@ -858,8 +866,9 @@ onMounted(() => {
   padding: 0;
   color: #6B7280;
 }
-.np-act:hover:not(:disabled) { background: #F3F4F6; border-color: #E5E7EB; }
+.np-act:hover:not(:disabled) { background: #F3F4F6; border-color: #E5E7EB; color: #111827; }
 .np-act:disabled { opacity: 0.3; cursor: not-allowed; }
+.np-act svg { width: 14px; height: 14px; }
 
 .np-avatar-img,
 .np-avatar {
