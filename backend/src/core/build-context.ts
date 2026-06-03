@@ -14,6 +14,7 @@ import { prisma } from '../shared/database/prisma-client.js';
 import { logger } from '../shared/utils/logger.js';
 import { loadLicense } from './license-service.js';
 import { zaloMessagingImpl } from './zalo-messaging-impl.js';
+import { internalContactImpl } from './internal-contact-impl.js';
 
 export interface BuildContextResult {
   ctx: PluginContext;
@@ -29,6 +30,8 @@ export function buildContext(app: FastifyInstance, io: SocketServer): BuildConte
 
   // Core cung cấp capability gửi tin Zalo (key ổn định cho EE dùng).
   capabilities.provide('zalo.messaging', zaloMessagingImpl);
+  // Core resolve "liên lạc nội bộ" của user (nick hệ thống + thread) cho plugin gửi tin nội bộ.
+  capabilities.provide('internal.contact', internalContactImpl);
 
   const ctx: PluginContext = {
     app,

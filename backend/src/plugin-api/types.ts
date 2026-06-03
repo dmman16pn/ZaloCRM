@@ -41,6 +41,24 @@ export interface ZaloMessagingCapability {
   isConnected(accountId: string): boolean;
 }
 
+/** Đích gửi tin nội bộ (nick hệ thống → thread của 1 user). */
+export interface InternalContactTarget {
+  /** ZaloAccount id của nick hệ thống đang gửi. */
+  senderAccountId: string;
+  /** UID/thread của user nhận (từ góc nhìn nick gửi). */
+  targetUid: string;
+}
+
+/**
+ * Capability resolve "liên lạc nội bộ" — key 'internal.contact'.
+ * Core map user → nick hệ thống + thread (qua SystemNotifyRecipient). Trả null nếu
+ * chưa setup / nick chưa connected. Plugin dùng để biết gửi tin nội bộ tới đâu mà
+ * không đụng internal system-notify của core.
+ */
+export interface InternalContactCapability {
+  resolve(userId: string, orgId: string): Promise<InternalContactTarget | null>;
+}
+
 /* ────────────────────────────────────────────────────────────────────────
  * PRIMITIVE 2 — Policy Registry (guard slot)
  * Core gọi check(name, req) trước khi trả nội dung nhạy cảm.

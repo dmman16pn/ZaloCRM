@@ -16,6 +16,8 @@ export type {
   PolicyRequest,
   LicenseService,
   ZaloMessagingCapability,
+  InternalContactCapability,
+  InternalContactTarget,
   AppConfig,
   AppLogger,
   AppPrisma,
