@@ -17,6 +17,9 @@ import { scoringPlugin } from './scoring/index.js';
 import { activityPlugin } from './activity/index.js';
 import { aiPlugin } from './ai/index.js';
 import { apiPlugin } from './api/index.js';
+import { engagementPlugin } from './engagement/index.js';
+import { rbacPlugin } from './rbac/index.js';
+import { privacyPlugin } from './privacy/index.js';
 
 export const corePlugins: ZaloCrmPlugin[] = [
   // Route thuần, độc lập theo path — thứ tự nội bộ không quan trọng.
@@ -31,5 +34,9 @@ export const corePlugins: ZaloCrmPlugin[] = [
   activityPlugin,
   aiPlugin,
   apiPlugin,
+  // Batch 3 — module dùng registerXxxRoutes(app)
+  engagementPlugin,
+  rbacPlugin,
+  privacyPlugin,
   // Phase 4 (tiếp) — auth/zalo/chat/contacts/automation... (nhạy thứ tự, migrate sau).
 ];

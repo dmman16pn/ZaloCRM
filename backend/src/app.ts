@@ -150,9 +150,10 @@ async function bootstrap() {
   await app.register(authRoutes);
 
   // ── Plugin host (open-core) ───────────────────────────────────────────────
-  // Nạp plugin core (branding, dashboard, analytics, search, notifications,
-  // scoring, activity, ai, api) + enterprise (nếu có). Migrate dần phần còn
-  // lại ở Phase 4. Xem core/plugin-host.ts + modules/plugins-index.ts.
+  // Nạp plugin core (12 module: branding, dashboard, analytics, search,
+  // notifications, scoring, activity, ai, api, engagement, rbac, privacy)
+  // + enterprise (nếu có). Migrate dần phần còn lại ở Phase 4.
+  // Xem core/plugin-host.ts + modules/plugins-index.ts.
   const { ctx } = buildContext(app, io);
   await loadPlugins(ctx);
 
@@ -169,19 +170,8 @@ async function bootstrap() {
   await app.register(crmTagRoutes);
   await app.register(crmTagGroupRoutes);
   await app.register(userPreferenceRoutes);
-  // Phase 8 — Engagement heatmap timeline + admin recompute/backfill
-  const { registerEngagementRoutes } = await import('./modules/engagement/engagement-routes.js');
-  await registerEngagementRoutes(app);
-  // RBAC Phase Phân Quyền 2026-05-21 — Department + PermissionGroup (M2 Getfly Clone)
-  const { registerDepartmentRoutes } = await import('./modules/rbac/department-routes.js');
-  await registerDepartmentRoutes(app);
-  const { registerPermissionGroupRoutes } = await import('./modules/rbac/permission-group-routes.js');
-  await registerPermissionGroupRoutes(app);
-  const { registerUserAssignmentRoutes } = await import('./modules/rbac/user-assignment-routes.js');
-  await registerUserAssignmentRoutes(app);
-  // Phase Riêng Tư 2026-05-22 — PIN-gated visual privacy
-  const { registerPrivacyRoutes } = await import('./modules/privacy/privacy-routes.js');
-  await registerPrivacyRoutes(app);
+  // engagement (heatmap), rbac (department/permission/user-assignment), privacy (PIN)
+  // đã chuyển sang plugin-host (batch 3). Xem modules/plugins-index.ts.
   await app.register(zaloLabelsRoutes);
   await app.register(zinstantProxyRoutes);
   await app.register(userRoutes);
