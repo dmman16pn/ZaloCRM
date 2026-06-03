@@ -65,6 +65,8 @@ export interface PolicyRegistry {
 export interface LicenseService {
   /** Tính năng có được bật không, vd 'chat.ai_suggest'. Community → luôn false. */
   has(feature: string): boolean;
+  /** Danh sách feature đang bật (cho frontend). Community → []. */
+  features(): string[];
   edition(): 'community' | 'enterprise';
   expiresAt(): Date | null;
   seats(): number | null;
