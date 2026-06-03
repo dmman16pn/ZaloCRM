@@ -25,7 +25,6 @@ import { config } from './config/index.js';
 import { prisma } from './shared/database/prisma-client.js';
 import { logger } from './shared/utils/logger.js';
 import { authRoutes } from './modules/auth/auth-routes.js';
-import { brandingRoutes } from './modules/branding/branding-routes.js';
 import { zaloRoutes } from './modules/zalo/zalo-routes.js';
 import { chatRoutes } from './modules/chat/chat-routes.js';
 import { folderRoutes } from './modules/chat/folder-routes.js';
@@ -87,6 +86,9 @@ import { friendRoutes } from './modules/zalo/friend-routes.js';
 import { profileRoutes } from './modules/zalo/profile-routes.js';
 import { credentialRoutes } from './modules/zalo/credential-routes.js';
 import { eventBuffer } from './shared/event-buffer.js';
+// Plugin architecture (open-core) — xem plans/260602-2229-open-core-plugin-architecture/
+import { buildContext } from './core/build-context.js';
+import { loadPlugins } from './core/plugin-host.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -157,7 +159,13 @@ async function bootstrap() {
   // ── Routes ────────────────────────────────────────────────────────────────
 
   await app.register(authRoutes);
-  await app.register(brandingRoutes);
+
+  // ── Plugin host (open-core) ───────────────────────────────────────────────
+  // Nạp plugin core (hiện: branding) + enterprise (nếu có). Thay dần các
+  // app.register() bên dưới ở Phase 4. Xem core/plugin-host.ts.
+  const { ctx } = buildContext(app, io);
+  await loadPlugins(ctx);
+
   await app.register(zaloRoutes);
   await app.register(chatRoutes);
   await app.register(folderRoutes);
