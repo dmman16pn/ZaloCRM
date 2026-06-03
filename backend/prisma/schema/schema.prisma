@@ -73,6 +73,7 @@ model Organization {
   // Phase FB — Facebook Lead Ingestion
   facebookPageConnections FacebookPageConnection[]
   facebookFormMappings    FacebookFormMapping[]
+  systemNotifyRecipients    SystemNotifyRecipient[]
 
   @@map("organizations")
 }
@@ -147,6 +148,7 @@ model User {
   phoneSearchEvents         PhoneSearchEvent[]
   // Phase FB — Facebook Lead Ingestion
   customerListAssignments   CustomerListSaleAssignment[]
+  systemNotifyRecipients    SystemNotifyRecipient[]
 
   @@map("users")
 }
@@ -204,6 +206,8 @@ model ZaloAccount {
   // Phase Privacy v2 2026-05-23 — reverse relations
   internalContactForUsers User[]         @relation("UserInternalContact")
   systemNotifyForOrgs     Organization[] @relation("OrgSystemNotify")
+  systemNotifyRecipientsAsSender   SystemNotifyRecipient[] @relation("SystemNotifySender")
+  systemNotifyRecipientsAsInternal SystemNotifyRecipient[] @relation("SystemNotifyInternalContact")
 
   @@map("zalo_accounts")
 }
@@ -2042,6 +2046,42 @@ model UserPrivacySession {
   @@index([sessionToken])
   @@index([userId, expiresAt])
   @@map("user_privacy_sessions")
+}
+
+model SystemNotifyRecipient {
+  id                           String    @id @default(uuid())
+  orgId                        String    @map("org_id")
+  targetUserId                 String    @map("target_user_id")
+  senderZaloAccountId          String?   @map("sender_zalo_account_id")
+  internalContactZaloAccountId String?   @map("internal_contact_zalo_account_id")
+  conversationId               String?   @map("conversation_id")
+  threadIdInSenderView         String?   @map("thread_id_in_sender_view")
+  status                       String    @default("invalid")
+  error                        String?
+  lastVerifiedAt               DateTime  @default(now()) @map("last_verified_at")
+  // Phase Internal Contact 2-method 2026-05-23 — verify code 4 số sau handshake.
+  // Status flow mở rộng: pending_friend_request → pending_user_confirm → ready.
+  // verifyCode = hash 4 số sale phải gõ lại; expire 30 phút; lock sau 5 lần sai.
+  verifyCode                   String?   @map("verify_code")
+  verifyCodeExpiresAt          DateTime? @map("verify_code_expires_at")
+  verifyAttempts               Int       @default(0) @map("verify_attempts")
+  // Lưu request UID (UID của bên kia từ góc nhìn nick gửi friend request) để retry/cancel.
+  friendRequestSentAt          DateTime? @map("friend_request_sent_at")
+  createdAt                    DateTime  @default(now()) @map("created_at")
+  updatedAt                    DateTime  @updatedAt @map("updated_at")
+
+  org                 Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  targetUser          User         @relation(fields: [targetUserId], references: [id], onDelete: Cascade)
+  senderZaloAccount   ZaloAccount? @relation("SystemNotifySender", fields: [senderZaloAccountId], references: [id], onDelete: SetNull)
+  internalContactNick ZaloAccount? @relation("SystemNotifyInternalContact", fields: [internalContactZaloAccountId], references: [id], onDelete: SetNull)
+
+  @@unique([targetUserId, senderZaloAccountId])
+  // FIX codex review HIGH-1 2026-05-27: chống race khi 2 admin map cùng UID cho 2 user khác nhau.
+  // Postgres cho phép multiple NULL trong unique → recipient chưa setup (thread null) không bị block.
+  @@unique([senderZaloAccountId, threadIdInSenderView])
+  @@index([orgId, status])
+  @@index([senderZaloAccountId, status])
+  @@map("system_notify_recipients")
 }
 
 // ─── Phase FB: Facebook Lead Ingestion ───────────────────────────────────────
