@@ -39,8 +39,6 @@ import { startInteractionCron } from './modules/contacts/interaction-cron.js';
 import { crmTagRoutes } from './modules/contacts/crm-tag-routes.js';
 import { crmTagGroupRoutes } from './modules/contacts/crm-tag-group-routes.js';
 import { userPreferenceRoutes } from './modules/auth/user-preference-routes.js';
-import { timelineRoutes } from './modules/activity/timeline-routes.js';
-import { scoringRoutes } from './modules/scoring/scoring-routes.js';
 import { zaloLabelsRoutes, startLabelsBackgroundSync } from './modules/zalo/zalo-labels-routes.js';
 import { startAppointmentReminder } from './modules/contacts/appointment-reminder.js';
 import { zinstantProxyRoutes } from './modules/contacts/zinstant-proxy-routes.js';
@@ -53,8 +51,6 @@ import { zaloDashboardRoutes } from './modules/zalo/zalo-dashboard-routes.js';
 import { zaloPool } from './modules/zalo/zalo-pool.js';
 import { registerZaloSocketHandlers } from './modules/zalo/zalo-socket.js';
 import { startZaloHealthCheck } from './modules/zalo/zalo-health-check.js';
-import { publicApiRoutes } from './modules/api/public-api-routes.js';
-import { webhookSettingsRoutes } from './modules/api/webhook-settings-routes.js';
 import { startContactIntelligence } from './modules/contacts/contact-intelligence.js';
 import { integrationRoutes } from './modules/integrations/integration-routes.js';
 import { facebookRoutes } from './modules/integrations/providers/facebook/facebook-routes.js';
@@ -72,7 +68,6 @@ import { customerListRoutes } from './modules/automation/lists/list-routes.js';
 import { customerListEntryRoutes } from './modules/automation/lists/list-entry-routes.js';
 import { startListEnrichmentWorker } from './modules/automation/lists/list-enrichment-service.js';
 import { registerCustomerListEventHandlers } from './modules/automation/lists/list-event-handlers.js';
-import { aiRoutes } from './modules/ai/ai-routes.js';
 import { chatOperationsRoutes, registerChatSocketHandlers } from './modules/chat/chat-operations-routes.js';
 import { groupRoutes } from './modules/zalo/group-routes.js';
 import { groupModerationRoutes } from './modules/zalo/group-moderation-routes.js';
@@ -155,9 +150,9 @@ async function bootstrap() {
   await app.register(authRoutes);
 
   // ── Plugin host (open-core) ───────────────────────────────────────────────
-  // Nạp plugin core (branding, dashboard, analytics, search, notifications)
-  // + enterprise (nếu có). Migrate dần các app.register() còn lại ở Phase 4.
-  // Xem core/plugin-host.ts + modules/plugins-index.ts.
+  // Nạp plugin core (branding, dashboard, analytics, search, notifications,
+  // scoring, activity, ai, api) + enterprise (nếu có). Migrate dần phần còn
+  // lại ở Phase 4. Xem core/plugin-host.ts + modules/plugins-index.ts.
   const { ctx } = buildContext(app, io);
   await loadPlugins(ctx);
 
@@ -174,8 +169,6 @@ async function bootstrap() {
   await app.register(crmTagRoutes);
   await app.register(crmTagGroupRoutes);
   await app.register(userPreferenceRoutes);
-  await app.register(timelineRoutes);
-  await app.register(scoringRoutes);
   // Phase 8 — Engagement heatmap timeline + admin recompute/backfill
   const { registerEngagementRoutes } = await import('./modules/engagement/engagement-routes.js');
   await registerEngagementRoutes(app);
@@ -197,8 +190,6 @@ async function bootstrap() {
   await app.register(zaloAccessRoutes);
   await app.register(zaloSyncRoutes);
   await app.register(zaloDashboardRoutes);
-  await app.register(publicApiRoutes);
-  await app.register(webhookSettingsRoutes);
   await app.register(integrationRoutes);
   await app.register(facebookRoutes);
   await app.register(automationRoutes);
@@ -213,7 +204,6 @@ async function bootstrap() {
   // Tệp khách hàng — CustomerList CRUD + entries + enrichment + event handlers
   await app.register(customerListRoutes);
   await app.register(customerListEntryRoutes);
-  await app.register(aiRoutes);
   await app.register(chatOperationsRoutes);
   await app.register(groupRoutes);
   await app.register(groupModerationRoutes);

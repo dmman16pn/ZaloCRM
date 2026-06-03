@@ -13,13 +13,23 @@ import { dashboardPlugin } from './dashboard/index.js';
 import { analyticsPlugin } from './analytics/index.js';
 import { searchPlugin } from './search/index.js';
 import { notificationsPlugin } from './notifications/index.js';
+import { scoringPlugin } from './scoring/index.js';
+import { activityPlugin } from './activity/index.js';
+import { aiPlugin } from './ai/index.js';
+import { apiPlugin } from './api/index.js';
 
 export const corePlugins: ZaloCrmPlugin[] = [
   // Route thuần, độc lập theo path — thứ tự nội bộ không quan trọng.
+  // Batch 1
   brandingPlugin,
   dashboardPlugin,
   analyticsPlugin,
   searchPlugin,
   notificationsPlugin,
+  // Batch 2
+  scoringPlugin,
+  activityPlugin,
+  aiPlugin,
+  apiPlugin,
   // Phase 4 (tiếp) — auth/zalo/chat/contacts/automation... (nhạy thứ tự, migrate sau).
 ];
