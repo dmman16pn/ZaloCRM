@@ -11,6 +11,16 @@ const app = createApp(App);
 app.use(createPinia());
 app.use(router);
 app.use(vuetify);
+
+// Optional UI plugin bundle — chỉ có ở build mở rộng (VITE_EDITION=enterprise).
+// Build mặc định không cài bundle này; @vite-ignore để build không lỗi resolve.
+if (import.meta.env.VITE_EDITION === 'enterprise') {
+  const bundle = '@zalocrm/enterprise-ui';
+  import(/* @vite-ignore */ bundle)
+    .then((mod) => mod.setupAll?.({ router }))
+    .catch(() => console.info('[plugins] no UI plugin bundle present'));
+}
+
 app.mount('#app');
 
 // TODO: Re-enable PWA when vite-plugin-pwa supports vite 8
