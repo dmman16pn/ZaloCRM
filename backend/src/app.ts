@@ -95,6 +95,20 @@ async function bootstrap() {
     secret: config.jwtSecret,
   });
 
+  // Global optional authentication: populate `request.user` whenever a valid
+  // Bearer token is present. Routes that REQUIRE auth still gate themselves
+  // (e.g. core modules add their own authMiddleware preHandler; plugin routes
+  // return 401 when `request.user` is absent). Verification failure is swallowed
+  // so public routes (login, health, webhooks) keep working. This gives every
+  // route — including those registered by plugins — a consistent `request.user`.
+  app.addHook('onRequest', async (request) => {
+    try {
+      await request.jwtVerify();
+    } catch {
+      /* no / invalid token → leave request.user undefined, let the route decide */
+    }
+  });
+
   await app.register(rateLimit, {
     max: 500,
     timeWindow: '1 minute',
