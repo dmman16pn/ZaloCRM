@@ -22,6 +22,29 @@ import { setPrimaryOwner } from './contact-access.js';
 
 type QueryParams = Record<string, string>;
 
+/**
+ * Gate detail/sub-resource theo policy 'contact.view'.
+ * EE (rbac-scope) đăng ký → chỉ cho qua nếu contact thuộc phạm vi user; community chưa
+ * ai đăng ký → check() trả TRUE (không đổi hành vi). Trả false + 404 nếu bị chặn
+ * (404 thay 403 để không lộ tồn tại contact ngoài phạm vi).
+ */
+async function ensureContactVisible(
+  app: FastifyInstance,
+  request: FastifyRequest,
+  reply: FastifyReply,
+  user: { id: string; orgId: string },
+  contactId: string,
+): Promise<boolean> {
+  const ok = await app.policy.check('contact.view', {
+    req: request, userId: user.id, orgId: user.orgId, resourceId: contactId,
+  });
+  if (!ok) {
+    reply.status(404).send({ error: 'Contact not found' });
+    return false;
+  }
+  return true;
+}
+
 export async function contactRoutes(app: FastifyInstance): Promise<void> {
   app.addHook('preHandler', authMiddleware);
 
@@ -281,6 +304,7 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
     try {
       const user = request.user!;
       const { id } = request.params as { id: string };
+      if (!(await ensureContactVisible(app, request, reply, user, id))) return;
 
       const contact = await prisma.contact.findFirst({
         where: { id, orgId: user.orgId },
@@ -400,6 +424,7 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
     try {
       const user = request.user!;
       const { id } = request.params as { id: string };
+      if (!(await ensureContactVisible(app, request, reply, user, id))) return;
       const body = request.body as Record<string, any>;
 
       const existing = await prisma.contact.findFirst({
@@ -529,6 +554,7 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
     try {
       const user = request.user!;
       const { id } = request.params as { id: string };
+      if (!(await ensureContactVisible(app, request, reply, user, id))) return;
       const { tags } = request.body as { tags: string[] };
 
       if (!Array.isArray(tags)) return reply.status(400).send({ error: 'tags must be an array' });
@@ -593,6 +619,7 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
     try {
       const user = request.user!;
       const { id } = request.params as { id: string };
+      if (!(await ensureContactVisible(app, request, reply, user, id))) return;
 
       const existing = await prisma.contact.findFirst({ where: { id, orgId: user.orgId }, select: { id: true } });
       if (!existing) return reply.status(404).send({ error: 'Contact not found' });
@@ -746,6 +773,7 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
     try {
       const user = request.user!;
       const { id } = request.params as { id: string };
+      if (!(await ensureContactVisible(app, request, reply, user, id))) return;
       const contact = await prisma.contact.findFirst({
         where: { id, orgId: user.orgId },
         select: { id: true },
@@ -1387,9 +1415,11 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
     try {
       const user = request.user!;
       const { id: sourceId } = request.params as { id: string };
+      if (!(await ensureContactVisible(app, request, reply, user, sourceId))) return;
       const { parentContactId: targetId } = (request.body || {}) as { parentContactId?: string };
       if (!targetId) return reply.status(400).send({ error: 'parentContactId (target) required' });
       if (targetId === sourceId) return reply.status(400).send({ error: 'Cannot merge into itself' });
+      if (!(await ensureContactVisible(app, request, reply, user, targetId))) return;
 
       // Validate both contacts cùng org + chưa merged
       const [source, target] = await Promise.all([
@@ -1413,9 +1443,11 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
     try {
       const user = request.user!;
       const { id } = request.params as { id: string };
+      if (!(await ensureContactVisible(app, request, reply, user, id))) return;
       const { parentContactId } = (request.body || {}) as { parentContactId?: string };
       if (!parentContactId) return reply.status(400).send({ error: 'parentContactId required' });
       if (parentContactId === id) return reply.status(400).send({ error: 'Cannot link contact to itself' });
+      if (!(await ensureContactVisible(app, request, reply, user, parentContactId))) return;
 
       // Cha + con phải cùng org
       const [child, parent] = await Promise.all([
@@ -1458,6 +1490,7 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
     try {
       const user = request.user!;
       const { id } = request.params as { id: string };
+      if (!(await ensureContactVisible(app, request, reply, user, id))) return;
       const contact = await prisma.contact.findFirst({
         where: { id, orgId: user.orgId },
         select: { id: true, parentContactId: true },
