@@ -10,12 +10,14 @@ import type { CronJob, PluginContext } from '../plugin-api/index.js';
 import { createCapabilityRegistry } from '../plugin-api/index.js';
 import { createPolicyRegistry } from '../plugin-api/index.js';
 import { createScopeRegistry } from '../plugin-api/index.js';
-import type { ScopeRegistry } from '../plugin-api/index.js';
+import type { ScopeRegistry, PolicyRegistry } from '../plugin-api/index.js';
 
 // app.scope: core route gọi để lấy WHERE-fragment lọc list (EE đăng ký, community = null).
+// app.policy: core route gọi check(name, req) tại điểm nhạy cảm (EE đăng ký gate; community = TRUE).
 declare module 'fastify' {
   interface FastifyInstance {
     scope: ScopeRegistry;
+    policy: PolicyRegistry;
   }
 }
 import { config } from '../config/index.js';
@@ -39,8 +41,9 @@ export function buildContext(app: FastifyInstance, io: SocketServer): BuildConte
   const license = loadLicense();
   const crons: CronJob[] = [];
 
-  // Decorate app → route core (đăng ký sau loadPlugins) gọi được app.scope.resolve(...).
+  // Decorate app → route core (đăng ký sau loadPlugins) gọi được app.scope.resolve(...) / app.policy.check(...).
   app.decorate('scope', scope);
+  app.decorate('policy', policy);
 
   // Core cung cấp capability gửi tin Zalo (key ổn định cho EE dùng).
   capabilities.provide('zalo.messaging', zaloMessagingImpl);
