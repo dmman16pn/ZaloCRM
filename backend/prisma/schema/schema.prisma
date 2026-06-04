@@ -1874,6 +1874,9 @@ model CustomerList {
   endedAt    DateTime? @map("ended_at")
   archivedAt DateTime? @map("archived_at")
 
+  // Cho phép admin chia sẻ tệp KH này vào pool phân phối chung (plugin tiêu thụ).
+  shareableToPool Boolean @default(false) @map("shareable_to_pool")
+
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
