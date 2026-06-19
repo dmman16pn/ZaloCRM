@@ -30,6 +30,22 @@ fetch('/api/v1/license')
   .then((d) => setFeatures(Array.isArray(d?.features) ? d.features : []))
   .catch(() => { /* mặc định không feature nào */ });
 
+// Prefetch chunk các tab chính khi trình duyệt rảnh → chuyển tab gần như tức thì
+// (chunk tải nền sẵn vào cache thay vì tải lúc bấm tab). Đặc biệt hữu ích khi
+// server ở xa (độ trễ mạng cao). Bọc try để lỗi prefetch không ảnh hưởng app.
+function prefetchMainViews() {
+  const load = (fn: () => Promise<unknown>) => fn().catch(() => {});
+  load(() => import('@/views/ChatView.vue'));
+  load(() => import('@/views/FriendsView.vue'));
+  load(() => import('@/views/ContactsView.vue'));
+  load(() => import('@/views/AppointmentsView.vue'));
+  load(() => import('@/views/DashboardView.vue'));
+}
+type IdleWin = Window & { requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => void };
+const w = window as IdleWin;
+if (typeof w.requestIdleCallback === 'function') w.requestIdleCallback(prefetchMainViews, { timeout: 4000 });
+else setTimeout(prefetchMainViews, 2500);
+
 // TODO: Re-enable PWA when vite-plugin-pwa supports vite 8
 // if ('serviceWorker' in navigator) {
 //   import('virtual:pwa-register').then(({ registerSW }) => {
