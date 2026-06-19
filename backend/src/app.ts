@@ -273,6 +273,26 @@ async function bootstrap() {
     await app.listen({ port: config.port, host: config.host });
     logger.info(`Zalo CRM running on http://${config.host}:${config.port}`);
     logger.info(`Environment: ${config.nodeEnv}`);
+
+    // Graceful shutdown — KEY FIX 2026-06-19: stop Zalo listeners sạch (gửi close frame)
+    // trước khi exit để Zalo giải phóng session. Nếu không, container bị SIGKILL đột ngột
+    // → Zalo giữ session cũ → restart sau login lại bị từ chối (reconnect_failed → kẹt
+    // qr_pending ~vài phút). Docker gửi SIGTERM (tini forward) → ta có ~10s để dọn.
+    let shuttingDown = false;
+    const gracefulShutdown = async (signal: string) => {
+      if (shuttingDown) return;
+      shuttingDown = true;
+      logger.info(`[shutdown] ${signal} received — stopping Zalo listeners + closing server`);
+      const force = setTimeout(() => { logger.warn('[shutdown] timeout — force exit'); process.exit(0); }, 8000);
+      force.unref();
+      try { zaloPool.shutdownAll(); } catch (err) { logger.error('[shutdown] pool error:', err); }
+      try { await app.close(); } catch (err) { logger.error('[shutdown] server close error:', err); }
+      clearTimeout(force);
+      process.exit(0);
+    };
+    process.on('SIGTERM', () => void gracefulShutdown('SIGTERM'));
+    process.on('SIGINT', () => void gracefulShutdown('SIGINT'));
+
     startAppointmentReminder(io);
     startZaloHealthCheck();
     startContactIntelligence();

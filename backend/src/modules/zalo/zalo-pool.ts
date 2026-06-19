@@ -81,9 +81,32 @@ class ZaloAccountPool {
   // races (listener 'closed' 30s timer, 2-min retry, 5-min health-check, daily
   // refresh can all fire for the same account at once → stacked listeners).
   private reconnecting = new Set<string>();
+  // Đang tắt server (SIGTERM) — chặn mọi auto-reconnect khi listener 'closed' do ta
+  // chủ động stop, để Zalo nhận close frame sạch và giải phóng session.
+  private shuttingDown = false;
 
   setIO(io: Server): void {
     this.io = io;
+  }
+
+  /**
+   * Graceful shutdown — stop TẤT CẢ listener (gửi close frame tới Zalo) + message sync
+   * trước khi process exit. Quan trọng: nếu process bị giết đột ngột (SIGKILL), Zalo
+   * server vẫn giữ session cũ ~vài phút → container mới login lại bị từ chối ngay
+   * (reconnect_failed → kẹt qr_pending). Stop listener sạch giúp Zalo giải phóng session
+   * → restart sau reconnect được ngay. Gọi từ SIGTERM/SIGINT handler.
+   */
+  shutdownAll(): void {
+    this.shuttingDown = true;
+    let stopped = 0;
+    for (const [accountId, instance] of this.instances) {
+      try { instance.api?.listener?.stop(); stopped++; } catch (err) {
+        logger.warn(`[zalo:${accountId}] shutdown stop listener error:`, err);
+      }
+      stopMessageSync(accountId);
+    }
+    this.instances.clear();
+    logger.info(`[zalo-pool] Graceful shutdown: stopped ${stopped} listener(s)`);
   }
 
   /** Accessor cho module ngoài (friend-sync-service, ...) cần emit socket
@@ -322,6 +345,8 @@ class ZaloAccountPool {
       io: this.io,
       userInfoCache: this.userInfoCache,
       onDisconnected: (id) => {
+        // Đang shutdown — ta chủ động stop listener, không reconnect/ghi transition.
+        if (this.shuttingDown) return;
         // Stale-callback guard: instance replaced/removed since this listener attached.
         if (this.instances.get(id) !== ownInstance) return;
         // If manually disabled, skip all reconnect logic
