@@ -205,13 +205,17 @@ export async function contactRoutes(app: FastifyInstance): Promise<void> {
         prisma.contact.count({ where: { ...base, friends: { some: {} } } }),
         // Multi-claim ≥3 nick (Friend per-account distinct → count distinct zaloAccountId).
         // Proxy: ≥3 Friend rows (đủ chính xác vì Friend unique theo (account, uid)).
-        prisma.contact.count({ where: { ...base, friends: { some: {} } } }).then(async () => {
-          const rows = await prisma.contact.findMany({
-            where: { ...base, friends: { some: {} } },
-            select: { id: true, _count: { select: { friends: true } } },
-          });
-          return rows.filter(r => r._count.friends >= 3).length;
-        }),
+        // Perf 2026-06-19: trước đây tải TOÀN BỘ contact-có-friend về rồi filter trong JS
+        // (unbounded scan trên endpoint stats load mỗi lần mở Contacts). Đổi sang 1 groupBy
+        // có HAVING count >= 3 → DB tự đếm, chỉ trả số nhóm.
+        prisma.friend
+          .groupBy({
+            by: ['contactId'],
+            where: { orgId: user.orgId, contact: { mergedInto: null } },
+            _count: { contactId: true },
+            having: { contactId: { _count: { gte: 3 } } },
+          })
+          .then((rows) => rows.length),
         prisma.contact.count({ where: { ...base, consentStatus: 'revoked' } }),
         prisma.contact.count({ where: { ...base, hasZalo: false } }),
         prisma.contact.count({ where: { ...base, createdAt: { gte: startOfToday } } }),

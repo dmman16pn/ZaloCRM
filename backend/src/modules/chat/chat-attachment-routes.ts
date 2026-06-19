@@ -302,7 +302,7 @@ export async function chatAttachmentRoutes(app: FastifyInstance) {
 
         for (const m of created) {
           // PRIVACY 2026-05-22: kèm _privacyMeta cho FE realtime blur
-          io?.emit('chat:message', {
+          io?.to(`org:${user.orgId}`).emit('chat:message', {
             accountId: conversation.zaloAccountId,
             message: m,
             conversationId: id,

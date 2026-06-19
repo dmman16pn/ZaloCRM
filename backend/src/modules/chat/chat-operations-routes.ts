@@ -325,7 +325,7 @@ export async function chatOperationsRoutes(app: FastifyInstance) {
         where: { messageId: refs.messageId, emoji: displayEmoji },
       });
       const io = (app as any).io as Server;
-      io?.emit('chat:reactions', {
+      io?.to(`org:${user.orgId}`).emit('chat:reactions', {
         conversationId: id,
         messageId: refs.messageId,
         msgId: refs.messageId,
@@ -363,7 +363,7 @@ export async function chatOperationsRoutes(app: FastifyInstance) {
       where: { messageId: refs.messageId, emoji: displayEmoji },
     });
     const io = (app as any).io as Server;
-    io?.emit('chat:reactions', {
+    io?.to(`org:${user.orgId}`).emit('chat:reactions', {
       conversationId: id,
       messageId: refs.messageId,
       msgId: refs.messageId,
@@ -409,7 +409,7 @@ export async function chatOperationsRoutes(app: FastifyInstance) {
       }
 
       const io = (app as any).io as Server;
-      io?.emit('chat:deleted', { conversationId: id, messageId: refs.messageId, zaloMsgId: refs.zaloMsgId });
+      io?.to(`org:${user.orgId}`).emit('chat:deleted', { conversationId: id, messageId: refs.messageId, zaloMsgId: refs.zaloMsgId });
       return { success: true };
     } catch (err) { return handleError(err, reply); }
   });
@@ -444,7 +444,7 @@ export async function chatOperationsRoutes(app: FastifyInstance) {
       await prisma.message.update({ where: { id: refs.messageId }, data: { isDeleted: true, deletedAt: new Date() } });
 
       const io = (app as any).io as Server;
-      io?.emit('chat:deleted', { conversationId: id, messageId: refs.messageId, zaloMsgId: refs.zaloMsgId });
+      io?.to(`org:${user.orgId}`).emit('chat:deleted', { conversationId: id, messageId: refs.messageId, zaloMsgId: refs.zaloMsgId });
       return { success: true };
     } catch (err) { return handleError(err, reply); }
   });
@@ -490,7 +490,7 @@ export async function chatOperationsRoutes(app: FastifyInstance) {
       });
 
       const io = (app as any).io as Server;
-      io?.emit('chat:message-edited', {
+      io?.to(`org:${user.orgId}`).emit('chat:message-edited', {
         conversationId: id,
         messageId: refs.messageId,
         zaloMsgId: refs.zaloMsgId,
@@ -630,7 +630,7 @@ export async function chatOperationsRoutes(app: FastifyInstance) {
                 data: { lastMessageAt: new Date(), isReplied: true, unreadCount: 0 },
               });
 
-              io?.emit('chat:message', {
+              io?.to(`org:${user.orgId}`).emit('chat:message', {
                 accountId: target.zaloAccountId,
                 message: { ...created, zaloMsgIdNum: created.zaloMsgIdNum?.toString() ?? null },
                 conversationId: target.id,
@@ -672,7 +672,7 @@ export async function chatOperationsRoutes(app: FastifyInstance) {
         });
       }
 
-      io?.emit('chat:forwarded', { conversationId: id, messageId: refs.messageId, succeeded, failed });
+      io?.to(`org:${user.orgId}`).emit('chat:forwarded', { conversationId: id, messageId: refs.messageId, succeeded, failed });
       return { success: true, forwarded: succeeded, failed };
     } catch (err) { return handleError(err, reply); }
   });
@@ -694,7 +694,7 @@ export async function chatOperationsRoutes(app: FastifyInstance) {
         create: { id: randomUUID(), orgId: user.orgId, zaloAccountId: conv.zaloAccountId, conversationId: id },
       });
       const io = (app as any).io as Server;
-      io?.emit('chat:pinned', { conversationId: id, isPinned: true });
+      io?.to(`org:${user.orgId}`).emit('chat:pinned', { conversationId: id, isPinned: true });
       return { success: true, result };
     } catch (err) { return handleError(err, reply); }
   });
@@ -714,7 +714,7 @@ export async function chatOperationsRoutes(app: FastifyInstance) {
         where: { zaloAccountId: conv.zaloAccountId, conversationId: id },
       });
       const io = (app as any).io as Server;
-      io?.emit('chat:unpinned', { conversationId: id, isPinned: false });
+      io?.to(`org:${user.orgId}`).emit('chat:unpinned', { conversationId: id, isPinned: false });
       return { success: true, result };
     } catch (err) { return handleError(err, reply); }
   });

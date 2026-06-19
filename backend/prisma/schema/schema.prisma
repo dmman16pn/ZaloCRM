@@ -582,6 +582,10 @@ model Message {
   @@index([conversationId, zaloMsgIdNum(sort: Desc)])
   // Phase metrics 2026-05-22: aggregate query per nick per day per category
   @@index([conversationId, sentAt, senderType, sentVia])
+  // Perf 2026-06-19: org-wide date-range counts/aggregates (dashboard KPI, message
+  // volume) filter messages by sent_at without a conversation prefix → cần index
+  // riêng trên sent_at, nếu không sẽ seq-scan toàn bảng messages.
+  @@index([sentAt])
   @@map("messages")
 }
 
@@ -849,6 +853,10 @@ model DailyMessageStat {
   zaloAccount ZaloAccount  @relation(fields: [zaloAccountId], references: [id], onDelete: Cascade)
 
   @@unique([userId, zaloAccountId, statDate])
+  // Perf 2026-06-19: analytics (response-time, team-performance) filter WHERE org_id
+  // AND stat_date BETWEEN ... — leading col của @@unique là userId nên không phục vụ
+  // được query này → seq-scan. Index riêng (orgId, statDate).
+  @@index([orgId, statDate])
   @@map("daily_message_stats")
 }
 

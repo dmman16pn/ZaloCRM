@@ -241,11 +241,30 @@ async function bootstrap() {
 
   // ── Error handler ─────────────────────────────────────────────────────────
 
-  app.setErrorHandler((error: Error & { statusCode?: number }, _request, reply) => {
-    logger.error('Request error:', error.message);
-    reply.status(error.statusCode ?? 500).send({
-      error: error.message || 'Internal Server Error',
-    });
+  app.setErrorHandler((error: Error & { statusCode?: number; validation?: unknown }, _request, reply) => {
+    let statusCode = error.statusCode ?? 500;
+    // Fastify schema-validation failures are client errors, not 500s.
+    if (error.validation) statusCode = 400;
+    // Map common Prisma errors to sensible HTTP codes instead of a blanket 500.
+    if (error instanceof Prisma.PrismaClientKnownRequestError) {
+      if (error.code === 'P2025') statusCode = 404;       // record not found
+      else if (error.code === 'P2002') statusCode = 409;  // unique constraint
+      else if (error.code === 'P2003') statusCode = 409;  // FK constraint
+      else statusCode = 400;                              // other known request error
+    } else if (error instanceof Prisma.PrismaClientValidationError) {
+      statusCode = 400;
+    }
+
+    // Log full error (with stack) server-side; warn for 4xx, error for 5xx.
+    if (statusCode >= 500) logger.error('Request error:', error);
+    else logger.warn(`Request ${statusCode}: ${error.message}`);
+
+    // Never leak internal error text for unmapped 5xx in production.
+    const clientMessage =
+      statusCode >= 500 && config.nodeEnv === 'production'
+        ? 'Internal Server Error'
+        : error.message || 'Internal Server Error';
+    reply.status(statusCode).send({ error: clientMessage });
   });
 
   // ── Start ─────────────────────────────────────────────────────────────────

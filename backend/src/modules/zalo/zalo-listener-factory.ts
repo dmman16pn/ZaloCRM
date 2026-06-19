@@ -103,7 +103,7 @@ async function handleZaloReaction(accountId: string, io: Server | null, reaction
       where: { messageId: message.id, emoji: displayEmoji },
     });
 
-    io?.emit('chat:reactions', {
+    io?.to(`org:${conversation.orgId}`).emit('chat:reactions', {
       conversationId: conversation.id,
       messageId: message.id,
       msgId: message.id,
@@ -228,23 +228,21 @@ export function attachZaloListener(ctx: ListenerContext): void {
   const { accountId, api, io, userInfoCache, onDisconnected } = ctx;
   const listener = api.listener;
 
+  // Resolve this account's orgId ONCE so high-frequency chat events fan out only to
+  // the owning org's sockets instead of every connected client process-wide. Until it
+  // resolves (a few ms), emitOrg falls back to a global emit so no event is ever lost.
+  let orgId: string | null = null;
+  prisma.zaloAccount.findUnique({ where: { id: accountId }, select: { orgId: true } })
+    .then((r) => { if (r) orgId = r.orgId; })
+    .catch(() => {});
+  const emitOrg = (event: string, payload: unknown): void => {
+    if (orgId) io?.to(`org:${orgId}`).emit(event, payload);
+    else io?.emit(event, payload);
+  };
+
   listener.on('connected', () => {
     logger.info(`[zalo:${accountId}] Listener connected`);
   });
-
-  // DEBUG 2026-05-22: catch-all log để verify ListenerEvents nào fire trong thực tế.
-  // Wrap listener.emit để intercept TẤT CẢ event names. Bỏ sau khi xác minh xong.
-  const _origEmit = (listener as any).emit?.bind(listener);
-  if (_origEmit) {
-    (listener as any).emit = function (eventName: string, ...args: any[]) {
-      if (eventName !== 'message' && eventName !== 'old_messages' && eventName !== 'connected') {
-        try {
-          logger.info(`[zalo:${accountId}] 🎯 SDK emit '${eventName}' — args[0]=`, JSON.stringify(args[0])?.slice(0, 300));
-        } catch { /* ignore log error */ }
-      }
-      return _origEmit(eventName, ...args);
-    };
-  }
 
   // ─── WAVE 1+2 (2026-05-21) — typing / seen / delivered / disconnected ───────
   // Trước đây SDK fire 4 events này mà code không subscribe → bỏ phí payload.
@@ -254,12 +252,7 @@ export function attachZaloListener(ctx: ListenerContext): void {
   // không có event mới. SDK fire mỗi ~2s khi KH còn gõ.
   listener.on('typing', (typing: any) => {
     try {
-      // DEBUG 2026-05-22: log raw payload để verify SDK fire event đúng shape.
-      // Anh đã test 2026-05-22 không thấy typing dots — cần xác minh event arrival.
-      logger.info(`[zalo:${accountId}] 🔵 TYPING event:`, JSON.stringify({
-        threadId: typing?.threadId, type: typing?.type, data: typing?.data, isSelf: typing?.isSelf,
-      }));
-      io?.emit('zalo:typing', {
+      emitOrg('zalo:typing', {
         accountId,
         threadId: typing?.threadId || '',
         threadType: typing?.type === 1 ? 'group' : 'user',
@@ -275,10 +268,6 @@ export function attachZaloListener(ctx: ListenerContext): void {
   // KH đọc tới msg N → tất cả msg ≤ N của ta đều được đánh dấu seen (Zalo behavior).
   listener.on('seen_messages', async (messages: any[]) => {
     try {
-      // DEBUG 2026-05-22: log raw payload
-      logger.info(`[zalo:${accountId}] 🟢 SEEN_MESSAGES event:`, JSON.stringify(
-        (messages || []).slice(0, 3).map(m => ({ threadId: m?.threadId, type: m?.type, data: m?.data })),
-      ));
       const seenIds: string[] = [];
       for (const m of messages || []) {
         const msgId = String(m?.data?.msgId || '');
@@ -303,7 +292,7 @@ export function attachZaloListener(ctx: ListenerContext): void {
           select: { id: true, conversationId: true, zaloMsgId: true, deliveredAt: true, seenAt: true },
         });
         for (const r of rows) {
-          io?.emit('zalo:message-status', {
+          emitOrg('zalo:message-status', {
             accountId,
             conversationId: r.conversationId,
             messageId: r.id,
@@ -321,10 +310,6 @@ export function attachZaloListener(ctx: ListenerContext): void {
   // KH device nhận packet (chưa đọc). Set delivered_at nếu chưa seen.
   listener.on('delivered_messages', async (messages: any[]) => {
     try {
-      // DEBUG 2026-05-22: log raw payload
-      logger.info(`[zalo:${accountId}] 🟡 DELIVERED_MESSAGES event:`, JSON.stringify(
-        (messages || []).slice(0, 3).map(m => ({ threadId: m?.threadId, type: m?.type, data: m?.data })),
-      ));
       const deliveredIds: string[] = [];
       for (const m of messages || []) {
         const msgId = String(m?.data?.msgId || '');
@@ -347,7 +332,7 @@ export function attachZaloListener(ctx: ListenerContext): void {
           select: { id: true, conversationId: true, zaloMsgId: true, deliveredAt: true, seenAt: true },
         });
         for (const r of rows) {
-          io?.emit('zalo:message-status', {
+          emitOrg('zalo:message-status', {
             accountId,
             conversationId: r.conversationId,
             messageId: r.id,
@@ -456,7 +441,7 @@ export function attachZaloListener(ctx: ListenerContext): void {
           where: { id: accountId },
           select: { privacyMode: true, ownerUserId: true },
         });
-        io?.emit('chat:message', {
+        emitOrg('chat:message', {
           accountId,
           message: result.message,
           conversationId: result.conversationId,
@@ -477,6 +462,7 @@ export function attachZaloListener(ctx: ListenerContext): void {
   //   data.data.content.cliMsgId    (client counter)        → fallback nếu globalMsgId null
   // Trước đây code đọc data.data.msgId → 0 row update vì không match được zaloMsgId nào.
   listener.on('undo', async (data: any) => {
+    try {
     const undoContent = data?.data?.content || {};
     const globalMsgId = undoContent.globalMsgId;
     const cliMsgIdNum = undoContent.cliMsgId;
@@ -484,15 +470,27 @@ export function attachZaloListener(ctx: ListenerContext): void {
       logger.warn(`[zalo:${accountId}] Undo event missing globalMsgId/cliMsgId`, undoContent);
       return;
     }
+    // BigInt() throws synchronously on a non-numeric payload — guard so a malformed
+    // undo can't surface as an unhandled rejection.
+    const safeBigInt = (v: any): bigint | null => {
+      if (v === null || v === undefined || v === '') return null;
+      try { return BigInt(v); } catch { return null; }
+    };
+    const globalMsgIdNum = safeBigInt(globalMsgId);
+    const cliMsgIdBig = safeBigInt(cliMsgIdNum);
+    if (globalMsgIdNum === null && cliMsgIdBig === null) {
+      logger.warn(`[zalo:${accountId}] Undo event has non-numeric ids`, undoContent);
+      return;
+    }
     const updatedIds = (await (handleMessageUndo as any)(accountId, {
-      globalMsgIdNum: globalMsgId ? BigInt(globalMsgId) : null,
-      cliMsgIdNum: cliMsgIdNum ? BigInt(cliMsgIdNum) : null,
+      globalMsgIdNum,
+      cliMsgIdNum: cliMsgIdBig,
     })) as string[] | undefined ?? [];
     // FIX B1 round-2: emit MULTIPLE messageId nếu match nhiều rows (event broadcast tới mọi nick).
     // FE composable matches by zaloMsgId/messageId → update isDeleted live ở cột 3.
     const zaloMsgIdStr = globalMsgId ? String(globalMsgId) : (cliMsgIdNum ? String(cliMsgIdNum) : null);
     for (const messageId of updatedIds) {
-      io?.emit('chat:deleted', {
+      emitOrg('chat:deleted', {
         accountId,
         messageId,
         zaloMsgId: zaloMsgIdStr,
@@ -500,7 +498,10 @@ export function attachZaloListener(ctx: ListenerContext): void {
     }
     // Fallback emit bằng zaloMsgId nếu không update được row nào (FE tự match ở cache).
     if (updatedIds.length === 0 && zaloMsgIdStr) {
-      io?.emit('chat:deleted', { accountId, zaloMsgId: zaloMsgIdStr });
+      emitOrg('chat:deleted', { accountId, zaloMsgId: zaloMsgIdStr });
+    }
+    } catch (err) {
+      logger.warn(`[zalo:${accountId}] undo event error:`, err);
     }
   });
 
@@ -641,7 +642,7 @@ export function attachZaloListener(ctx: ListenerContext): void {
         });
 
         if (result) {
-          io?.emit('chat:message', {
+          emitOrg('chat:message', {
             accountId,
             message: result.message,
             conversationId: result.conversationId,

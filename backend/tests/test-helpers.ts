@@ -43,8 +43,12 @@ export function mockReply() {
 }
 
 // ── Mock Socket.IO server ──────────────────────────────────────────────────
+// Supports both `io.emit(...)` and the room-scoped `io.to('org:x').emit(...)`
+// pattern. `to()` returns the same emit spy so assertions on emitted events work
+// regardless of whether the route scoped the emit to a room.
 export function mockIO() {
-  return { emit: vi.fn() } as any;
+  const emit = vi.fn();
+  return { emit, to: vi.fn(() => ({ emit })) } as any;
 }
 
 // ── Prisma mock factory ────────────────────────────────────────────────────

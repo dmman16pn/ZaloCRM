@@ -1,17 +1,18 @@
 import 'vuetify/styles';
 import '@mdi/font/css/materialdesignicons.css';
 import { createVuetify } from 'vuetify';
-import * as components from 'vuetify/components';
-import * as directives from 'vuetify/directives';
 
 /**
  * Vuetify theme — palette từ design tokens Smax (mockup chat-smax-v3.html).
  * `smax-light` (default) khớp mockup. `legacy-dark` giữ lại để fallback nếu
  * có view nào còn phụ thuộc bảng màu cũ; sẽ rút khi mọi view đã migrate.
+ *
+ * Perf 2026-06-19: KHÔNG đăng ký `* as components/directives` toàn cục nữa —
+ * vite-plugin-vuetify({ autoImport: true }) (vite.config.ts) chỉ bundle component
+ * thực sự dùng trong template. Import wildcard trước đây kéo TOÀN BỘ Vuetify vào
+ * entry chunk, vô hiệu hoá tree-shaking → bundle phình + chậm first paint.
  */
 export const vuetify = createVuetify({
-  components,
-  directives,
   theme: {
     defaultTheme: localStorage.getItem('theme') || 'smax-light',
     themes: {

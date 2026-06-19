@@ -429,8 +429,23 @@ export async function chatRoutes(app: FastifyInstance) {
       statusColor: string | null;
     }>();
     if (userPairs.length) {
+      // Perf 2026-06-19: nhóm pairs theo zaloAccountId → 1 clause
+      // { zaloAccountId, zaloUidInNick: { in: [...] } } mỗi account, thay cho OR(AND)
+      // tới 200 vế (planner weakness → bitmap-OR/seq-scan). Cùng result set, nhưng cho
+      // phép ranged index scan per account trên @@unique([zaloAccountId, zaloUidInNick]).
+      const pairsByAccount = new Map<string, string[]>();
+      for (const p of userPairs) {
+        const arr = pairsByAccount.get(p.zaloAccountId) ?? [];
+        arr.push(p.zaloUidInNick);
+        pairsByAccount.set(p.zaloAccountId, arr);
+      }
       const friends = await prisma.friend.findMany({
-        where: { OR: userPairs.map(p => ({ AND: [{ zaloAccountId: p.zaloAccountId }, { zaloUidInNick: p.zaloUidInNick }] })) },
+        where: {
+          OR: Array.from(pairsByAccount, ([zaloAccountId, uids]) => ({
+            zaloAccountId,
+            zaloUidInNick: { in: uids },
+          })),
+        },
         select: {
           id: true,                            // Friend.id để FE fetch /scoring/:friendId/breakdown
           zaloAccountId: true, contactId: true,
@@ -898,7 +913,8 @@ export async function chatRoutes(app: FastifyInstance) {
       const safeMessage = { ...message, zaloMsgIdNum: message.zaloMsgIdNum?.toString() ?? null };
       const io = (app as any).io as Server;
       // PRIVACY 2026-05-22: kèm _privacyMeta để FE detect & blur cho non-owner
-      io?.emit('chat:message', {
+      // Scope theo org room — chỉ client cùng org nhận, không fan-out toàn hệ thống.
+      io?.to(`org:${user.orgId}`).emit('chat:message', {
         accountId: conversation.zaloAccountId,
         message: safeMessage,
         conversationId: id,
@@ -1028,7 +1044,7 @@ export async function chatRoutes(app: FastifyInstance) {
       const io = (app as any).io as Server;
       for (const m of createdMessages) {
         // PRIVACY 2026-05-22: kèm _privacyMeta để FE detect & blur cho non-owner
-        io?.emit('chat:message', {
+        io?.to(`org:${user.orgId}`).emit('chat:message', {
           accountId: conversation.zaloAccountId,
           message: m,
           conversationId: id,

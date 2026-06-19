@@ -77,6 +77,10 @@ class ZaloAccountPool {
   private disconnectHistory = new Map<string, number[]>();
   // Accounts manually disabled — suppress auto-reconnect
   private manuallyDisabled = new Set<string>();
+  // Accounts with a reconnect currently in flight — prevents concurrent reconnect
+  // races (listener 'closed' 30s timer, 2-min retry, 5-min health-check, daily
+  // refresh can all fire for the same account at once → stacked listeners).
+  private reconnecting = new Set<string>();
 
   setIO(io: Server): void {
     this.io = io;
@@ -91,6 +95,8 @@ class ZaloAccountPool {
   // Initiate QR-based login; emits QR events to frontend via Socket.IO
   async loginQR(accountId: string, proxyUrl?: string | null): Promise<void> {
     this.manuallyDisabled.delete(accountId);
+    // Stop any previous listener/sync before replacing the instance (anti-leak).
+    this.teardownInstance(accountId);
     const zalo = new Zalo({ logging: false, selfListen: true, imageMetadataGetter });
     this.instances.set(accountId, { zalo, api: null, status: 'qr_pending', lastActivity: new Date() });
 
@@ -199,7 +205,16 @@ class ZaloAccountPool {
 
   // Reconnect using previously saved session credentials
   async reconnect(accountId: string, credentials: ZaloCredentials, proxyUrl?: string | null): Promise<void> {
+    // In-flight guard: drop duplicate reconnects for the same account so we never
+    // spin up two parallel zca-js sessions/listeners.
+    if (this.reconnecting.has(accountId)) {
+      logger.info(`[zalo:${accountId}] Reconnect already in progress — skipping duplicate`);
+      return;
+    }
+    this.reconnecting.add(accountId);
     this.manuallyDisabled.delete(accountId);
+    // Stop the previous listener/sync before replacing the instance (anti-leak).
+    this.teardownInstance(accountId);
     const zalo = new Zalo({ logging: false, selfListen: true, imageMetadataGetter });
     this.instances.set(accountId, { zalo, api: null, status: 'connecting', lastActivity: new Date() });
 
@@ -251,6 +266,8 @@ class ZaloAccountPool {
       if (instance) instance.status = 'disconnected';
       await this.updateAccountDB(accountId, 'qr_pending', null, 'reconnect_failed');
       this.io?.emit('zalo:reconnect-failed', { accountId, error: String(err) });
+    } finally {
+      this.reconnecting.delete(accountId);
     }
   }
 
@@ -277,14 +294,36 @@ class ZaloAccountPool {
     })();
   }
 
+  /** Stop the listener + message-sync of any existing live instance for this account
+   *  BEFORE it is replaced. zca-js listeners start with retryOnClose:true, so a
+   *  previous listener keeps its websocket alive and re-fires handlers forever unless
+   *  explicitly stopped — leaking sockets + duplicating message/reaction writes on
+   *  every reconnect. Does NOT delete the map entry (caller overwrites it). */
+  private teardownInstance(accountId: string): void {
+    const existing = this.instances.get(accountId);
+    if (existing?.api?.listener) {
+      try { existing.api.listener.stop(); } catch (err) {
+        logger.warn(`[zalo:${accountId}] Error stopping previous listener:`, err);
+      }
+    }
+    stopMessageSync(accountId);
+  }
+
   // Delegate listener setup to zalo-listener-factory
   private attachListener(accountId: string, api: any): void {
+    // Capture the instance this listener belongs to. If the account's instance is
+    // later replaced (reconnect) or removed (disconnect/refresh), this stale callback
+    // must do nothing — otherwise it corrupts the new instance's status and schedules
+    // a redundant reconnect.
+    const ownInstance = this.instances.get(accountId);
     attachZaloListener({
       accountId,
       api,
       io: this.io,
       userInfoCache: this.userInfoCache,
       onDisconnected: (id) => {
+        // Stale-callback guard: instance replaced/removed since this listener attached.
+        if (this.instances.get(id) !== ownInstance) return;
         // If manually disabled, skip all reconnect logic
         if (this.manuallyDisabled.has(id)) return;
 

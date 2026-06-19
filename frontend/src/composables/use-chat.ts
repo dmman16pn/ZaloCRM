@@ -166,6 +166,10 @@ const messagesCache = new Map<string, Message[]>();
 // Cache key encode toàn bộ filter params (tab, threadType, accountIds, search, ...).
 const conversationsCache = new Map<string, { data: Conversation[]; fetchedAt: number }>();
 const CONV_CACHE_MAX_ENTRIES = 16;  // ~4 tabs × ~4 filter variants
+// Perf 2026-06-19: cache hit còn tươi hơn ngần này → BỎ background refetch (socket đã
+// giữ list live realtime). Trước đây mỗi lần vào /chat luôn fire 1 GET /conversations
+// dù vừa fetch xong → refetch storm khi tab-switch qua lại.
+const CONV_CACHE_TTL_MS = 15_000;
 
 // Debug hook (DEV only) — expose cache state via window.__zaloCRMConvCache để
 // diagnose cache miss khi tab switch vẫn cảm giác lag. Inspect:
@@ -289,6 +293,10 @@ export function useChat() {
     if (cached) {
       logCacheEvent('hit', cacheKey);
       conversations.value = mergeConvListPreserveDetail(conversations.value, cached.data);
+      // Cache còn tươi + không phải socket-triggered → skip refetch nền.
+      if (!opts?.bypassCache && Date.now() - cached.fetchedAt < CONV_CACHE_TTL_MS) {
+        return;
+      }
     } else {
       if (!opts?.bypassCache) logCacheEvent('miss', cacheKey);
       // Spinner chỉ hiện khi state thực sự rỗng (first load). bypassCache khi
@@ -502,26 +510,32 @@ export function useChat() {
     if (!conversations.value.find(c => c.id === convId)) {
       await fetchConversations();
     }
-    await fetchMessages(convId);
-    try {
-      const convDetail = await api.get(`/conversations/${convId}`);
-      const conv = conversations.value.find(c => c.id === convId);
-      if (conv) {
-        if (convDetail.data.contact) conv.contact = convDetail.data.contact;
-        // friendship per-pair (counter, leadScore, status RIÊNG cặp nick×KH).
-        // KHÔNG fallback contact aggregate vì các trường này khác semantics.
-        if (convDetail.data.friendship !== undefined) conv.friendship = convDetail.data.friendship;
-      }
-    } catch {
-      // Non-critical
-    }
-    try {
-      await api.post(`/conversations/${convId}/mark-read`);
-      const conv = conversations.value.find(c => c.id === convId);
-      if (conv) conv.unreadCount = 0;
-    } catch {
-      // Ignore mark-read errors
-    }
+    // Perf 2026-06-19: 3 request này độc lập nhau → chạy SONG SONG thay vì nối đuôi.
+    // messages drive thread render; conv-detail cập nhật contact/friendship; mark-read
+    // là fire-and-forget (UI không phụ thuộc). Trước đây await tuần tự → click-to-thread
+    // = tổng 3 round-trip.
+    const messagesP = fetchMessages(convId);
+    const detailP = api
+      .get(`/conversations/${convId}`)
+      .then((convDetail) => {
+        const conv = conversations.value.find(c => c.id === convId);
+        if (conv) {
+          if (convDetail.data.contact) conv.contact = convDetail.data.contact;
+          // friendship per-pair (counter, leadScore, status RIÊNG cặp nick×KH).
+          // KHÔNG fallback contact aggregate vì các trường này khác semantics.
+          if (convDetail.data.friendship !== undefined) conv.friendship = convDetail.data.friendship;
+        }
+      })
+      .catch(() => { /* non-critical */ });
+    // Fire-and-forget — không chặn thread hiển thị.
+    void api
+      .post(`/conversations/${convId}/mark-read`)
+      .then(() => {
+        const conv = conversations.value.find(c => c.id === convId);
+        if (conv) conv.unreadCount = 0;
+      })
+      .catch(() => { /* ignore mark-read errors */ });
+    await Promise.all([messagesP, detailP]);
     // Note: Auto-sync Zalo profile được xử lý ở MessageThread.touchConversationProfile
     // (gọi POST /conversations/:id/touch-profile, cooldown 5min server-side). KHÔNG
     // duplicate ở đây để tránh spam SDK + 404 lên endpoint /contacts/:id/sync-zalo-profile
@@ -580,6 +594,16 @@ export function useChat() {
 
   function initSocket() {
     socket = io({ transports: ['websocket', 'polling'] });
+
+    // Join org room — backend now scopes chat events (message/reactions/deleted/typing/
+    // status) to `org:<orgId>` instead of broadcasting to every connected client.
+    // Re-emit on every (re)connect so a network blip doesn't drop us from the room.
+    const joinOrgRoom = () => {
+      const orgId = authStore.user?.orgId;
+      if (orgId) socket?.emit('org:join', { orgId });
+    };
+    socket.on('connect', joinOrgRoom);
+    if (socket.connected) joinOrgRoom();
 
     socket.on('chat:message', (data: { message: Message; conversationId: string; _privacyMeta?: { privacyMode?: string; ownerUserId?: string | null } }) => {
       // PRIVACY 2026-05-22 — backend kèm _privacyMeta cho mỗi event, FE đánh dấu
