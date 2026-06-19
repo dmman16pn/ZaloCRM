@@ -400,12 +400,52 @@ export async function publicApiRoutes(app: FastifyInstance): Promise<void> {
     const groups = rows
       .filter((r) => r.externalThreadId)
       .map((r) => ({
-        groupId: r.externalThreadId,
-        name: r.groupName,
-        avatar: r.groupAvatarUrl,
-        membersCount: r.groupMembersCount,
+        groupId: r.externalThreadId as string,
+        name: r.groupName as string | null,
+        avatar: r.groupAvatarUrl as string | null,
+        membersCount: r.groupMembersCount as number | null,
       }));
-    return { groups };
+
+    // ?refresh=1: cố lấy thêm nhóm chưa từng sync vào Conversation (nhóm mới/chưa nhắn).
+    // "Best effort" — mọi lỗi zca-js (chưa login/timeout) đều fallback về DB-only, KHÔNG 500.
+    const { refresh } = request.query as { refresh?: string };
+    if (refresh) {
+      try {
+        const { zaloOps } = await import('../../shared/zalo-operations.js');
+        const all = await zaloOps.getAllGroups(accountId);
+        const allIds: string[] = Object.keys((all as any)?.gridVerMap ?? {});
+        const known = new Set(groups.map((g) => g.groupId));
+        const missingIds = allIds.filter((id) => id && !known.has(id));
+
+        // getGroupInfo nhận tối đa 50 id/lần — chia lô.
+        for (let i = 0; i < missingIds.length; i += 50) {
+          const batch = missingIds.slice(i, i + 50);
+          const info = await zaloOps.getGroupInfo(accountId, batch);
+          const infoMap = (info as any)?.gridInfoMap ?? {};
+          for (const id of batch) {
+            const g = infoMap[id];
+            if (!g) continue;
+            groups.push({
+              groupId: id,
+              name: g.name ?? null,
+              avatar: g.fullAvt || g.avt || null,
+              membersCount: g.totalMember ?? null,
+            });
+          }
+        }
+      } catch (err) {
+        logger.warn(`[public-api] groups refresh failed for account ${accountId}, fallback to DB-only:`, err);
+      }
+    }
+
+    // Dedupe theo groupId (DB trước, nhóm mới append sau).
+    const seen = new Set<string>();
+    const deduped = groups.filter((g) => {
+      if (seen.has(g.groupId)) return false;
+      seen.add(g.groupId);
+      return true;
+    });
+    return { groups: deduped };
   });
 
   // ── Broadcast: đăng 1 bài (text + ảnh) vào NHIỀU nhóm của 1 nick ──────────

@@ -450,7 +450,8 @@ async function disperseGroup(accountId: string, groupId: string) {
 }
 
 // ─── Group Read ─────────────────────────────────────────────────────────────
-async function getGroupInfo(accountId: string, groupId: string) {
+// zca-js runtime nhận cả 1 id lẫn mảng id (≤50/lần). Nới type cho batch lookup.
+async function getGroupInfo(accountId: string, groupId: string | string[]) {
   return exec({ accountId, category: 'group_read', operation: 'getGroupInfo' },
     (api) => api.getGroupInfo(groupId));
 }
