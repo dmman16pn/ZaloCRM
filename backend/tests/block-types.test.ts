@@ -87,9 +87,11 @@ describe('validateBlockContent — send_message', () => {
   });
 
   it('rejects attachment with bad kind', () => {
+    // Kind hợp lệ: image | video | file | link (v3.3 media forward thêm video).
+    // 'audio' KHÔNG nằm trong danh sách → phải bị reject.
     const r = validateBlockContent('send_message', {
       textVariants: ['ok'],
-      attachments: [{ kind: 'video', url: 'https://x' }],
+      attachments: [{ kind: 'audio', url: 'https://x' }],
     });
     expect(r.ok).toBe(false);
   });

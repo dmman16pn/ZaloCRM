@@ -71,18 +71,23 @@ describe('GET /profile', () => {
 // ── GET last-online ───────────────────────────────────────────────────────────
 describe('GET /profile/last-online/:userId', () => {
   it('happy path — returns last online timestamp', async () => {
-    const ts = 1700000000000;
+    const ts = 1700000000000; // > 1e12 → đã là ms, giữ nguyên
     zaloOpsMock.getLastOnline.mockResolvedValue({ lastOnline: ts });
-    const res = await buildApp().inject({ method: 'GET', url: `${BASE}/last-online/u1` });
+    // uid riêng để tránh đụng cache module-level của presence-service giữa các test.
+    const res = await buildApp().inject({ method: 'GET', url: `${BASE}/last-online/u-happy` });
     expect(res.statusCode).toBe(200);
-    expect(JSON.parse(res.body)).toMatchObject({ lastOnline: { lastOnline: ts } });
-    expect(zaloOpsMock.getLastOnline).toHaveBeenCalledWith('za-1', 'u1');
+    // Route trả shape PHẲNG qua presence-service: { lastOnline, showStatus, isOnline, fetchedAt }.
+    expect(JSON.parse(res.body)).toMatchObject({ lastOnline: ts, showStatus: true });
+    expect(zaloOpsMock.getLastOnline).toHaveBeenCalledWith('za-1', 'u-happy');
   });
 
-  it('returns 500 when zaloOps throws', async () => {
+  it('degrades gracefully (200 + lastOnline=null) khi presence lookup lỗi', async () => {
+    // presence-service nuốt lỗi SDK → trả null thay vì throw. Lookup presence fail
+    // KHÔNG nên làm 500 cả request → trả "không rõ trạng thái". uid riêng tránh cache.
     zaloOpsMock.getLastOnline.mockRejectedValue(new Error('lookup failed'));
-    const res = await buildApp().inject({ method: 'GET', url: `${BASE}/last-online/u1` });
-    expect(res.statusCode).toBe(500);
+    const res = await buildApp().inject({ method: 'GET', url: `${BASE}/last-online/u-err` });
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body)).toMatchObject({ lastOnline: null, isOnline: false });
   });
 });
 

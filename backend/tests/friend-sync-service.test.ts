@@ -88,9 +88,10 @@ describe('syncFriendsForAccount — SDK fetch errors', () => {
     zaloOpsMock.getSentFriendRequests.mockRejectedValue(new Error('rate_limited'));
     prismaMock.friend.findMany.mockResolvedValue([]);
     const r = await syncFriendsForAccount('za-err', 'org-1', { trigger: 'cron' });
-    // .catch(() => []) absorbs reject → liveCount 0 but no service-level error
+    // B4 fix: SDK fetch error bubble lên outer catch → errors++ + logActivity, return sớm.
+    // liveCount=0 nhưng errors>0 để phân biệt với "0 friends" thật (sale biết sync fail).
     expect(r.liveCount).toBe(0);
-    expect(r.errors).toBe(0);
+    expect(r.errors).toBe(1);
   });
 });
 
@@ -191,7 +192,7 @@ describe('syncFriendsForAccount — contact resolution', () => {
         avatarUrl: 'avatar.png',
         hasZalo: true,
       }),
-      select: { id: true },
+      select: { id: true, fullName: true },
     });
   });
 });

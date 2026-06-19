@@ -5,6 +5,7 @@ import { getProviderConfig, getAvailableProviders } from './provider-registry.js
 import { generateWithAnthropic } from './providers/anthropic.js';
 import { generateWithGemini } from './providers/gemini.js';
 import { generateWithOpenaiCompat } from './providers/openai-compat.js';
+import { generateWithClaudeCli } from './providers/claude-cli.js';
 import { buildReplyDraftPrompt } from './prompts/reply-draft.js';
 import { buildSummaryPrompt } from './prompts/summary.js';
 import { buildSentimentPrompt } from './prompts/sentiment.js';
@@ -114,6 +115,7 @@ async function generateText(provider: string, apiKey: string, model: string, sys
   const baseUrl = providerDef?.baseUrl || '';
 
   if (provider === 'anthropic') return generateWithAnthropic(baseUrl, apiKey, model, system, prompt, maxTokens);
+  if (provider === 'claude-cli') return generateWithClaudeCli(config.claudeCliBin, model, system, prompt, maxTokens);
   if (provider === 'gemini') return generateWithGemini(baseUrl, apiKey, model, system, prompt, maxTokens);
 
   /* OpenAI, Qwen, Kimi all use OpenAI-compatible chat/completions API */

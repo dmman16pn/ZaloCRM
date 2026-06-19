@@ -75,6 +75,9 @@ describe('applyFriendAggregate — emit friend:updated', () => {
           update: vi.fn(),
         },
         contact: {
+          // B8 backfill: source đọc Contact.fullName trong transaction. Trả tên thật
+          // (≠ 'Unknown'/null/'') để bỏ qua nhánh backfill, đi thẳng tới emit.
+          findUnique: vi.fn().mockResolvedValue({ fullName: 'KH An', avatarUrl: 'http://a.png' }),
           update: vi.fn(),
         },
       };
@@ -119,7 +122,7 @@ describe('applyFriendAggregate — emit friend:updated', () => {
           }),
           update: vi.fn().mockResolvedValue({}),
         },
-        contact: { update: vi.fn() },
+        contact: { findUnique: vi.fn().mockResolvedValue({ fullName: 'KH', avatarUrl: 'http://a.png' }), update: vi.fn() },
       };
       await cb(tx);
     });
@@ -155,7 +158,7 @@ describe('applyFriendAggregate — emit friend:updated', () => {
           }),
           update: vi.fn().mockResolvedValue({}),
         },
-        contact: { update: vi.fn() },
+        contact: { findUnique: vi.fn().mockResolvedValue({ fullName: 'KH', avatarUrl: 'http://a.png' }), update: vi.fn() },
       };
       await cb(tx);
     });

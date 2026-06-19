@@ -16,9 +16,11 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      '/api': 'http://localhost:3000',
+      // Cho phép đổi cổng backend qua env (mặc định 3000) — tránh xung đột cổng khi
+      // dev nhiều app cùng máy. VD: VITE_API_PROXY_TARGET=http://localhost:3001
+      '/api': process.env.VITE_API_PROXY_TARGET || 'http://localhost:3000',
       '/socket.io': {
-        target: 'http://localhost:3000',
+        target: process.env.VITE_API_PROXY_TARGET || 'http://localhost:3000',
         ws: true,
       },
     },

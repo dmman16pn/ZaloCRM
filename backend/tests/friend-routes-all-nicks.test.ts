@@ -22,15 +22,23 @@ vi.mock('../src/shared/utils/logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 vi.mock('../src/modules/auth/auth-middleware.js', () => ({
-  authMiddleware: async (req: any) => { req.user = mockUser(); },
+  // Non-admin role: route đi nhánh union ACL + owned (getAccessibleZaloAccountIds).
+  // Admin/owner sẽ đọc toàn org → không khớp setup access+owned của các test này.
+  authMiddleware: async (req: any) => { req.user = mockUser({ role: 'sale' }); },
 }));
-vi.mock('../src/modules/zalo/zalo-route-helpers.js', () => ({
-  resolveAccount: vi.fn().mockResolvedValue({ id: 'za-1', orgId: 'org-1' }),
-  checkAccess: vi.fn().mockResolvedValue(true),
-  handleError: vi.fn().mockImplementation((reply: any, err: any) => {
-    reply.status(500).send({ error: err?.message || 'Error' });
-  }),
-}));
+// Giữ getAccessibleZaloAccountIds THẬT (logic union access+owned cần test end-to-end
+// trên prismaMock); chỉ override resolveAccount/checkAccess/handleError.
+vi.mock('../src/modules/zalo/zalo-route-helpers.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/modules/zalo/zalo-route-helpers.js')>();
+  return {
+    ...actual,
+    resolveAccount: vi.fn().mockResolvedValue({ id: 'za-1', orgId: 'org-1' }),
+    checkAccess: vi.fn().mockResolvedValue(true),
+    handleError: vi.fn().mockImplementation((reply: any, err: any) => {
+      reply.status(500).send({ error: err?.message || 'Error' });
+    }),
+  };
+});
 vi.mock('../src/modules/zalo/friend-event-handler.js', () => ({
   markFriendRequestSent: vi.fn(),
   applyFriendTransition: vi.fn(),

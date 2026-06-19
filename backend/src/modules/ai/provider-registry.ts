@@ -35,6 +35,19 @@ function buildProviders(): ProviderDef[] {
       ].filter(Boolean) as ProviderModel[],
     },
     {
+      // Chạy qua Claude Code CLI (gói cước Pro/Max) — authToken là sentinel,
+      // KHÔNG phải API key; chỉ available khi CLAUDE_CLI_ENABLED=1.
+      id: 'claude-cli',
+      name: 'Claude (gói cước CLI)',
+      baseUrl: '',
+      authToken: config.claudeCliEnabled ? 'subscription' : '',
+      models: [
+        m('Claude Sonnet (gói cước)', config.claudeCliModel),
+        { title: 'Claude Opus (gói cước)', value: 'opus' },
+        { title: 'Claude Haiku (gói cước)', value: 'haiku' },
+      ].filter(Boolean) as ProviderModel[],
+    },
+    {
       id: 'gemini',
       name: 'Gemini',
       baseUrl: config.geminiBaseUrl,

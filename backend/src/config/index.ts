@@ -68,6 +68,11 @@ export const config = {
   anthropicDefaultSonnetModel: envValue('ANTHROPIC_DEFAULT_SONNET_MODEL') || '',
   anthropicDefaultHaikuModel: envValue('ANTHROPIC_DEFAULT_HAIKU_MODEL') || '',
 
+  /* --- Claude Code CLI provider (gói cước Pro/Max qua OAuth, KHÔNG dùng API key) --- */
+  claudeCliEnabled: (envValue('CLAUDE_CLI_ENABLED') || '') === '1',
+  claudeCliBin: envValue('CLAUDE_CLI_BIN') || 'claude',
+  claudeCliModel: envValue('CLAUDE_CLI_MODEL') || 'claude-sonnet-4-6',
+
   geminiBaseUrl: envValue('GEMINI_BASE_URL') || 'https://generativelanguage.googleapis.com',
   geminiAuthToken: envValue('GEMINI_AUTH_TOKEN') || envValue('GEMINI_API_KEY') || '',
   geminiDefaultProModel: envValue('GEMINI_DEFAULT_PRO_MODEL') || '',

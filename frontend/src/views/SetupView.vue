@@ -18,7 +18,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue';
+import { ref, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { useAuthStore } from '@/stores/auth';
 
@@ -32,14 +32,29 @@ const success = ref(false);
 const router = useRouter();
 const authStore = useAuthStore();
 
+// Nếu org đã thiết lập từ trước (vd tab /setup cũ còn mở, hoặc F5 lại sau khi tạo
+// xong) → tự chuyển sang /login để không bị kẹt ở màn setup.
+onMounted(async () => {
+  try {
+    const needs = await authStore.checkSetup();
+    if (!needs) router.replace('/login');
+  } catch { /* lỗi mạng → cứ để người dùng ở màn setup */ }
+});
+
 async function handleSetup() {
   loading.value = true;
   error.value = '';
   try {
     await authStore.setup({ orgName: orgName.value, fullName: fullName.value, email: email.value, password: password.value });
     success.value = true;
-    setTimeout(() => router.push('/'), 1000);
+    // Điều hướng ngay & chắc chắn — đã có token + user trong store, guard sẽ cho qua.
+    await router.replace('/');
   } catch (err: any) {
+    // Nếu org vừa bị tạo bởi request khác (đã setup) → đưa về login thay vì kẹt.
+    if (err.response?.data?.error === 'Setup already completed') {
+      router.replace('/login');
+      return;
+    }
     error.value = err.response?.data?.error || 'Thiết lập thất bại';
   } finally {
     loading.value = false;
