@@ -4,8 +4,39 @@
  * All routes prefixed /api/public/ — no JWT required, orgId injected from API key lookup.
  */
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
+import { randomUUID } from 'node:crypto';
+import { writeFile, mkdir, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { prisma } from '../../shared/database/prisma-client.js';
+import { assertSafeOutboundUrl, SsrfBlockedError } from '../../shared/utils/ssrf-guard.js';
 import { logger } from '../../shared/utils/logger.js';
+
+// Public API image-send limits. Ảnh tải từ URL (HTTPS only — qua ssrf-guard).
+const PUBLIC_IMAGE_MAX = 25 * 1024 * 1024; // 25MB/ảnh
+const PUBLIC_MAX_IMAGES = 10;
+const PUBLIC_IMAGE_EXT: Record<string, string> = {
+  'image/jpeg': '.jpg',
+  'image/png': '.png',
+  'image/webp': '.webp',
+  'image/gif': '.gif',
+};
+
+/**
+ * Tải 1 ảnh từ URL HTTPS công khai về Buffer, có guard SSRF + giới hạn type/size.
+ * Trả về { buffer, ext } để caller ghi ra tmp file cho zca-js gửi.
+ */
+async function downloadImage(rawUrl: string): Promise<{ buffer: Buffer; ext: string }> {
+  const safeUrl = assertSafeOutboundUrl(rawUrl); // throws SsrfBlockedError nếu không hợp lệ/HTTP/private
+  const res = await fetch(safeUrl.toString(), { signal: AbortSignal.timeout(15_000) });
+  if (!res.ok) throw new Error(`fetch ${res.status}`);
+  const mime = (res.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
+  const ext = PUBLIC_IMAGE_EXT[mime];
+  if (!ext) throw new Error(`unsupported image type: ${mime || 'unknown'}`);
+  const buffer = Buffer.from(await res.arrayBuffer());
+  if (buffer.length > PUBLIC_IMAGE_MAX) throw new Error(`image exceeds ${PUBLIC_IMAGE_MAX / 1024 / 1024}MB`);
+  return { buffer, ext };
+}
 
 // ── API key auth middleware ────────────────────────────────────────────────────
 
@@ -256,8 +287,21 @@ export async function publicApiRoutes(app: FastifyInstance): Promise<void> {
       const orgId = (request as any).orgId as string;
       const body = request.body as Record<string, any>;
 
-      if (!body?.zaloAccountId || !body?.threadId || !body?.content) {
-        return reply.status(400).send({ error: 'zaloAccountId, threadId, and content are required' });
+      // Gom danh sách URL ảnh (hỗ trợ cả imageUrl đơn lẫn imageUrls mảng).
+      const imageUrls: string[] = [
+        ...(typeof body?.imageUrl === 'string' ? [body.imageUrl] : []),
+        ...(Array.isArray(body?.imageUrls) ? body.imageUrls.filter((u: unknown) => typeof u === 'string') : []),
+      ];
+      const hasContent = typeof body?.content === 'string' && body.content.length > 0;
+
+      if (!body?.zaloAccountId || !body?.threadId) {
+        return reply.status(400).send({ error: 'zaloAccountId and threadId are required' });
+      }
+      if (!hasContent && imageUrls.length === 0) {
+        return reply.status(400).send({ error: 'content or imageUrl(s) is required' });
+      }
+      if (imageUrls.length > PUBLIC_MAX_IMAGES) {
+        return reply.status(400).send({ error: `tối đa ${PUBLIC_MAX_IMAGES} ảnh mỗi lần gửi` });
       }
 
       // Verify account belongs to org
@@ -276,8 +320,41 @@ export async function publicApiRoutes(app: FastifyInstance): Promise<void> {
       if (!api) return reply.status(422).send({ error: 'Zalo account not active in pool' });
 
       const threadType = body.threadType === 'group' ? 1 : 0;
-      await api.sendMessage(body.content, body.threadId, threadType);
 
+      // ── Có ảnh: tải URL → tmp file → gửi kèm caption qua zca-js attachments ──
+      if (imageUrls.length > 0) {
+        const tmpRoot = path.join(tmpdir(), 'zalocrm-public-send', randomUUID());
+        await mkdir(tmpRoot, { recursive: true });
+        try {
+          const tmpPaths: string[] = [];
+          for (let i = 0; i < imageUrls.length; i++) {
+            let img;
+            try {
+              img = await downloadImage(imageUrls[i]);
+            } catch (err) {
+              const msg = err instanceof SsrfBlockedError
+                ? `URL ảnh không hợp lệ (chỉ chấp nhận HTTPS công khai): ${imageUrls[i]}`
+                : `Không tải được ảnh ${imageUrls[i]}: ${(err as Error).message}`;
+              return reply.status(400).send({ error: msg });
+            }
+            const tmpPath = path.join(tmpRoot, `${i}${img.ext}`);
+            await writeFile(tmpPath, img.buffer);
+            tmpPaths.push(tmpPath);
+          }
+          // zca-js: 1 call gửi nhiều ảnh + caption (msg). Tin tự sync về CRM qua selfListen.
+          await api.sendMessage(
+            { msg: hasContent ? body.content : '', attachments: tmpPaths },
+            body.threadId,
+            threadType,
+          );
+        } finally {
+          await rm(tmpRoot, { recursive: true, force: true }).catch(() => {});
+        }
+        return { success: true, images: imageUrls.length };
+      }
+
+      // ── Chỉ text ──
+      await api.sendMessage(body.content, body.threadId, threadType);
       return { success: true };
     } catch (err) {
       logger.error('[public-api] POST /messages/send error:', err);
