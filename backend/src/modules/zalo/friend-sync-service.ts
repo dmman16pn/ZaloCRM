@@ -31,6 +31,27 @@ import { logActivity } from '../activity/activity-logger.js';
 import { applyFriendTransition } from './friend-event-handler.js';
 import { buildFriendUpdatedPayload } from '../../shared/friend-serializer.js';
 
+/**
+ * Retry wrapper cho lệnh Zalo SDK nặng. Zalo hay timeout CHẬP CHỜN (~20%) khi gọi
+ * từ server xa Việt Nam (latency cao). Thử lại vài lần với backoff ngắn → nâng tỉ lệ
+ * thành công lên ~99% mà không cần proxy. Lỗi mạng (fetch failed/ETIMEDOUT) mới retry.
+ */
+async function withZaloRetry<T>(label: string, fn: () => Promise<T>, attempts = 3, delayMs = 1500): Promise<T> {
+  let lastErr: unknown;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastErr = err;
+      if (i < attempts - 1) {
+        logger.warn(`[friend-sync] ${label} lỗi (lần ${i + 1}/${attempts}), thử lại sau ${delayMs}ms`);
+        await new Promise((r) => setTimeout(r, delayMs));
+      }
+    }
+  }
+  throw lastErr;
+}
+
 export type SyncTrigger = 'manual' | 'connect' | 'cron';
 
 export interface SyncFriendsOptions {
@@ -155,8 +176,8 @@ export async function syncFriendsForAccount(
   // Defensive Array.isArray normalize giữ nguyên (cho shape variants), nhưng lỗi SDK
   // (rate limit, network) bubble lên outer try/catch.
   try {
-    const liveRaw: any = await zaloOps.getAllFriends(accountId);
-    const sentRaw: any = await zaloOps.getSentFriendRequests(accountId);
+    const liveRaw: any = await withZaloRetry('getAllFriends', () => zaloOps.getAllFriends(accountId));
+    const sentRaw: any = await withZaloRetry('getSentFriendRequests', () => zaloOps.getSentFriendRequests(accountId));
     liveFriends = Array.isArray(liveRaw) ? liveRaw
       : Array.isArray(liveRaw?.data) ? liveRaw.data
       : Array.isArray(liveRaw?.items) ? liveRaw.items
