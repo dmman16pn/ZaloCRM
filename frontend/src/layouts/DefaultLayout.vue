@@ -170,6 +170,7 @@ const primaryTabs: NavTab[] = [
   { path: '/automation/bot/triggers', label: 'Bot-Auto',   icon: '🤖', matchPrefix: '/automation/bot' },
   { path: '/analytics',              label: 'Phân tích',   icon: '📈' },
   { path: '/reports',                label: 'Báo cáo',     icon: '📊' },
+  { path: '/group-posts',            label: 'Đăng nhóm',   icon: '📢' },
 ];
 
 function isActive(tab: NavTab): boolean {

@@ -38,6 +38,44 @@ async function downloadImage(rawUrl: string): Promise<{ buffer: Buffer; ext: str
   return { buffer, ext };
 }
 
+// Broadcast: số nhóm tối đa + giãn nhịp giữa nhóm (chống khóa nick khi đăng loạt).
+const BROADCAST_MAX_GROUPS = 50;
+const BROADCAST_GROUP_DELAY_MS = Number(process.env.BROADCAST_GROUP_DELAY_MS ?? 7000);
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Gửi 1 tin (text và/hoặc nhiều ảnh) tới 1 thread (user hoặc group) qua zca-js.
+ * imageUrls rỗng → gửi text; có ảnh → tải URL HTTPS về tmp rồi gửi kèm caption.
+ * Ném lỗi (SsrfBlockedError / Error) nếu tải ảnh thất bại — caller tự xử lý.
+ * Dùng chung cho /messages/send (1 thread) và /groups/broadcast (nhiều nhóm).
+ */
+async function sendToThread(
+  api: any,
+  threadId: string,
+  threadType: number,
+  content: string,
+  imageUrls: string[],
+): Promise<void> {
+  if (imageUrls.length === 0) {
+    await api.sendMessage(content, threadId, threadType);
+    return;
+  }
+  const tmpRoot = path.join(tmpdir(), 'zalocrm-public-send', randomUUID());
+  await mkdir(tmpRoot, { recursive: true });
+  try {
+    const tmpPaths: string[] = [];
+    for (let i = 0; i < imageUrls.length; i++) {
+      const img = await downloadImage(imageUrls[i]);
+      const tmpPath = path.join(tmpRoot, `${i}${img.ext}`);
+      await writeFile(tmpPath, img.buffer);
+      tmpPaths.push(tmpPath);
+    }
+    await api.sendMessage({ msg: content, attachments: tmpPaths }, threadId, threadType);
+  } finally {
+    await rm(tmpRoot, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
 // ── API key auth middleware ────────────────────────────────────────────────────
 
 async function apiKeyAuth(request: FastifyRequest, reply: FastifyReply) {
@@ -321,44 +359,144 @@ export async function publicApiRoutes(app: FastifyInstance): Promise<void> {
 
       const threadType = body.threadType === 'group' ? 1 : 0;
 
-      // ── Có ảnh: tải URL → tmp file → gửi kèm caption qua zca-js attachments ──
-      if (imageUrls.length > 0) {
-        const tmpRoot = path.join(tmpdir(), 'zalocrm-public-send', randomUUID());
-        await mkdir(tmpRoot, { recursive: true });
-        try {
-          const tmpPaths: string[] = [];
-          for (let i = 0; i < imageUrls.length; i++) {
-            let img;
-            try {
-              img = await downloadImage(imageUrls[i]);
-            } catch (err) {
-              const msg = err instanceof SsrfBlockedError
-                ? `URL ảnh không hợp lệ (chỉ chấp nhận HTTPS công khai): ${imageUrls[i]}`
-                : `Không tải được ảnh ${imageUrls[i]}: ${(err as Error).message}`;
-              return reply.status(400).send({ error: msg });
-            }
-            const tmpPath = path.join(tmpRoot, `${i}${img.ext}`);
-            await writeFile(tmpPath, img.buffer);
-            tmpPaths.push(tmpPath);
-          }
-          // zca-js: 1 call gửi nhiều ảnh + caption (msg). Tin tự sync về CRM qua selfListen.
-          await api.sendMessage(
-            { msg: hasContent ? body.content : '', attachments: tmpPaths },
-            body.threadId,
-            threadType,
-          );
-        } finally {
-          await rm(tmpRoot, { recursive: true, force: true }).catch(() => {});
-        }
-        return { success: true, images: imageUrls.length };
+      try {
+        await sendToThread(api, body.threadId, threadType, hasContent ? body.content : '', imageUrls);
+      } catch (err) {
+        const msg = err instanceof SsrfBlockedError
+          ? `URL ảnh không hợp lệ (chỉ chấp nhận HTTPS công khai)`
+          : `Không gửi được: ${(err as Error).message}`;
+        return reply.status(400).send({ error: msg });
       }
-
-      // ── Chỉ text ──
-      await api.sendMessage(body.content, body.threadId, threadType);
-      return { success: true };
+      return { success: true, images: imageUrls.length };
     } catch (err) {
       logger.error('[public-api] POST /messages/send error:', err);
       return reply.status(500).send({ error: 'Failed to send message' });
+    }
+  });
+
+  // ── Liệt kê tài khoản Zalo (cho bot chọn nick đăng) ───────────────────────
+  app.get('/api/public/zalo-accounts', async (request: FastifyRequest) => {
+    const orgId = (request as any).orgId as string;
+    const accounts = await prisma.zaloAccount.findMany({
+      where: { orgId, archivedAt: null },
+      select: { id: true, displayName: true, status: true, avatarUrl: true },
+      orderBy: { displayName: 'asc' },
+    });
+    return { accounts };
+  });
+
+  // ── Liệt kê nhóm của 1 nick (cho bot chọn nhóm đăng) ──────────────────────
+  app.get('/api/public/zalo-accounts/:accountId/groups', async (request: FastifyRequest, reply: FastifyReply) => {
+    const orgId = (request as any).orgId as string;
+    const { accountId } = request.params as { accountId: string };
+    const account = await prisma.zaloAccount.findFirst({ where: { id: accountId, orgId }, select: { id: true } });
+    if (!account) return reply.status(404).send({ error: 'Zalo account not found' });
+
+    const rows = await prisma.conversation.findMany({
+      where: { orgId, zaloAccountId: accountId, threadType: 'group' },
+      select: { externalThreadId: true, groupName: true, groupAvatarUrl: true, groupMembersCount: true },
+      orderBy: { lastMessageAt: 'desc' },
+    });
+    const groups = rows
+      .filter((r) => r.externalThreadId)
+      .map((r) => ({
+        groupId: r.externalThreadId,
+        name: r.groupName,
+        avatar: r.groupAvatarUrl,
+        membersCount: r.groupMembersCount,
+      }));
+    return { groups };
+  });
+
+  // ── Broadcast: đăng 1 bài (text + ảnh) vào NHIỀU nhóm của 1 nick ──────────
+  app.post('/api/public/groups/broadcast', async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const orgId = (request as any).orgId as string;
+      const body = request.body as Record<string, any>;
+
+      const groupIds: string[] = Array.isArray(body?.groupIds)
+        ? body.groupIds.filter((g: unknown) => typeof g === 'string' && g.length > 0)
+        : [];
+      const imageUrls: string[] = Array.isArray(body?.imageUrls)
+        ? body.imageUrls.filter((u: unknown) => typeof u === 'string')
+        : [];
+      const content: string = typeof body?.content === 'string' ? body.content : '';
+      const externalRef: string | null = typeof body?.externalRef === 'string' ? body.externalRef : null;
+
+      if (!body?.zaloAccountId || groupIds.length === 0) {
+        return reply.status(400).send({ error: 'zaloAccountId and groupIds[] are required' });
+      }
+      if (!content && imageUrls.length === 0) {
+        return reply.status(400).send({ error: 'content or imageUrls is required' });
+      }
+      if (groupIds.length > BROADCAST_MAX_GROUPS) {
+        return reply.status(400).send({ error: `tối đa ${BROADCAST_MAX_GROUPS} nhóm mỗi lần` });
+      }
+      if (imageUrls.length > PUBLIC_MAX_IMAGES) {
+        return reply.status(400).send({ error: `tối đa ${PUBLIC_MAX_IMAGES} ảnh` });
+      }
+
+      const account = await prisma.zaloAccount.findFirst({
+        where: { id: body.zaloAccountId, orgId },
+        select: { id: true, status: true, displayName: true },
+      });
+      if (!account) return reply.status(404).send({ error: 'Zalo account not found' });
+      if (account.status !== 'connected') return reply.status(422).send({ error: 'Zalo account is not connected' });
+
+      const { zaloPool } = await import('../zalo/zalo-pool.js');
+      const api = zaloPool.getApi(body.zaloAccountId);
+      if (!api) return reply.status(422).send({ error: 'Zalo account not active in pool' });
+
+      // Map groupId → tên nhóm (để log dễ đọc), từ Conversation đã sync.
+      const convs = await prisma.conversation.findMany({
+        where: { orgId, zaloAccountId: body.zaloAccountId, threadType: 'group', externalThreadId: { in: groupIds } },
+        select: { externalThreadId: true, groupName: true },
+      });
+      const nameOf = new Map(convs.map((c) => [c.externalThreadId, c.groupName]));
+
+      // Đăng từng nhóm tuần tự, giãn nhịp; 1 nhóm lỗi không dừng cả lô.
+      const results: Array<{ groupId: string; groupName: string | null; ok: boolean; error?: string }> = [];
+      for (let i = 0; i < groupIds.length; i++) {
+        const groupId = groupIds[i];
+        try {
+          await sendToThread(api, groupId, 1 /* group */, content, imageUrls);
+          results.push({ groupId, groupName: nameOf.get(groupId) ?? null, ok: true });
+        } catch (err) {
+          results.push({
+            groupId,
+            groupName: nameOf.get(groupId) ?? null,
+            ok: false,
+            error: err instanceof SsrfBlockedError ? 'URL ảnh không hợp lệ (HTTPS only)' : (err as Error).message,
+          });
+        }
+        if (i < groupIds.length - 1 && BROADCAST_GROUP_DELAY_MS > 0) await sleep(BROADCAST_GROUP_DELAY_MS);
+      }
+
+      const sent = results.filter((r) => r.ok).length;
+      const failed = results.length - sent;
+      const status = failed === 0 ? 'ok' : sent === 0 ? 'failed' : 'partial';
+
+      // Ghi nhật ký để CRM soi lỗi (fire-and-forget — không chặn response).
+      prisma.groupPostLog.create({
+        data: {
+          orgId,
+          zaloAccountId: body.zaloAccountId,
+          accountName: account.displayName ?? null,
+          content: content || null,
+          imageUrls,
+          groupResults: results,
+          sentCount: sent,
+          failedCount: failed,
+          status,
+          source: typeof body?.source === 'string' ? body.source : 'bot',
+          externalRef,
+        },
+      }).catch((err) => logger.error('[public-api] groupPostLog create error:', err));
+
+      return { success: true, sent, failed, status, results };
+    } catch (err) {
+      logger.error('[public-api] POST /groups/broadcast error:', err);
+      return reply.status(500).send({ error: 'Failed to broadcast' });
     }
   });
 }

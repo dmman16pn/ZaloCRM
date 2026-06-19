@@ -3,6 +3,11 @@
 > Ngày: 2026-06-19 · Trạng thái: Spec chờ duyệt
 > Phạm vi: 2 repo — **BOT NỘI BỘ** (`/Users/man/Downloads/VS/BOT TONG HOP NOI BO`) và **Zalo CRM** (`/Users/man/Downloads/VS/Zalo CRM`).
 
+## 0. SỬA PHẠM VI (chốt 2026-06-19)
+
+- **Chỉ CODE phía CRM** trong session này. Bot nội bộ có vòng dev local→test→VPS riêng → không code chen vào (tránh lệch local/VPS). Phần bot §5 chỉ còn là **đặc tả để sinh MASTER PROMPT** (bạn dán cho Claude Code chạy trong repo bot tự dựng module "Đăng Bài").
+- **Bổ sung CRM**: lưu **log mỗi lần bot bắn bài qua** (per-group ok/lỗi) + **tab "Nhật ký đăng bài"** trên giao diện CRM để soi lỗi (nhóm nào fail, vì sao). Xem §4.5 + §4.6.
+
 ## 1. Mục tiêu
 
 Cho phép nhân viên ở **app bot nội bộ** tạo một **danh sách bài đăng theo lịch** (module "Đăng Bài"): chọn sản phẩm → bot soạn sẵn nội dung + ảnh, chọn **1 tài khoản Zalo (nick) + nhiều nhóm** của CRM, đặt **lịch lặp định kỳ**. Khi tới giờ, bot gọi API CRM để CRM **đăng bài + ảnh vào các nhóm Zalo đã chọn**.
@@ -80,7 +85,24 @@ Liệt kê nhóm của 1 nick để bot cho chọn nhóm.
 - Giãn nhịp giữa nhóm (`BROADCAST_GROUP_DELAY_MS`) là cơ chế chính giảm rủi ro khóa nick khi đăng loạt.
 - Burst guard CRM (`ZALO_MSG_BURST`) vẫn còn cho đường `messages/send`; broadcast tự giãn nhịp nên không trip.
 
-## 5. Phía Bot — chi tiết (repo BOT NỘI BỘ)
+### 4.5 Lưu log bài đăng (CRM) — model `GroupPostLog`
+Mỗi lần `broadcast` chạy → ghi 1 row để CRM có nhật ký soi lỗi.
+- Prisma model + migration (bảng mới `group_post_logs`):
+  `id, orgId, zaloAccountId, accountName(snapshot), content, imageUrls(Json), groupResults(Json: [{groupId, groupName, ok, error, zaloMsgId}]), sentCount, failedCount, status('ok'|'partial'|'failed'), source(default 'bot'), externalRef(String? — id job/run bot gửi kèm để đối chiếu), createdAt`.
+  `@@index([orgId, createdAt])`, `@@index([orgId, zaloAccountId, createdAt])`.
+- Broadcast endpoint: sau khi đăng xong các nhóm → tính `sent/failed/status` → `prisma.groupPostLog.create(...)`. Group name lấy từ Conversation (join nhanh theo externalThreadId) để log dễ đọc.
+- Body broadcast nhận thêm optional `externalRef` (bot truyền `jobId/runId`).
+
+### 4.6 Tab "Nhật ký đăng bài" (frontend CRM)
+- **API đọc** (JWT, không phải public): `GET /api/v1/group-post-logs?accountId&status&page&limit` → `{ logs, total }`. Đặt trong module phù hợp (vd `zalo-dashboard-routes` hoặc route mới `group-post-log-routes.ts`, register qua plugin).
+- **Nav**: thêm tab vào `primaryTabs` (DefaultLayout.vue): `{ path: '/group-posts', label: 'Đăng nhóm', icon: '📢' }`.
+- **Route**: `/group-posts` → `views/GroupPostsView.vue` (lazy).
+- **View**: bảng log — thời gian, nick, số nhóm, preview nội dung, #ảnh, kết quả (✓ sent / ✗ failed badge), `source`, `externalRef`. Click 1 dòng → mở chi tiết **per-group** (nhóm nào OK, nhóm nào lỗi + thông báo lỗi). Filter theo nick + trạng thái + ngày, phân trang.
+- API client: thêm hàm trong `frontend/src/api` + store/composable nhẹ (theo pattern hiện có).
+
+## 5. Phía Bot — ĐẶC TẢ ĐỂ SINH MASTER PROMPT (KHÔNG code trong session này)
+
+> Phần dưới mô tả những gì module "Đăng Bài" bên bot cần làm. Sẽ được đóng gói thành **master prompt** để Claude Code chạy trong repo bot tự dựng (theo vòng dev local→test→VPS của bot). CRM chỉ cung cấp hợp đồng API ở §4 + §6.
 
 Stack: Express 5 + pg + node-cron, chạy bằng **PM2 cluster (4 worker)** trên host (KHÔNG trong Docker; chỉ `bot-postgres` trong Docker). Pattern module: `modules/<tool>/config.json` (đăng ký tool) + `frontend/modules/<tool>.js` (UI, phải khai báo trong `frontend/app.js` MODULE_REGISTRY) + `backend/routes/<tool>.js` (API, mount qua `requireLogin`). DB: `botniobo` (container `bot-postgres`).
 

@@ -5,6 +5,7 @@
 import type { ZaloCrmPlugin } from '../../plugin-api/index.js';
 import { publicApiRoutes } from './public-api-routes.js';
 import { webhookSettingsRoutes } from './webhook-settings-routes.js';
+import { groupPostLogRoutes } from './group-post-log-routes.js';
 
 export const apiPlugin: ZaloCrmPlugin = {
   name: 'api',
@@ -13,5 +14,6 @@ export const apiPlugin: ZaloCrmPlugin = {
   async register({ app }) {
     await app.register(publicApiRoutes);
     await app.register(webhookSettingsRoutes);
+    await app.register(groupPostLogRoutes);
   },
 };

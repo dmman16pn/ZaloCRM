@@ -84,6 +84,15 @@ export function mockPrisma() {
       findFirst: vi.fn(),
       findMany: vi.fn(),
     },
+    appSetting: {
+      findFirst: vi.fn(),
+      upsert: vi.fn(),
+    },
+    groupPostLog: {
+      create: vi.fn(),
+      findMany: vi.fn(),
+      count: vi.fn(),
+    },
     zaloAccountAccess: {
       findFirst: vi.fn(),
       findMany: vi.fn(),

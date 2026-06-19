@@ -61,6 +61,12 @@ const routes = [
     component: () => import('@/views/AnalyticsView.vue'),
     meta: { requiresAuth: true },
   },
+  {
+    path: '/group-posts',
+    name: 'GroupPosts',
+    component: () => import('@/views/GroupPostsView.vue'),
+    meta: { requiresAuth: true },
+  },
   // ════════ NEW Settings — 6-group sidebar layout ════════
   {
     path: '/settings',

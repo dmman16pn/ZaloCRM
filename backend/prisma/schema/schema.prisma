@@ -909,6 +909,30 @@ model AppSetting {
   @@map("app_settings")
 }
 
+// Nhật ký đăng bài vào nhóm Zalo qua public API (bot nội bộ bắn sang).
+// Mỗi lần POST /api/public/groups/broadcast → 1 row, lưu kết quả per-group để soi lỗi.
+// Không khai relation Organization (giảm blast radius) — orgId là cột thường + index.
+model GroupPostLog {
+  id            String   @id @default(uuid())
+  orgId         String   @map("org_id")
+  zaloAccountId String   @map("zalo_account_id")
+  accountName   String?  @map("account_name") // snapshot tên nick lúc đăng
+  content       String?
+  imageUrls     Json     @default("[]") @map("image_urls")
+  // [{ groupId, groupName, ok, error, zaloMsgId }]
+  groupResults  Json     @default("[]") @map("group_results")
+  sentCount     Int      @default(0) @map("sent_count")
+  failedCount   Int      @default(0) @map("failed_count")
+  status        String   @default("ok") // ok | partial | failed
+  source        String   @default("bot") // bot | manual | api
+  externalRef   String?  @map("external_ref") // id job/run bot gửi kèm để đối chiếu
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@index([orgId, createdAt(sort: Desc)])
+  @@index([orgId, zaloAccountId, createdAt(sort: Desc)])
+  @@map("group_post_logs")
+}
+
 // Groups of potentially duplicate contacts detected by the intelligence cron
 model DuplicateGroup {
   id         String   @id @default(uuid())
