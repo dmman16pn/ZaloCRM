@@ -82,11 +82,16 @@ Liệt kê nhóm của 1 nick để bot cho chọn nhóm.
 
 ## 5. Phía Bot — chi tiết (repo BOT NỘI BỘ)
 
-Stack: Express 5 + pg + node-cron. Pattern module: `modules/<tool>/config.json` (đăng ký tool) + `frontend/modules/<tool>.js` (UI) + `backend/routes/<tool>.js` (API). DB: `botniobo` (container `bot-postgres`), migration hiện tại 040 → tạo mới **041**.
+Stack: Express 5 + pg + node-cron, chạy bằng **PM2 cluster (4 worker)** trên host (KHÔNG trong Docker; chỉ `bot-postgres` trong Docker). Pattern module: `modules/<tool>/config.json` (đăng ký tool) + `frontend/modules/<tool>.js` (UI, phải khai báo trong `frontend/app.js` MODULE_REGISTRY) + `backend/routes/<tool>.js` (API, mount qua `requireLogin`). DB: `botniobo` (container `bot-postgres`).
 
-### 5.1 DB migration 041 (file mới, KHÔNG sửa migration cũ)
+> **Đã sửa theo review (đối chiếu code thật):**
+> - Migration baseline thực tế là **119** (thư mục `./migrations/` repo-root), KHÔNG phải 040 như CLAUDE.md ghi (stale). File mới phải là **`120_zalo_post_jobs.sql`**.
+> - **Tiền lệ**: `119_drop_dangbai_tables.sql` đã DROP một module đăng bài cũ (dùng LDPlayer local-agent, bảng `post_jobs`, `frontend/modules/dang-bai.js`, `backend/routes/dang-bai.js`). Cách mới (CRM đăng qua zca-js) là bản sửa đúng. → Dùng **tên file/bảng mới** tránh đụng code đã drop: route `dang-bai-zalo.js`, JS `dang-bai-zalo.js`, bảng `zalo_post_jobs`. Xác nhận không còn tham chiếu cũ trước khi build.
+
+### 5.1 DB migration 120 (file mới, KHÔNG sửa migration cũ)
+> Runner `backend/runMigrations.js` tự ghi `schema_migrations` (version = `file.split('_')[0]`) → **KHÔNG** tự `INSERT INTO schema_migrations` trong file SQL (gây double-insert + sai version).
 ```sql
--- 041_zalo_post_jobs.sql
+-- 120_zalo_post_jobs.sql
 CREATE TABLE IF NOT EXISTS zalo_post_jobs (
   id              SERIAL PRIMARY KEY,
   name            VARCHAR(255),                 -- nhãn job (tự gợi ý từ tên SP)
@@ -119,12 +124,11 @@ CREATE TABLE IF NOT EXISTS zalo_post_job_runs (
 );
 CREATE INDEX IF NOT EXISTS idx_zpj_enabled ON zalo_post_jobs(enabled);
 CREATE INDEX IF NOT EXISTS idx_zpjr_job ON zalo_post_job_runs(job_id, ran_at DESC);
-INSERT INTO schema_migrations (version, description) VALUES ('041', 'Zalo post jobs + runs')
-ON CONFLICT DO NOTHING;
+-- KHÔNG INSERT schema_migrations ở đây — runMigrations.js tự ghi.
 ```
 
-### 5.2 Backend route (`backend/routes/dang-bai.js` — file mới)
-Một router Express, mount vào server hiện có. Endpoint nội bộ (auth theo cơ chế bot sẵn có):
+### 5.2 Backend route (`backend/routes/dang-bai-zalo.js` — file mới)
+Router Express, mount: `app.use('/api/dang-bai', requireLogin, dangBaiZaloRouter)` (session-based như mọi route nội bộ; dùng `requirePermission('dangbai-tool', …)` per-route). **API key CRM chỉ dùng cho gọi RA CRM (outbound proxy), KHÔNG để auth route của bot.** Endpoint:
 - `GET  /api/dang-bai/jobs` — danh sách job + last run.
 - `POST /api/dang-bai/jobs` — tạo job (body: name, product_ids, crm_account_id, crm_group_ids, content, image_urls, cron_expr).
 - `PUT  /api/dang-bai/jobs/:id` — sửa.
@@ -135,18 +139,20 @@ Một router Express, mount vào server hiện có. Endpoint nội bộ (auth th
 - **Proxy CRM** (giữ key server-side):
   - `GET /api/dang-bai/crm/accounts` → gọi CRM `GET /api/public/zalo-accounts`.
   - `GET /api/dang-bai/crm/accounts/:id/groups` → gọi CRM `GET /api/public/zalo-accounts/:id/groups`.
-- Cấu hình CRM trong `.env` bot: `CRM_BASE_URL` (vd `http://localhost:3080` nội bộ VPS — bot↔CRM cùng máy nên gọi nội bộ được), `CRM_API_KEY=zcrm_...`.
-  - Lưu ý: proxy ảnh/post đi qua **broadcast** dùng `imageUrls` (URL HTTPS công khai), không phụ thuộc CRM_BASE_URL có HTTPS hay không.
+  - HTTP client: dùng **axios** (chuẩn của codebase bot), không dùng fetch.
+- Cấu hình CRM trong `.env` bot: `CRM_BASE_URL=http://localhost:3080` (bot chạy PM2 trên host, CRM publish `3080:3000` → gọi host-port OK), `CRM_API_KEY=zcrm_...`.
+  - Lưu ý: ảnh đi qua **broadcast** dạng `imageUrls` (URL HTTPS công khai KiotViet), không phụ thuộc CRM_BASE_URL.
 
-### 5.3 Bộ lập lịch (`backend/services/dang-bai-cron.js` — file mới)
-- `node-cron.schedule('* * * * *', tick)` — mỗi phút.
-- `tick()`: lấy job `enabled=true` có `next_run_at <= now()` (hoặc khớp cron). Cơ chế: lưu `cron_expr`, tính `next_run_at` bằng thư viện parse cron (vd `cron-parser`) sau mỗi lần chạy; tick so sánh `next_run_at`.
-- Mỗi job tới hạn: POST CRM `broadcast` với `{zaloAccountId: crm_account_id, groupIds: crm_group_ids, content, imageUrls: image_urls}` → ghi `zalo_post_job_runs` + cập nhật `last_run_at/last_status/next_run_at`.
-- **Khoá chống chạy chồng** (mutex theo job_id) để tick phút sau không chạy lại job đang chạy.
-- Lỗi gọi CRM → ghi run `failed`, vẫn tính `next_run_at` để lần sau thử lại.
+### 5.3 Bộ lập lịch (`backend/services/dang-bai-zalo-scheduler.js` — file mới)
+Theo **đúng pattern `reportScheduler.js` sẵn có** (không thêm dep `cron-parser`, không poll mỗi phút):
+- **Bọc khởi động trong `IS_PRIMARY`** (`NODE_APP_INSTANCE === '0'`) — BẮT BUỘC: PM2 cluster 4 worker, nếu không guard sẽ đăng **4 lần**. Mutex theo job_id chỉ in-process, không chặn được cross-worker.
+- Khi start: load mọi job `enabled=true`, mỗi job `cron.schedule(cron_expr, () => runJob(job))` (validate bằng `cron.validate()`); giữ map `jobId → task` để `task.stop()`/đăng ký lại khi job được sửa/bật/tắt/xoá.
+- `runJob(job)`: POST CRM `broadcast` `{zaloAccountId, groupIds, content, imageUrls}` → ghi `zalo_post_job_runs` + cập nhật `last_run_at/last_status`. (`next_run_at` chỉ để hiển thị, có thể tính lười bằng tiện ích nhỏ hoặc bỏ.)
+- Lỗi gọi CRM → ghi run `failed`; lần cron kế tiếp tự chạy lại (không retry dồn).
 
-### 5.4 Frontend (`frontend/modules/dang-bai.js` + `modules/dangbai-tool/`)
-- Tận dụng tool "Đăng Bài" (`modules/dangbai-tool/config.json`) đang là placeholder → thay `index.html`/wire vào module thật. (Chỉ mở đúng file module này.)
+### 5.4 Frontend (`frontend/modules/dang-bai-zalo.js` + `modules/dangbai-tool/`)
+- Tận dụng tool "Đăng Bài" (`modules/dangbai-tool/config.json`, slug `dangbai-tool`) đang là placeholder → wire vào module thật.
+- **BẮT BUỘC sửa `frontend/app.js`**: thêm entry vào `MODULE_REGISTRY` (vd `'dangbai-tool': { file: '/modules/dang-bai-zalo.js', init: 'initDangBaiZalo' }`) — nếu không, bấm tile sidebar không load gì. (Đây là ngoại lệ hợp lệ với quy tắc "chỉ mở file module": app.js là router bắt buộc phải đụng để đăng ký module mới.)
 - Màn chính: bảng danh sách job (tên, nick, số nhóm, lịch, trạng thái lần chạy cuối, nút bật/tắt, đăng ngay, sửa, xoá, xem log).
 - Form thêm/sửa job:
   1. Chọn sản phẩm (từ module hàng hoá) → preview content tự soạn (tên + giá + mô tả) + ảnh (từ `products.images`); cho sửa content.
@@ -180,6 +186,7 @@ x-api-key: zcrm_...
 
 | Rủi ro | Giảm thiểu |
 |---|---|
+| **PM2 cluster đăng 4 lần** (4 worker đều chạy cron) | **BẮT BUỘC** guard scheduler bằng `IS_PRIMARY` (`NODE_APP_INSTANCE==='0'`) — như mọi cron sẵn có (server.js) |
 | Khóa nick do đăng loạt nhiều nhóm | Giãn nhịp `BROADCAST_GROUP_DELAY_MS` (mặc định 7s); khuyến nghị user chia nhỏ số nhóm/job, giãn lịch |
 | Nhóm mới chưa sync → không hiện trong dropdown | Nút "đồng bộ nhóm" (gọi sync nhóm CRM) hoặc nhập groupId thủ công (v2) |
 | API key lộ | Key chỉ ở backend bot (`.env`), proxy; không xuống browser |
@@ -204,8 +211,8 @@ Thủ công (E2E): tạo job test → "đăng ngay" tới 1 nhóm test → kiể
 
 ## 11. Thứ tự triển khai (cho writing-plans)
 
-1. CRM: helper `sendToThread` (refactor `messages/send`) + 3 endpoint public + test.
+1. CRM: helper `sendToThread` (refactor `messages/send`, giữ caps `imageUrls≤10` + SSRF per-URL) + 3 endpoint public + test (mẫu `chat-operations-routes.test.ts`).
 2. CRM: deploy (rebuild image) + tạo nhóm test, verify broadcast bằng key thật.
-3. Bot: migration 041 + backend route + proxy + cron service + đăng ký router/cron vào server.
-4. Bot: frontend module "Đăng Bài" (form + danh sách + log).
-5. E2E + tài liệu hướng dẫn nội bộ.
+3. Bot: kiểm tra sạch tham chiếu module dang-bai cũ (đã drop ở 119) → migration **120** + route `dang-bai-zalo.js` (mount `requireLogin`) + proxy (axios) + scheduler (`IS_PRIMARY` + cron.schedule-per-job) + đăng ký vào `server.js`.
+4. Bot: frontend `dang-bai-zalo.js` + **thêm entry vào `app.js` MODULE_REGISTRY** (form + danh sách + log).
+5. E2E (đăng ngay → nhóm test) + tài liệu hướng dẫn nội bộ.
