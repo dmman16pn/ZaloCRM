@@ -13,8 +13,15 @@ interface CategoryLimit {
   burstWindowMs: number;
 }
 
+// Giới hạn gửi tin nhắn — cấu hình qua env, mặc định BỎ trần ngày.
+//   ZALO_MSG_DAILY_LIMIT = 0 (mặc định) → KHÔNG giới hạn tin/ngày (n8n/UI tự quản nhịp).
+//   ZALO_MSG_BURST        = 5 (mặc định) → vẫn chặn gửi dồn >5 tin/30s như lưới an toàn
+//                                          chống vòng lặp gửi vô hạn; đặt 0 để tắt luôn.
+const MSG_DAILY_LIMIT = Number(process.env.ZALO_MSG_DAILY_LIMIT ?? 0);
+const MSG_BURST = Number(process.env.ZALO_MSG_BURST ?? 5);
+
 const CATEGORY_LIMITS: Record<OpCategory, CategoryLimit> = {
-  message:       { daily: 200,  burst: 5,  burstWindowMs: 30_000 },
+  message:       { daily: MSG_DAILY_LIMIT, burst: MSG_BURST, burstWindowMs: 30_000 },
   reaction:      { daily: 300,  burst: 10, burstWindowMs: 30_000 },
   chat_action:   { daily: 500,  burst: 15, burstWindowMs: 30_000 },
   group_admin:   { daily: 50,   burst: 5,  burstWindowMs: 60_000 },
@@ -61,36 +68,46 @@ class ZaloRateLimiter {
     const key = `${accountId}:${category}`;
     const today = new Date().toISOString().split('T')[0];
 
-    const daily = this.dailyCounts.get(key);
-    if (daily && daily.date === today && daily.count >= limits.daily) {
-      return { allowed: false, reason: `Đã đạt giới hạn ${limits.daily} ${category}/ngày` };
+    // limits.daily <= 0 → không áp trần theo ngày.
+    if (limits.daily > 0) {
+      const daily = this.dailyCounts.get(key);
+      if (daily && daily.date === today && daily.count >= limits.daily) {
+        return { allowed: false, reason: `Đã đạt giới hạn ${limits.daily} ${category}/ngày` };
+      }
     }
 
-    const now = Date.now();
-    const recent = (this.recentSends.get(key) || []).filter(t => now - t < limits.burstWindowMs);
-    if (recent.length >= limits.burst) {
-      return { allowed: false, reason: `Quá nhanh (>${limits.burst} ${category}/${Math.round(limits.burstWindowMs / 1000)}s)` };
+    // limits.burst <= 0 → không áp chặn gửi dồn.
+    if (limits.burst > 0) {
+      const now = Date.now();
+      const recent = (this.recentSends.get(key) || []).filter(t => now - t < limits.burstWindowMs);
+      if (recent.length >= limits.burst) {
+        return { allowed: false, reason: `Quá nhanh (>${limits.burst} ${category}/${Math.round(limits.burstWindowMs / 1000)}s)` };
+      }
     }
     return { allowed: true };
   }
 
   private async checkRedis(r: RedisClient, accountId: string, category: OpCategory, limits: CategoryLimit): Promise<{ allowed: boolean; reason?: string }> {
     const today = new Date().toISOString().split('T')[0];
-    const dailyKey = DAILY_KEY(accountId, category);
-    const dailyVal = await r.hget(dailyKey, today);
-    const dailyCount = dailyVal ? parseInt(dailyVal, 10) : 0;
-
-    if (dailyCount >= limits.daily) {
-      return { allowed: false, reason: `Đã đạt giới hạn ${limits.daily} ${category}/ngày` };
+    // limits.daily <= 0 → không áp trần theo ngày.
+    if (limits.daily > 0) {
+      const dailyKey = DAILY_KEY(accountId, category);
+      const dailyVal = await r.hget(dailyKey, today);
+      const dailyCount = dailyVal ? parseInt(dailyVal, 10) : 0;
+      if (dailyCount >= limits.daily) {
+        return { allowed: false, reason: `Đã đạt giới hạn ${limits.daily} ${category}/ngày` };
+      }
     }
 
-    const burstKey = BURST_KEY(accountId, category);
-    const now = Date.now();
-    await r.zremrangebyscore(burstKey, '-inf', String(now - limits.burstWindowMs));
-    const burstCount = await r.zcard(burstKey);
-
-    if (burstCount >= limits.burst) {
-      return { allowed: false, reason: `Quá nhanh (>${limits.burst} ${category}/${Math.round(limits.burstWindowMs / 1000)}s)` };
+    // limits.burst <= 0 → không áp chặn gửi dồn.
+    if (limits.burst > 0) {
+      const burstKey = BURST_KEY(accountId, category);
+      const now = Date.now();
+      await r.zremrangebyscore(burstKey, '-inf', String(now - limits.burstWindowMs));
+      const burstCount = await r.zcard(burstKey);
+      if (burstCount >= limits.burst) {
+        return { allowed: false, reason: `Quá nhanh (>${limits.burst} ${category}/${Math.round(limits.burstWindowMs / 1000)}s)` };
+      }
     }
     return { allowed: true };
   }
