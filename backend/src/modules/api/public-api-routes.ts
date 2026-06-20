@@ -45,34 +45,60 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // ── Gửi album ảnh CÓ RETRY AN TOÀN (chống trùng ảnh) ───────────────────────────
 // zca-js api.sendMessage({attachments}) chạy 2 pha:
-//   (1) UPLOAD: upload song song N ảnh lên host file Zalo. Lỗi ở pha này = FAIL NHANH
-//       và CHƯA gửi tin nào → retry HOÀN TOÀN an toàn (không trùng).
+//   (1) UPLOAD: upload song song N ảnh lên host file Zalo. Lỗi ở pha này CHƯA gửi tin
+//       nào → retry HOÀN TOÀN an toàn (không trùng).
 //   (2) SEND: bắn song song N request photo_original/send (chung groupLayoutId → 1 album).
-//       Lỗi ở pha này = FAIL MUỘN, một số ảnh CÓ THỂ ĐÃ tới → retry sẽ gây TRÙNG.
-// Không có tín hiệu nào khác để phân biệt 2 pha ngoài THỜI GIAN: pha upload 10 ảnh mất
-// vài giây, nên lỗi < PARTIAL_MS coi như pha upload (sạch, retry được); lỗi >= PARTIAL_MS
-// coi như đã sang pha send (có thể partial) → KHÔNG tự retry, ném PartialSendError cho
-// caller xử lý + người vận hành kiểm tra. Tất cả ngưỡng chỉnh được qua ENV.
-const IMG_SEND_MAX_TRIES = Number(process.env.PUBLIC_IMAGE_SEND_MAX_TRIES ?? 4);
-const IMG_SEND_PARTIAL_MS = Number(process.env.PUBLIC_IMAGE_SEND_PARTIAL_MS ?? 3000);
+//       Lỗi ở pha này một số ảnh CÓ THỂ ĐÃ tới → retry sẽ gây TRÙNG.
+// THỜI GIAN không đủ tin cậy để phân biệt 2 pha (lúc Zalo flap, upload 10 ảnh mất >3s mới
+// fail sạch → dễ nhầm thành "partial"). Tín hiệu ĐÁNG TIN là ĐẾM ẢNH THỰC SỰ đã giao:
+// sau mỗi lần fail, đợi echo rồi đếm tin ảnh self gửi vào thread kể từ mốc bắt đầu —
+//   = 0  → pha upload sạch, chưa gửi gì → retry an toàn;
+//   > 0  → đã giao một phần → DỪNG, ném PartialSendError (caller KHÔNG tự gửi lại);
+//   không xác minh được (không thấy conversation) → coi như rủi ro → DỪNG cho chắc.
+// Fail RẤT NHANH (< FAST_MS) chắc chắn là pha upload → retry luôn, khỏi tra DB.
+const IMG_SEND_MAX_TRIES = Number(process.env.PUBLIC_IMAGE_SEND_MAX_TRIES ?? 6);
+const IMG_SEND_FAST_MS = Number(process.env.PUBLIC_IMAGE_SEND_FAST_MS ?? 2500);
+const IMG_SEND_ECHO_WAIT_MS = Number(process.env.PUBLIC_IMAGE_SEND_ECHO_WAIT_MS ?? 4000);
 const IMG_SEND_RETRY_DELAY_MS = Number(process.env.PUBLIC_IMAGE_SEND_RETRY_DELAY_MS ?? 1500);
 
-/** Lỗi gửi ảnh ở pha SEND (có thể đã giao một phần) — caller KHÔNG được tự gửi lại. */
+/** Lỗi gửi ảnh nghi đã giao một phần — caller KHÔNG được tự gửi lại (tránh trùng). */
 class PartialSendError extends Error {
-  constructor(message: string, public readonly elapsedMs: number) {
+  constructor(message: string, public readonly deliveredCount: number) {
     super(message);
     this.name = 'PartialSendError';
   }
 }
 
 /**
+ * Đếm số tin ẢNH do mình (self) gửi vào 1 thread kể từ mốc `since` — để biết lần
+ * sendMessage vừa lỗi đã giao được ảnh nào chưa. Trả -1 nếu KHÔNG xác minh được
+ * (không tìm thấy conversation) → caller coi như rủi ro và dừng.
+ */
+async function countSelfImagesSince(
+  orgId: string,
+  zaloAccountId: string,
+  threadId: string,
+  threadType: number,
+  since: Date,
+): Promise<number> {
+  const conv = await prisma.conversation.findFirst({
+    where: { orgId, zaloAccountId, externalThreadId: threadId, threadType: threadType === 1 ? 'group' : 'user' },
+    select: { id: true },
+  });
+  if (!conv) return -1;
+  return prisma.message.count({
+    where: { conversationId: conv.id, contentType: 'image', senderType: 'self', sentAt: { gte: since } },
+  });
+}
+
+/**
  * Gửi 1 album (text + nhiều ảnh đã tải về tmpPaths) trong 1 call zca-js, retry an toàn.
- * - Thành công → trả về (đủ ảnh trong 1 album).
- * - Fail NHANH (< IMG_SEND_PARTIAL_MS, pha upload, chưa gửi gì) → backoff rồi gửi lại.
- * - Fail MUỘN (>= IMG_SEND_PARTIAL_MS, pha send, có thể partial) → ném PartialSendError.
+ * Chỉ retry khi xác minh được CHƯA giao ảnh nào; nghi đã giao một phần → ném PartialSendError.
  */
 async function sendAlbumWithSafeRetry(
   api: any,
+  orgId: string,
+  zaloAccountId: string,
   threadId: string,
   threadType: number,
   content: string,
@@ -80,6 +106,7 @@ async function sendAlbumWithSafeRetry(
 ): Promise<void> {
   let lastErr: unknown;
   for (let attempt = 1; attempt <= IMG_SEND_MAX_TRIES; attempt++) {
+    const since = new Date(Date.now() - 1000); // trừ hao lệch giờ giữa app và DB
     const startedAt = Date.now();
     try {
       await api.sendMessage({ msg: content || '', attachments: tmpPaths }, threadId, threadType);
@@ -87,14 +114,27 @@ async function sendAlbumWithSafeRetry(
     } catch (err) {
       const elapsed = Date.now() - startedAt;
       lastErr = err;
-      if (elapsed >= IMG_SEND_PARTIAL_MS) {
-        // Đã qua pha upload → lỗi pha send → có thể đã giao một phần → DỪNG, không retry.
-        throw new PartialSendError((err as Error)?.message ?? 'send failed', elapsed);
+
+      // Fail rất nhanh → chắc chắn pha upload, chưa gửi gì → retry luôn.
+      if (elapsed < IMG_SEND_FAST_MS) {
+        logger.warn(`[public-api] gửi ${tmpPaths.length} ảnh fail nhanh (pha upload) lần ${attempt}/${IMG_SEND_MAX_TRIES} sau ${elapsed}ms: ${(err as Error)?.message} — gửi lại`);
+        if (attempt < IMG_SEND_MAX_TRIES) await sleep(IMG_SEND_RETRY_DELAY_MS);
+        continue;
       }
-      logger.warn(
-        `[public-api] gửi ${tmpPaths.length} ảnh fail nhanh (pha upload, chưa gửi gì) lần ${attempt}/${IMG_SEND_MAX_TRIES} sau ${elapsed}ms: ${(err as Error)?.message} — gửi lại`,
+
+      // Fail muộn → đợi echo rồi đếm ảnh thực sự đã giao để quyết định.
+      await sleep(IMG_SEND_ECHO_WAIT_MS);
+      const delivered = await countSelfImagesSince(orgId, zaloAccountId, threadId, threadType, since);
+      if (delivered === 0) {
+        logger.warn(`[public-api] gửi ${tmpPaths.length} ảnh fail sau ${elapsed}ms nhưng đã giao 0 ảnh (pha upload) lần ${attempt}/${IMG_SEND_MAX_TRIES} — gửi lại`);
+        if (attempt < IMG_SEND_MAX_TRIES) await sleep(IMG_SEND_RETRY_DELAY_MS);
+        continue;
+      }
+      // delivered > 0 (partial thật) hoặc -1 (không xác minh được) → DỪNG, không gửi lại.
+      throw new PartialSendError(
+        delivered > 0 ? `đã giao ${delivered} ảnh trước khi lỗi` : `lỗi sau ${elapsed}ms, không xác minh được đã giao hay chưa`,
+        delivered,
       );
-      if (attempt < IMG_SEND_MAX_TRIES) await sleep(IMG_SEND_RETRY_DELAY_MS);
     }
   }
   throw lastErr;
@@ -106,14 +146,14 @@ async function sendAlbumWithSafeRetry(
  * Ném lỗi (SsrfBlockedError / Error) nếu tải/upload ảnh thất bại — caller tự xử lý.
  * Dùng chung cho /messages/send (1 thread) và /groups/broadcast (nhiều nhóm).
  *
- * THỨ TỰ (2026-06-20, theo yêu cầu): gửi TEXT (bài viết) trước rồi ẢNH (grid) sau, để
- * nhóm hiển thị bài viết trên, ảnh dưới. Ảnh gửi với msg='' (không sinh thêm tin text).
- * MỖI THỨ GỬI ĐÚNG 1 LẦN, KHÔNG retry: retry gây gửi TRÙNG ẢNH (1 lần upload bị
- * timeout-nhưng-thực-ra-đã-tới-Zalo, retry gửi lại lần 2 → nhóm thấy 2 grid). Lỗi thật
- * sẽ throw → caller ghi failed cho nhóm đó.
+ * Gửi GỘP text + tất cả ảnh trong 1 call → 1 album/grid (groupLayoutId của zca-js).
+ * Ảnh CÓ retry an toàn qua sendAlbumWithSafeRetry: chỉ gửi lại khi xác minh CHƯA giao
+ * ảnh nào; nghi đã giao một phần → ném PartialSendError (caller ghi failed, KHÔNG tự gửi lại).
  */
 async function sendToThread(
   api: any,
+  orgId: string,
+  zaloAccountId: string,
   threadId: string,
   threadType: number,
   content: string,
@@ -134,10 +174,7 @@ async function sendToThread(
       tmpPaths.push(tmpPath);
     }
 
-    // Gửi GỘP text + tất cả ảnh trong 1 call (1 album/grid, GIỐNG node zca-js trên n8n).
-    // CÓ retry an toàn: chỉ gửi lại khi fail ở pha upload (chưa gửi gì); fail pha send (có
-    // thể partial) sẽ ném PartialSendError → caller ghi failed, KHÔNG tự gửi lại (tránh trùng).
-    await sendAlbumWithSafeRetry(api, threadId, threadType, content || '', tmpPaths);
+    await sendAlbumWithSafeRetry(api, orgId, zaloAccountId, threadId, threadType, content || '', tmpPaths);
   } finally {
     await rm(tmpRoot, { recursive: true, force: true }).catch(() => {});
   }
@@ -427,12 +464,12 @@ export async function publicApiRoutes(app: FastifyInstance): Promise<void> {
       const threadType = body.threadType === 'group' ? 1 : 0;
 
       try {
-        await sendToThread(api, body.threadId, threadType, hasContent ? body.content : '', imageUrls);
+        await sendToThread(api, orgId, body.zaloAccountId, body.threadId, threadType, hasContent ? body.content : '', imageUrls);
       } catch (err) {
         if (err instanceof PartialSendError) {
           // Đã qua pha upload, lỗi pha gửi → CÓ THỂ đã giao một phần ảnh. Báo riêng,
           // 409 + partial=true để bot/người vận hành KIỂM TRA trước khi gửi lại (tránh trùng).
-          logger.error(`[public-api] /messages/send PARTIAL (elapsed=${err.elapsedMs}ms): ${err.message}`);
+          logger.error(`[public-api] /messages/send PARTIAL (delivered=${err.deliveredCount}): ${err.message}`);
           return reply.status(409).send({
             error: 'Có thể đã gửi được một phần ảnh — KIỂM TRA hội thoại trước khi gửi lại để tránh trùng.',
             partial: true,
@@ -575,7 +612,7 @@ export async function publicApiRoutes(app: FastifyInstance): Promise<void> {
       for (let i = 0; i < groupIds.length; i++) {
         const groupId = groupIds[i];
         try {
-          await sendToThread(api, groupId, 1 /* group */, content, imageUrls);
+          await sendToThread(api, orgId, body.zaloAccountId, groupId, 1 /* group */, content, imageUrls);
           results.push({ groupId, groupName: nameOf.get(groupId) ?? null, ok: true });
         } catch (err) {
           logger.error(`[broadcast] nhóm ${groupId} (${nameOf.get(groupId) ?? '?'}) LỖI:`, (err as Error)?.message, '| cause:', (err as any)?.cause?.code ?? (err as any)?.cause?.message ?? '-', '| stack:', (err as Error)?.stack?.split('\n').slice(0,3).join(' '));
@@ -588,7 +625,7 @@ export async function publicApiRoutes(app: FastifyInstance): Promise<void> {
             error: err instanceof SsrfBlockedError
               ? 'URL ảnh không hợp lệ (HTTPS only)'
               : err instanceof PartialSendError
-                ? `Có thể đã đăng một phần ảnh (${err.elapsedMs}ms) — kiểm tra nhóm trước khi đăng lại`
+                ? `Có thể đã đăng một phần ảnh (đã giao ${err.deliveredCount}) — kiểm tra nhóm trước khi đăng lại`
                 : (err as Error).message,
           });
         }
