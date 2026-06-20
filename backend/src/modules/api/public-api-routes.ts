@@ -77,16 +77,9 @@ async function sendToThread(
       tmpPaths.push(tmpPath);
     }
 
-    // 1) Gửi TEXT (bài viết) TRƯỚC — nếu có nội dung.
-    if (content && content.length > 0) {
-      await api.sendMessage(content, threadId, threadType);
-    }
-
-    // 2) Gửi TẤT CẢ ẢNH 1 lần (grid), msg='' để không sinh thêm tin text.
-    //    TUYỆT ĐỐI KHÔNG retry: gửi ảnh KHÔNG idempotent — nếu ảnh đã tới Zalo nhưng
-    //    response timeout, retry sẽ gửi LẠI → TRÙNG ảnh. Lỗi → throw cho caller (nhóm đó
-    //    ghi failed rồi sang nhóm sau). Mỗi nhóm đúng 1 text + 1 ảnh, tuần tự.
-    await api.sendMessage({ msg: '', attachments: tmpPaths }, threadId, threadType);
+    // Gửi GỘP text + tất cả ảnh trong 1 call (GIỐNG node zca-js trên n8n đang chạy ổn).
+    // Không tách 2 call, KHÔNG retry. Lỗi → throw cho caller (nhóm đó ghi failed, sang nhóm sau).
+    await api.sendMessage({ msg: content || '', attachments: tmpPaths }, threadId, threadType);
   } finally {
     await rm(tmpRoot, { recursive: true, force: true }).catch(() => {});
   }
@@ -518,6 +511,7 @@ export async function publicApiRoutes(app: FastifyInstance): Promise<void> {
           await sendToThread(api, groupId, 1 /* group */, content, imageUrls);
           results.push({ groupId, groupName: nameOf.get(groupId) ?? null, ok: true });
         } catch (err) {
+          logger.error(`[broadcast] nhóm ${groupId} (${nameOf.get(groupId) ?? '?'}) LỖI:`, (err as Error)?.message, '| cause:', (err as any)?.cause?.code ?? (err as any)?.cause?.message ?? '-', '| stack:', (err as Error)?.stack?.split('\n').slice(0,3).join(' '));
           results.push({
             groupId,
             groupName: nameOf.get(groupId) ?? null,
