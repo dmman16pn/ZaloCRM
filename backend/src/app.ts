@@ -358,9 +358,9 @@ async function bootstrap() {
         userAgent: string;
       } | null;
       if (session?.imei) {
-        zaloPool.reconnect(account.id, session).catch((err) => {
-          logger.warn(`Auto-reconnect failed for account ${account.id}:`, err);
-        });
+        // Qua ensureReconnecting → thử ngay + tự backoff retry nếu Zalo từ chối lúc boot
+        // (sau restart Zalo thường giữ session cũ vài phút). Không còn 1-shot rồi đợi 5'.
+        zaloPool.ensureReconnecting(account.id);
       }
     }
   } catch (err) {

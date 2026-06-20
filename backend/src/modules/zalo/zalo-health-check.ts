@@ -23,16 +23,12 @@ export function startZaloHealthCheck(): void {
       });
 
       for (const acc of accounts) {
-        const status = zaloPool.getStatus(acc.id);
-        if (status !== 'connected' && status !== 'connecting' && status !== 'qr_pending') {
-          const session = acc.sessionData as any;
-          if (session?.imei) {
-            logger.info(`[health-check] Reconnecting ${acc.displayName || acc.id}...`);
-            zaloPool.reconnect(acc.id, session, acc.proxyUrl).catch((err) => {
-              logger.warn(`[health-check] Reconnect failed for ${acc.id}:`, err);
-            });
-          }
-        }
+        const session = acc.sessionData as any;
+        if (!session?.imei) continue;
+        // ensureReconnecting tự bỏ qua nick đang connected/connecting/qr_pending hoặc
+        // đã có chuỗi backoff chạy → an toàn gọi mỗi tick. Nick còn rớt → khởi chuỗi mới.
+        logger.info(`[health-check] Ensuring reconnect for ${acc.displayName || acc.id}...`);
+        zaloPool.ensureReconnecting(acc.id);
       }
     } catch (err) {
       logger.error('[health-check] Error during health check:', err);

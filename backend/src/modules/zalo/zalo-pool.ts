@@ -81,6 +81,10 @@ class ZaloAccountPool {
   // races (listener 'closed' 30s timer, 2-min retry, 5-min health-check, daily
   // refresh can all fire for the same account at once → stacked listeners).
   private reconnecting = new Set<string>();
+  // Accounts đang có 1 CHUỖI auto-reconnect backoff chạy (qua ensureReconnecting).
+  // Đảm bảo startup + health-check 5' + listener onDisconnected chỉ tạo tối đa 1 chuỗi
+  // / account → không chồng nhiều chuỗi retry. Khác `reconnecting` (khoá 1 lần login).
+  private autoReconnectActive = new Set<string>();
   // Đang tắt server (SIGTERM) — chặn mọi auto-reconnect khi listener 'closed' do ta
   // chủ động stop, để Zalo nhận close frame sạch và giải phóng session.
   private shuttingDown = false;
@@ -389,8 +393,8 @@ class ZaloAccountPool {
           return; // DON'T reconnect
         }
 
-        // Normal auto-reconnect after 30 seconds
-        setTimeout(() => this.autoReconnect(id), 30_000);
+        // Normal auto-reconnect after 30 seconds (qua ensureReconnecting → chuỗi backoff)
+        setTimeout(() => this.ensureReconnecting(id), 30_000);
       },
     });
 
@@ -443,25 +447,43 @@ class ZaloAccountPool {
     }
   }
 
-  // Auto-reconnect using saved session from DB
-  // Backoff giữa các lần auto-reconnect thất bại (event-driven). Lần gọi đầu tiên
-  // đã được hẹn 30s sau khi rớt (xem onDisconnected). Các index sau là delay cho
-  // attempt kế tiếp. Hết mảng → giao lại cho health-check cron (5'/lần) lo tiếp.
+  // Auto-reconnect using saved session from DB.
+  // Backoff giữa các lần thử trong 1 chuỗi. Hết mảng → chuỗi kết thúc; health-check 5'
+  // sẽ khởi 1 chuỗi mới nếu vẫn chưa lên → tổng thể thử rất dày, tự bắt "lúc Zalo chịu nhận".
   private static readonly AUTO_RECONNECT_BACKOFF_MS = [60_000, 120_000, 300_000, 300_000, 300_000];
 
   /**
-   * Tự reconnect 1 account sau khi rớt, có RETRY backoff.
+   * Điểm vào DUY NHẤT để "kéo 1 nick lên lại" — idempotent. Gọi từ startup, health-check
+   * (5'/lần) và listener onDisconnected. Nếu đã có chuỗi đang chạy / đang connect / đang
+   * login (qr_pending/connecting) → no-op. Ngược lại bắt đầu 1 chuỗi autoReconnect có backoff.
    *
-   * FIX 2026-06-20: trước đây retry nằm trong `catch`, nhưng reconnect() nuốt lỗi
-   * (không throw) → catch không bao giờ chạy → chỉ thử ĐÚNG 1 lần rồi phó mặc cron
-   * 5 phút. Nick gặp blip mạng Zalo có thể kẹt qr_pending tới khi bấm Reconnect tay.
-   * Giờ reconnect() trả boolean → fail thì tự hẹn lần thử tiếp theo (giãn nhịp tăng dần).
+   * VÌ SAO (2026-06-20): manual Reconnect và auto gọi CÙNG `reconnect()`; auto "fail" còn
+   * manual "được" chỉ do thời điểm — Zalo lúc nhận lúc từ chối session. Trước đây auto chỉ
+   * thử mỗi 5' (health-check) hoặc 1 lần lúc startup → dễ trượt "lúc Zalo chịu nhận", user
+   * phải bấm tay. Giờ mọi trigger đều vào chuỗi backoff 60/120/300s → thử dày như bấm tay
+   * liên tục, tự bắt được good-moment mà không cần can thiệp.
+   */
+  ensureReconnecting(accountId: string): void {
+    if (this.manuallyDisabled.has(accountId)) return;
+    if (this.autoReconnectActive.has(accountId)) return; // đã có chuỗi đang chạy
+    const st = this.instances.get(accountId)?.status;
+    if (st === 'connected' || st === 'connecting' || st === 'qr_pending') return; // đang ok / đang login
+    this.autoReconnectActive.add(accountId);
+    void this.autoReconnect(accountId, 1);
+  }
+
+  /**
+   * 1 chuỗi auto-reconnect có backoff. KHÔNG gọi trực tiếp — luôn vào qua ensureReconnecting
+   * (nó set cờ autoReconnectActive). Cờ giữ suốt chuỗi, chỉ xoá ở trạng thái kết thúc
+   * (connected / hết session / bỏ cuộc / manuallyDisabled) để chuỗi mới có thể khởi sau.
    */
   private async autoReconnect(accountId: string, attempt = 1): Promise<void> {
+    const finish = () => { this.autoReconnectActive.delete(accountId); };
+
     // Skip if manually disabled via disconnect/disable action
-    if (this.manuallyDisabled.has(accountId)) return;
-    // Skip if already reconnected (lần khác / health-check đã lo xong)
-    if (this.instances.get(accountId)?.status === 'connected') return;
+    if (this.manuallyDisabled.has(accountId)) return finish();
+    // Skip if already reconnected (chuỗi khác / manual đã lo xong)
+    if (this.instances.get(accountId)?.status === 'connected') return finish();
 
     const account = await prisma.zaloAccount
       .findUnique({ where: { id: accountId }, select: { sessionData: true, proxyUrl: true } })
@@ -470,23 +492,23 @@ class ZaloAccountPool {
     if (!session?.imei) {
       logger.warn(`[zalo:${accountId}] No saved session, cannot auto-reconnect`);
       this.io?.emit('zalo:reconnect-failed', { accountId, error: 'No saved session' });
-      return; // cần QR — không retry vô ích
+      return finish(); // cần QR — không retry vô ích
     }
 
     logger.info(`[zalo:${accountId}] Auto-reconnecting (attempt ${attempt})...`);
     const ok = await this.reconnect(accountId, session, account?.proxyUrl);
-    if (ok) return; // đã connect → xong
+    if (ok) return finish(); // đã connect → xong
 
     // Thất bại (reconnect nuốt lỗi, trả false). Hẹn lần thử kế tiếp với backoff.
-    if (this.manuallyDisabled.has(accountId)) return;
+    if (this.manuallyDisabled.has(accountId)) return finish();
     const backoff = ZaloAccountPool.AUTO_RECONNECT_BACKOFF_MS;
     if (attempt > backoff.length) {
-      logger.warn(`[zalo:${accountId}] Auto-reconnect bỏ cuộc sau ${attempt} lần — health-check (5'/lần) sẽ tiếp tục thử.`);
-      return; // cron health-check vẫn auto thử mãi mỗi 5 phút
+      logger.warn(`[zalo:${accountId}] Auto-reconnect chuỗi này dừng sau ${attempt - 1} lần — health-check (5'/lần) sẽ khởi chuỗi mới.`);
+      return finish(); // health-check sẽ ensureReconnecting lại ở tick kế
     }
     const delay = backoff[attempt - 1];
     logger.info(`[zalo:${accountId}] Auto-reconnect attempt ${attempt} thất bại, thử lại sau ${delay / 1000}s`);
-    setTimeout(() => this.autoReconnect(accountId, attempt + 1), delay);
+    setTimeout(() => this.autoReconnect(accountId, attempt + 1), delay); // cờ vẫn giữ → không chuỗi trùng
   }
 
   // Stop listener and remove from pool
