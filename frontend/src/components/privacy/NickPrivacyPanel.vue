@@ -65,46 +65,6 @@
                 <strong>Không có quyền:</strong> Chỉ owner của nick mới flip được chế độ Riêng tư.
               </p>
             </div>
-
-            <!-- Fields to blur (coming soon) -->
-            <div class="role-block role-block-disabled">
-              <div class="role-head">
-                <span class="section-title" style="margin: 0">Trường dữ liệu bị làm mờ</span>
-                <span class="badge-soon">Sắp ra mắt</span>
-              </div>
-              <div class="blur-fields-preview">
-                <label class="cb-row">
-                  <input type="checkbox" disabled checked />
-                  <span>Nội dung tin nhắn (mặc định luôn blur)</span>
-                </label>
-                <label class="cb-row">
-                  <input type="checkbox" disabled />
-                  <span>Số điện thoại khách</span>
-                </label>
-                <label class="cb-row">
-                  <input type="checkbox" disabled />
-                  <span>Email khách</span>
-                </label>
-                <label class="cb-row">
-                  <input type="checkbox" disabled />
-                  <span>Tên khách (chỉ hiện initials)</span>
-                </label>
-              </div>
-              <p class="hint-soft">
-                Hiện chỉ blur <strong>nội dung tin nhắn</strong>. Phase tiếp theo sẽ mở rộng configurable per-field.
-              </p>
-            </div>
-          </section>
-
-          <!-- ── Whitelist (coming soon) ─────────── -->
-          <section class="section">
-            <div class="section-title-row">
-              <h3 class="section-title">Whitelist xem unredacted</h3>
-              <span class="badge-soon">Sắp ra mắt</span>
-            </div>
-            <div class="empty-members">
-              Phase 2 sẽ cho phép cấp quyền xem nội dung không bị blur cho 1 nhóm user / team cụ thể (ví dụ: trợ lý, giám sát).
-            </div>
           </section>
 
           <!-- ── Danger zone ─────────────────────── -->

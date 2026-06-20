@@ -44,8 +44,7 @@
 
     <div class="note">
       <strong>Lưu ý:</strong> Sau khi đổi mật khẩu, các phiên đăng nhập trên thiết bị khác có thể vẫn còn hiệu lực
-      cho đến khi token hiện tại hết hạn. Vào <RouterLink to="/settings/personal/sessions">Phiên đăng nhập</RouterLink>
-      để đăng xuất thiết bị khác (sắp ra mắt).
+      cho đến khi token hiện tại hết hạn.
     </div>
   </div>
 </template>

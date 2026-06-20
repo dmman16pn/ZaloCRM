@@ -79,14 +79,9 @@ const routes = [
       // 👤 Personal
       { path: 'personal/profile',       name: 'Settings.Profile',       component: () => import('@/views/settings/PersonalProfilePage.vue') },
       { path: 'personal/password',      name: 'Settings.Password',      component: () => import('@/views/settings/PersonalPasswordPage.vue') },
-      { path: 'personal/notifications', name: 'Settings.Notifications', component: () => import('@/views/settings/SettingsComingSoon.vue'), props: { feature: 'notifications' } },
-      { path: 'personal/theme',         name: 'Settings.Theme',         component: () => import('@/views/settings/SettingsComingSoon.vue'), props: { feature: 'theme' } },
-      { path: 'personal/sessions',      name: 'Settings.Sessions',      component: () => import('@/views/settings/SettingsComingSoon.vue'), props: { feature: 'sessions' } },
 
       // 🏢 Org
       { path: 'org/profile', name: 'Settings.OrgProfile', component: () => import('@/components/settings/OrgSettings.vue') },
-      { path: 'org/billing', name: 'Settings.Billing',   component: () => import('@/views/settings/SettingsComingSoon.vue'), props: { feature: 'billing' } },
-      { path: 'org/audit',   name: 'Settings.Audit',     component: () => import('@/views/settings/SettingsComingSoon.vue'), props: { feature: 'audit' } },
 
       // 👥 Team — Variant C menu reorg 2026-05-22: legacy team/* redirect → rbac/*
       // Em giữ 3 route legacy nhưng redirect sang RBAC pages mới để không break deep link.
@@ -105,22 +100,14 @@ const routes = [
       { path: 'crm/tags',        name: 'Settings.Tags',        component: () => import('@/components/settings/CrmTagManagement.vue') },
       { path: 'crm/zalo-labels', name: 'Settings.ZaloLabels',  component: () => import('@/components/settings/ZaloLabelsManagement.vue') },
       { path: 'crm/scoring',     name: 'Settings.Scoring',     component: () => import('@/views/ScoringSettingsView.vue') },
-      { path: 'crm/stuck',       name: 'Settings.Stuck',       component: () => import('@/views/settings/SettingsComingSoon.vue'), props: { feature: 'stuck' } },
-      { path: 'crm/folders',     name: 'Settings.Folders',     component: () => import('@/views/settings/SettingsComingSoon.vue'), props: { feature: 'folders' } },
-      { path: 'crm/templates',   name: 'Settings.Templates',   component: () => import('@/views/settings/SettingsComingSoon.vue'), props: { feature: 'templates' } },
 
       // 🔌 Channels & Integrations
       { path: 'channels/zalo',         name: 'Settings.ZaloAccounts', component: () => import('@/views/ZaloAccountsView.vue') },
       { path: 'channels/facebook',     name: 'Settings.Facebook',     component: () => import('@/views/settings/channels/FacebookChannelView.vue') },
-      { path: 'channels/rate-limit',   name: 'Settings.RateLimit',    component: () => import('@/views/settings/SettingsComingSoon.vue'), props: { feature: 'rate-limit' } },
-      { path: 'channels/automation',   name: 'Settings.Automation',   component: () => import('@/views/settings/SettingsComingSoon.vue'), props: { feature: 'automation' } },
       { path: 'channels/integrations', name: 'Settings.Integrations', component: () => import('@/views/IntegrationsView.vue') },
 
       // 🛠 Dev & API
       { path: 'dev/api',           name: 'Settings.Api',          component: () => import('@/views/ApiSettingsView.vue') },
-      { path: 'dev/public-token',  name: 'Settings.PublicToken',  component: () => import('@/views/settings/SettingsComingSoon.vue'), props: { feature: 'public-token' } },
-      { path: 'dev/feature-flags', name: 'Settings.FeatureFlags', component: () => import('@/views/settings/SettingsComingSoon.vue'), props: { feature: 'feature-flags' } },
-      { path: 'dev/backup',        name: 'Settings.Backup',       component: () => import('@/views/settings/SettingsComingSoon.vue'), props: { feature: 'backup' } },
     ],
   },
 

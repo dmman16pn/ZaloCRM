@@ -35,7 +35,6 @@
           >
             <span class="sl-item-icon">{{ item.icon }}</span>
             <span class="sl-item-label">{{ item.label }}</span>
-            <span v-if="item.comingSoon" class="sl-lock" title="Sắp ra mắt">🔒</span>
           </RouterLink>
         </div>
 
@@ -62,7 +61,6 @@
               >
                 <span class="sl-item-icon">{{ item.icon }}</span>
                 <span class="sl-item-label">{{ item.label }}</span>
-                <span v-if="item.comingSoon" class="sl-lock" title="Sắp ra mắt">🔒</span>
               </RouterLink>
             </div>
           </div>
@@ -315,11 +313,6 @@ onMounted(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-.sl-lock {
-  font-size: 11px;
-  opacity: 0.6;
-  flex-shrink: 0;
 }
 .sl-empty {
   padding: 20px 14px;

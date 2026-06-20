@@ -85,22 +85,6 @@
         <span class="legend-item"><span class="perm-icon none">✕</span> No access</span>
       </div>
     </section>
-
-    <!-- Coming soon banner -->
-    <div class="cs-banner">
-      <div class="cs-icon">🚧</div>
-      <div>
-        <div class="cs-title">Tính năng nâng cao đang phát triển</div>
-        <ul class="cs-list">
-          <li>Tạo vai trò tuỳ chỉnh (Custom role) với permission scope chi tiết</li>
-          <li>Phân quyền theo module (Chat, Friends, Contacts, Reports, Settings)</li>
-          <li>Permission inheritance từ Team / Department</li>
-          <li>Audit log cho thay đổi permission</li>
-          <li>Override per-user (vd: 1 sale được xem báo cáo của team khác)</li>
-        </ul>
-        <div class="cs-foot">Phase tiếp theo: backend role schema + permission middleware → UI editor.</div>
-      </div>
-    </div>
   </div>
 </template>
 
