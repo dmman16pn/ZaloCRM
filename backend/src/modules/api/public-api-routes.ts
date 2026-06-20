@@ -40,7 +40,7 @@ async function downloadImage(rawUrl: string): Promise<{ buffer: Buffer; ext: str
 
 // Broadcast: số nhóm tối đa + giãn nhịp giữa nhóm (chống khóa nick khi đăng loạt).
 const BROADCAST_MAX_GROUPS = 50;
-const BROADCAST_GROUP_DELAY_MS = Number(process.env.BROADCAST_GROUP_DELAY_MS ?? 7000);
+const BROADCAST_GROUP_DELAY_MS = Number(process.env.BROADCAST_GROUP_DELAY_MS ?? 5000);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // ── Gửi album ảnh CÓ RETRY AN TOÀN (chống trùng ảnh) ───────────────────────────
@@ -614,30 +614,73 @@ export async function publicApiRoutes(app: FastifyInstance): Promise<void> {
       });
       const nameOf = new Map(convs.map((c) => [c.externalThreadId, c.groupName]));
 
-      // Đăng từng nhóm tuần tự, giãn nhịp; 1 nhóm lỗi không dừng cả lô.
-      const results: Array<{ groupId: string; groupName: string | null; ok: boolean; partial?: boolean; error?: string }> = [];
-      for (let i = 0; i < groupIds.length; i++) {
-        const groupId = groupIds[i];
-        try {
-          await sendToThread(api, orgId, body.zaloAccountId, groupId, 1 /* group */, content, imageUrls);
-          results.push({ groupId, groupName: nameOf.get(groupId) ?? null, ok: true });
-        } catch (err) {
-          logger.error(`[broadcast] nhóm ${groupId} (${nameOf.get(groupId) ?? '?'}) LỖI:`, (err as Error)?.message, '| cause:', (err as any)?.cause?.code ?? (err as any)?.cause?.message ?? '-', '| stack:', (err as Error)?.stack?.split('\n').slice(0,3).join(' '));
-          results.push({
-            groupId,
-            groupName: nameOf.get(groupId) ?? null,
-            ok: false,
-            // partial=true: có thể đã giao một phần ảnh cho nhóm này — đừng tự đăng lại (trùng).
-            partial: err instanceof PartialSendError ? true : undefined,
-            error: err instanceof SsrfBlockedError
-              ? 'URL ảnh không hợp lệ (HTTPS only)'
-              : err instanceof PartialSendError
-                ? `Có thể đã đăng một phần ảnh (đã giao ${err.deliveredCount}) — kiểm tra nhóm trước khi đăng lại`
-                : (err as Error).message,
-          });
+      // ── Quy trình 2 PHA (chống TRÙNG TEXT) ──────────────────────────────────
+      // Pha 1: gửi TEXT cho TỪNG nhóm, đúng 1 lần/nhóm (text nhanh → lên hết các nhóm trước).
+      // Pha 2: gửi ẢNH cho từng nhóm (cả bộ), NGHỈ giữa các nhóm chống khóa nick.
+      // Text gửi đúng 1 lần, KHÔNG bao giờ gửi lại → không trùng dù ảnh lỗi.
+      // Ảnh vẫn có retry AN TOÀN (sendAlbumWithSafeRetry: chỉ gửi lại khi xác minh CHƯA
+      // giao ảnh nào) → cứu lỗi "fetch failed" cú đầu mà không nhân đôi.
+      const hasText = !!(content && content.trim());
+      const st = new Map<string, { ok: boolean; partial?: boolean; error?: string }>();
+      for (const gid of groupIds) st.set(gid, { ok: false });
+
+      // Tải ảnh về tmp 1 LẦN, dùng chung cho mọi nhóm (trước đây tải lại mỗi nhóm — phí).
+      const tmpRoot = path.join(tmpdir(), 'zalocrm-public-send', randomUUID());
+      const tmpPaths: string[] = [];
+      if (imageUrls.length > 0) {
+        await mkdir(tmpRoot, { recursive: true });
+        for (let i = 0; i < imageUrls.length; i++) {
+          const img = await downloadImage(imageUrls[i]);
+          const tmpPath = path.join(tmpRoot, `${i}${img.ext}`);
+          await writeFile(tmpPath, img.buffer);
+          tmpPaths.push(tmpPath);
         }
-        if (i < groupIds.length - 1 && BROADCAST_GROUP_DELAY_MS > 0) await sleep(BROADCAST_GROUP_DELAY_MS);
       }
+
+      try {
+        // PHA 1 — TEXT cho từng nhóm (1 lần/nhóm)
+        if (hasText) {
+          for (const gid of groupIds) {
+            try {
+              await api.sendMessage(content, gid, 1 /* group */);
+              st.get(gid)!.ok = true; // tạm coi ok; pha 2 ghi đè nếu có ảnh lỗi
+            } catch (err) {
+              const s = st.get(gid)!; s.ok = false; s.error = (err as Error)?.message;
+              logger.error(`[broadcast] TEXT nhóm ${gid} (${nameOf.get(gid) ?? '?'}) LỖI:`, (err as Error)?.message);
+            }
+          }
+        }
+        // PHA 2 — ẢNH cho từng nhóm, nghỉ giữa các nhóm
+        if (tmpPaths.length > 0) {
+          for (let i = 0; i < groupIds.length; i++) {
+            const gid = groupIds[i];
+            const s = st.get(gid)!;
+            // Gửi ảnh nhóm này. ok cuối = (text ok nếu có text) VÀ (ảnh ok).
+            try {
+              await sendAlbumWithSafeRetry(api, orgId, body.zaloAccountId, gid, 1 /* group */, '', tmpPaths);
+              if (!hasText) s.ok = true; // không có text → ok do ảnh; có text → giữ kết quả text
+            } catch (err) {
+              s.ok = false;
+              s.partial = err instanceof PartialSendError ? true : s.partial;
+              s.error = err instanceof SsrfBlockedError
+                ? 'URL ảnh không hợp lệ (HTTPS only)'
+                : err instanceof PartialSendError
+                  ? `Có thể đã đăng một phần ảnh (đã giao ${err.deliveredCount}) — kiểm tra nhóm trước khi đăng lại`
+                  : (err as Error).message;
+              logger.error(`[broadcast] ẢNH nhóm ${gid} (${nameOf.get(gid) ?? '?'}) LỖI:`, s.error);
+            }
+            if (i < groupIds.length - 1 && BROADCAST_GROUP_DELAY_MS > 0) await sleep(BROADCAST_GROUP_DELAY_MS);
+          }
+        }
+      } finally {
+        if (tmpPaths.length > 0) await rm(tmpRoot, { recursive: true, force: true }).catch(() => {});
+      }
+
+      const results: Array<{ groupId: string; groupName: string | null; ok: boolean; partial?: boolean; error?: string }> =
+        groupIds.map((gid) => {
+          const s = st.get(gid)!;
+          return { groupId: gid, groupName: nameOf.get(gid) ?? null, ok: s.ok, partial: s.partial, error: s.ok ? undefined : s.error };
+        });
 
       const sent = results.filter((r) => r.ok).length;
       const failed = results.length - sent;
