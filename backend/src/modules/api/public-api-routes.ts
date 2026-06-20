@@ -45,14 +45,14 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /**
  * Gửi 1 tin (text và/hoặc nhiều ảnh) tới 1 thread (user hoặc group) qua zca-js.
- * imageUrls rỗng → gửi text; có ảnh → tải URL HTTPS về tmp rồi gửi ẢNH TRƯỚC, text SAU.
+ * imageUrls rỗng → gửi text; có ảnh → tải URL HTTPS về tmp rồi gửi TEXT TRƯỚC, ẢNH SAU.
  * Ném lỗi (SsrfBlockedError / Error) nếu tải/upload ảnh thất bại — caller tự xử lý.
  * Dùng chung cho /messages/send (1 thread) và /groups/broadcast (nhiều nhóm).
  *
- * LÝ DO đảo thứ tự (2026-06-20): với NHIỀU ảnh, zca-js sendMessage({msg, attachments})
- * gửi tin text thành 1 tin RIÊNG TRƯỚC rồi mới uploadAttachment. Upload Zalo chập chờn
- * (fetch failed/ETIMEDOUT) → throw, nhưng text đã lên nhóm → còn "text trơ không kèm ảnh".
- * Fix: gửi ảnh (msg='') trước + retry; chỉ khi ảnh OK mới gửi text → lỗi ảnh = nhóm trống.
+ * THỨ TỰ (2026-06-20, theo yêu cầu): gửi TEXT (bài viết) trước rồi ẢNH (grid) sau, để
+ * nhóm hiển thị bài viết trên, ảnh dưới. Ảnh gửi với msg='' (không sinh thêm tin text)
+ * + retry 3 lần vì upload Zalo chập chờn (fetch failed/ETIMEDOUT). ĐÁNH ĐỔI ĐÃ BIẾT:
+ * nếu ảnh fail cả 3 retry thì tin text đã gửi sẽ nằm lại không kèm ảnh — chấp nhận.
  */
 async function sendToThread(
   api: any,
@@ -76,10 +76,14 @@ async function sendToThread(
       tmpPaths.push(tmpPath);
     }
 
-    // 1) Gửi ẢNH trước, KHÔNG kèm msg (msg='' → zca-js không gửi tin text riêng → tránh text trơ).
-    //    Retry vì upload Zalo chập chờn. Hết retry vẫn lỗi → throw (CHƯA gửi text → nhóm trống).
-    let lastErr: unknown;
+    // 1) Gửi TEXT (bài viết) TRƯỚC — nếu có nội dung.
+    if (content && content.length > 0) {
+      await api.sendMessage(content, threadId, threadType);
+    }
+
+    // 2) Gửi ẢNH SAU (msg='' để không sinh thêm tin text), retry 3 lần vì upload Zalo chập chờn.
     let okImg = false;
+    let lastErr: unknown;
     for (let attempt = 1; attempt <= 3 && !okImg; attempt++) {
       try {
         await api.sendMessage({ msg: '', attachments: tmpPaths }, threadId, threadType);
@@ -90,11 +94,6 @@ async function sendToThread(
       }
     }
     if (!okImg) throw lastErr;
-
-    // 2) Ảnh đã lên → gửi text (nếu có) thành tin kế tiếp.
-    if (content && content.length > 0) {
-      await api.sendMessage(content, threadId, threadType);
-    }
   } finally {
     await rm(tmpRoot, { recursive: true, force: true }).catch(() => {});
   }
