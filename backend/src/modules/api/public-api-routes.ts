@@ -82,9 +82,25 @@ async function sendToThread(
       await api.sendMessage(content, threadId, threadType);
     }
 
-    // 2) Gửi TẤT CẢ ẢNH 1 lần (grid), msg='' để không sinh thêm tin text. KHÔNG retry
-    //    (retry gây trùng ảnh khi timeout-nhưng-đã-tới-Zalo). Lỗi → throw cho caller.
-    await api.sendMessage({ msg: '', attachments: tmpPaths }, threadId, threadType);
+    // 2) Gửi TẤT CẢ ẢNH 1 lần (grid), msg='' để không sinh thêm tin text.
+    //    Retry CHỈ khi lỗi GIAI ĐOẠN KẾT NỐI (ETIMEDOUT... = chưa kết nối được = chưa
+    //    gửi gì → retry an toàn, KHÔNG trùng ảnh). Lỗi SAU khi đã gửi → KHÔNG retry.
+    {
+      const CONN_ERR = new Set([
+        'ETIMEDOUT', 'ECONNREFUSED', 'ECONNRESET', 'ENOTFOUND',
+        'EAI_AGAIN', 'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_SOCKET',
+      ]);
+      for (let attempt = 1; ; attempt++) {
+        try {
+          await api.sendMessage({ msg: '', attachments: tmpPaths }, threadId, threadType);
+          break;
+        } catch (e: any) {
+          const code = e?.cause?.code ?? e?.code;
+          if (attempt < 4 && CONN_ERR.has(code)) { await sleep(2500); continue; }
+          throw e;
+        }
+      }
+    }
   } finally {
     await rm(tmpRoot, { recursive: true, force: true }).catch(() => {});
   }
