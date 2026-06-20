@@ -142,13 +142,16 @@ async function sendAlbumWithSafeRetry(
 
 /**
  * Gửi 1 tin (text và/hoặc nhiều ảnh) tới 1 thread (user hoặc group) qua zca-js.
- * imageUrls rỗng → gửi text; có ảnh → tải URL HTTPS về tmp rồi gửi TEXT TRƯỚC, ẢNH SAU.
+ * imageUrls rỗng → gửi text; có ảnh → tải URL HTTPS về tmp rồi gửi ẢNH TRƯỚC, TEXT SAU.
  * Ném lỗi (SsrfBlockedError / Error) nếu tải/upload ảnh thất bại — caller tự xử lý.
  * Dùng chung cho /messages/send (1 thread) và /groups/broadcast (nhiều nhóm).
  *
- * Gửi GỘP text + tất cả ảnh trong 1 call → 1 album/grid (groupLayoutId của zca-js).
- * Ảnh CÓ retry an toàn qua sendAlbumWithSafeRetry: chỉ gửi lại khi xác minh CHƯA giao
- * ảnh nào; nghi đã giao một phần → ném PartialSendError (caller ghi failed, KHÔNG tự gửi lại).
+ * QUAN TRỌNG — chống TRÙNG TEXT: zca-js sendMessage({msg,attachments}) gửi TEXT ra
+ * trước (1 tin riêng) rồi mới upload ảnh. Khi upload lỗi và retry, text sẽ bị gửi lại
+ * mỗi lần → trùng. Vì vậy KHÔNG nhét text vào call gửi ảnh: gửi ẢNH (msg='') qua
+ * sendAlbumWithSafeRetry (retry an toàn, chỉ đếm ảnh), rồi gửi TEXT đúng 1 lần SAU khi
+ * ảnh xong (nằm NGOÀI vòng retry → không bao giờ nhân đôi). Ảnh fail hoàn toàn → ném
+ * lỗi trước khi gửi text → nhóm không nhận text mồ côi.
  */
 async function sendToThread(
   api: any,
@@ -174,7 +177,12 @@ async function sendToThread(
       tmpPaths.push(tmpPath);
     }
 
-    await sendAlbumWithSafeRetry(api, orgId, zaloAccountId, threadId, threadType, content || '', tmpPaths);
+    // 1) Gửi ẢNH (KHÔNG kèm text) — retry an toàn, không đẻ text trùng.
+    await sendAlbumWithSafeRetry(api, orgId, zaloAccountId, threadId, threadType, '', tmpPaths);
+    // 2) Ảnh OK → gửi TEXT đúng 1 lần (ngoài vòng retry ảnh).
+    if (content && content.trim()) {
+      await api.sendMessage(content, threadId, threadType);
+    }
   } finally {
     await rm(tmpRoot, { recursive: true, force: true }).catch(() => {});
   }
