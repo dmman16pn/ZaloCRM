@@ -7,20 +7,10 @@
         <img src="/brand/zalocrm-logo.png" alt="ZaloCRM" />
       </RouterLink>
 
-      <v-menu open-on-hover>
-        <template #activator="{ props: act }">
-          <button class="workspace" v-bind="act">
-            <span class="ws-logo">{{ workspaceShort }}</span>
-            <span>{{ workspaceName }}</span>
-            <span class="opacity-50">▾</span>
-          </button>
-        </template>
-        <v-list density="compact" min-width="220">
-          <v-list-item v-for="ws in workspaces" :key="ws.id" :title="ws.name" />
-          <v-divider />
-          <v-list-item title="Quản lý workspace" prepend-icon="mdi-cog" />
-        </v-list>
-      </v-menu>
+      <div class="workspace workspace--static">
+        <span class="ws-logo">{{ workspaceShort }}</span>
+        <span>{{ workspaceName }}</span>
+      </div>
 
       <!-- Primary nav tabs (Excel structure) -->
       <nav class="nav-tabs">
@@ -194,9 +184,6 @@ const workspaceName = computed(() => authStore.user?.fullName?.split(' ')[0] || 
 const workspaceShort = computed(() =>
   workspaceName.value.slice(0, 2).toUpperCase(),
 );
-const workspaces = [
-  { id: 'default', name: workspaceName.value },
-];
 
 const initials = computed(() => {
   const name = authStore.user?.fullName || 'U';
@@ -251,6 +238,8 @@ function logout() {
   font-size: 13px;
 }
 .workspace:hover { background: rgba(255,255,255,0.10); }
+.workspace--static { cursor: default; }
+.workspace--static:hover { background: rgba(255,255,255,0.06); }
 .ws-logo {
   width: 24px; height: 24px;
   background: linear-gradient(135deg, #ff5722, #d84315);
