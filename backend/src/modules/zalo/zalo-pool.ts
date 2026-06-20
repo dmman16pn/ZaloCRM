@@ -227,12 +227,22 @@ class ZaloAccountPool {
   }
 
   // Reconnect using previously saved session credentials
-  async reconnect(accountId: string, credentials: ZaloCredentials, proxyUrl?: string | null): Promise<void> {
+  /**
+   * Reconnect 1 account bằng session đã lưu.
+   * @returns true nếu sau lời gọi này account đang `connected`; false nếu thất bại
+   *          (login bị từ chối / mạng lỗi) hoặc bị skip do đang reconnect.
+   *          KHÔNG throw — mọi lỗi nuốt nội bộ. Callers cũ ignore giá trị trả về nên
+   *          việc thêm return boolean là backward-compatible; autoReconnect dùng nó
+   *          để quyết định có retry (backoff) hay không.
+   */
+  async reconnect(accountId: string, credentials: ZaloCredentials, proxyUrl?: string | null): Promise<boolean> {
     // In-flight guard: drop duplicate reconnects for the same account so we never
     // spin up two parallel zca-js sessions/listeners.
     if (this.reconnecting.has(accountId)) {
       logger.info(`[zalo:${accountId}] Reconnect already in progress — skipping duplicate`);
-      return;
+      // Trả status hiện tại: nếu lần đang chạy đã connected → true (caller khỏi retry);
+      // còn 'connecting' → false, autoReconnect sẽ hẹn 1 lần kiểm tra lại (no-op nếu OK).
+      return this.instances.get(accountId)?.status === 'connected';
     }
     this.reconnecting.add(accountId);
     this.manuallyDisabled.delete(accountId);
@@ -284,11 +294,13 @@ class ZaloAccountPool {
       // Fire-and-forget: pull Zalo labels sau reconnect — bắt kịp thay đổi label
       // mà user thực hiện trên Zalo Real lúc CRM offline.
       this.autoSyncOnConnect(accountId);
+      return true;
     } catch (err) {
       const instance = this.instances.get(accountId);
       if (instance) instance.status = 'disconnected';
       await this.updateAccountDB(accountId, 'qr_pending', null, 'reconnect_failed');
       this.io?.emit('zalo:reconnect-failed', { accountId, error: String(err) });
+      return false;
     } finally {
       this.reconnecting.delete(accountId);
     }
@@ -432,31 +444,49 @@ class ZaloAccountPool {
   }
 
   // Auto-reconnect using saved session from DB
-  private async autoReconnect(accountId: string): Promise<void> {
+  // Backoff giữa các lần auto-reconnect thất bại (event-driven). Lần gọi đầu tiên
+  // đã được hẹn 30s sau khi rớt (xem onDisconnected). Các index sau là delay cho
+  // attempt kế tiếp. Hết mảng → giao lại cho health-check cron (5'/lần) lo tiếp.
+  private static readonly AUTO_RECONNECT_BACKOFF_MS = [60_000, 120_000, 300_000, 300_000, 300_000];
+
+  /**
+   * Tự reconnect 1 account sau khi rớt, có RETRY backoff.
+   *
+   * FIX 2026-06-20: trước đây retry nằm trong `catch`, nhưng reconnect() nuốt lỗi
+   * (không throw) → catch không bao giờ chạy → chỉ thử ĐÚNG 1 lần rồi phó mặc cron
+   * 5 phút. Nick gặp blip mạng Zalo có thể kẹt qr_pending tới khi bấm Reconnect tay.
+   * Giờ reconnect() trả boolean → fail thì tự hẹn lần thử tiếp theo (giãn nhịp tăng dần).
+   */
+  private async autoReconnect(accountId: string, attempt = 1): Promise<void> {
     // Skip if manually disabled via disconnect/disable action
     if (this.manuallyDisabled.has(accountId)) return;
-    const inst = this.instances.get(accountId);
-    // Skip if already reconnected
-    if (inst?.status === 'connected') return;
+    // Skip if already reconnected (lần khác / health-check đã lo xong)
+    if (this.instances.get(accountId)?.status === 'connected') return;
 
-    try {
-      const account = await prisma.zaloAccount.findUnique({
-        where: { id: accountId },
-        select: { sessionData: true, proxyUrl: true },
-      });
-      const session = account?.sessionData as ZaloCredentials | null;
-      if (session?.imei) {
-        logger.info(`[zalo:${accountId}] Auto-reconnecting...`);
-        await this.reconnect(accountId, session, account?.proxyUrl);
-      } else {
-        logger.warn(`[zalo:${accountId}] No saved session, cannot auto-reconnect`);
-        this.io?.emit('zalo:reconnect-failed', { accountId, error: 'No saved session' });
-      }
-    } catch (err) {
-      logger.error(`[zalo:${accountId}] Auto-reconnect failed:`, err);
-      // Retry again in 2 minutes
-      setTimeout(() => this.autoReconnect(accountId), 120_000);
+    const account = await prisma.zaloAccount
+      .findUnique({ where: { id: accountId }, select: { sessionData: true, proxyUrl: true } })
+      .catch(() => null);
+    const session = account?.sessionData as ZaloCredentials | null;
+    if (!session?.imei) {
+      logger.warn(`[zalo:${accountId}] No saved session, cannot auto-reconnect`);
+      this.io?.emit('zalo:reconnect-failed', { accountId, error: 'No saved session' });
+      return; // cần QR — không retry vô ích
     }
+
+    logger.info(`[zalo:${accountId}] Auto-reconnecting (attempt ${attempt})...`);
+    const ok = await this.reconnect(accountId, session, account?.proxyUrl);
+    if (ok) return; // đã connect → xong
+
+    // Thất bại (reconnect nuốt lỗi, trả false). Hẹn lần thử kế tiếp với backoff.
+    if (this.manuallyDisabled.has(accountId)) return;
+    const backoff = ZaloAccountPool.AUTO_RECONNECT_BACKOFF_MS;
+    if (attempt > backoff.length) {
+      logger.warn(`[zalo:${accountId}] Auto-reconnect bỏ cuộc sau ${attempt} lần — health-check (5'/lần) sẽ tiếp tục thử.`);
+      return; // cron health-check vẫn auto thử mãi mỗi 5 phút
+    }
+    const delay = backoff[attempt - 1];
+    logger.info(`[zalo:${accountId}] Auto-reconnect attempt ${attempt} thất bại, thử lại sau ${delay / 1000}s`);
+    setTimeout(() => this.autoReconnect(accountId, attempt + 1), delay);
   }
 
   // Stop listener and remove from pool
