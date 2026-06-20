@@ -50,9 +50,10 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
  * Dùng chung cho /messages/send (1 thread) và /groups/broadcast (nhiều nhóm).
  *
  * THỨ TỰ (2026-06-20, theo yêu cầu): gửi TEXT (bài viết) trước rồi ẢNH (grid) sau, để
- * nhóm hiển thị bài viết trên, ảnh dưới. Ảnh gửi với msg='' (không sinh thêm tin text)
- * + retry 3 lần vì upload Zalo chập chờn (fetch failed/ETIMEDOUT). ĐÁNH ĐỔI ĐÃ BIẾT:
- * nếu ảnh fail cả 3 retry thì tin text đã gửi sẽ nằm lại không kèm ảnh — chấp nhận.
+ * nhóm hiển thị bài viết trên, ảnh dưới. Ảnh gửi với msg='' (không sinh thêm tin text).
+ * MỖI THỨ GỬI ĐÚNG 1 LẦN, KHÔNG retry: retry gây gửi TRÙNG ẢNH (1 lần upload bị
+ * timeout-nhưng-thực-ra-đã-tới-Zalo, retry gửi lại lần 2 → nhóm thấy 2 grid). Lỗi thật
+ * sẽ throw → caller ghi failed cho nhóm đó.
  */
 async function sendToThread(
   api: any,
@@ -81,19 +82,9 @@ async function sendToThread(
       await api.sendMessage(content, threadId, threadType);
     }
 
-    // 2) Gửi ẢNH SAU (msg='' để không sinh thêm tin text), retry 3 lần vì upload Zalo chập chờn.
-    let okImg = false;
-    let lastErr: unknown;
-    for (let attempt = 1; attempt <= 3 && !okImg; attempt++) {
-      try {
-        await api.sendMessage({ msg: '', attachments: tmpPaths }, threadId, threadType);
-        okImg = true;
-      } catch (e) {
-        lastErr = e;
-        if (attempt < 3) await sleep(2500);
-      }
-    }
-    if (!okImg) throw lastErr;
+    // 2) Gửi TẤT CẢ ẢNH 1 lần (grid), msg='' để không sinh thêm tin text. KHÔNG retry
+    //    (retry gây trùng ảnh khi timeout-nhưng-đã-tới-Zalo). Lỗi → throw cho caller.
+    await api.sendMessage({ msg: '', attachments: tmpPaths }, threadId, threadType);
   } finally {
     await rm(tmpRoot, { recursive: true, force: true }).catch(() => {});
   }
