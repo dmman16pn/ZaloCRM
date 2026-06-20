@@ -34,17 +34,26 @@ function releaseLock(): void {
  * Execute an async function with HTTP proxy env vars set.
  * If proxyUrl is null/undefined, runs fn() directly (no proxy).
  * Thread-safe via mutex for concurrent account operations.
+ *
+ * FIX 2026-06-20: TRƯỚC ĐÂY nick KHÔNG proxy đi đường tắt `return fn()` — KHÔNG lấy lock.
+ * HTTP(S)_PROXY là biến process-GLOBAL: nếu 1 nick CÓ proxy đang giữ lock & đã set env,
+ * thì nick không-proxy chạy chen vào lúc đó sẽ login QUA NHẦM proxy nick kia → fail nhanh
+ * dù session hợp lệ. Giờ MỌI call đều qua lock; nick không proxy thì XOÁ env khi chạy.
  */
 export async function withProxy<T>(proxyUrl: string | null | undefined, fn: () => Promise<T>): Promise<T> {
-  if (!proxyUrl) return fn();
-
   await acquireLock();
   const prevHttp = process.env.HTTP_PROXY;
   const prevHttps = process.env.HTTPS_PROXY;
 
   try {
-    process.env.HTTP_PROXY = proxyUrl;
-    process.env.HTTPS_PROXY = proxyUrl;
+    if (proxyUrl) {
+      process.env.HTTP_PROXY = proxyUrl;
+      process.env.HTTPS_PROXY = proxyUrl;
+    } else {
+      // Không proxy → đảm bảo env sạch, không kế thừa proxy nick khác.
+      delete process.env.HTTP_PROXY;
+      delete process.env.HTTPS_PROXY;
+    }
     return await fn();
   } finally {
     // Restore original env vars

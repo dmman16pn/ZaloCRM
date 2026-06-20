@@ -255,6 +255,7 @@ class ZaloAccountPool {
     const zalo = new Zalo({ logging: false, selfListen: true, imageMetadataGetter });
     this.instances.set(accountId, { zalo, api: null, status: 'connecting', lastActivity: new Date() });
 
+    let step = 'login'; // theo dõi bước fail để log chẩn đoán (login vs getOwnId vs ...)
     try {
       const api: any = await withProxy(proxyUrl, () => zalo.login({
         cookie: credentials.cookie,
@@ -267,7 +268,18 @@ class ZaloAccountPool {
       instance.status = 'connected';
       instance.lastActivity = new Date();
 
-      const ownId = await api.getOwnId();
+      // getOwnId hay fail thoáng qua khi mạng Zalo storm (fetch failed) — retry 1 lần
+      // để KHÔNG vứt bỏ 1 phiên login VỪA THÀNH CÔNG (login OK nhưng getOwnId hụt
+      // → trước đây cả reconnect bị coi là fail → kẹt qr_pending oan).
+      step = 'getOwnId';
+      let ownId: string;
+      try {
+        ownId = await api.getOwnId();
+      } catch (e1) {
+        logger.warn(`[zalo:${accountId}] getOwnId lỗi lần 1 (${(e1 as Error)?.message}), thử lại sau 1.5s...`);
+        await new Promise((r) => setTimeout(r, 1500));
+        ownId = await api.getOwnId();
+      }
       instance.zaloUid = ownId;
 
       // Fetch own profile info for avatar
@@ -299,9 +311,13 @@ class ZaloAccountPool {
       // mà user thực hiện trên Zalo Real lúc CRM offline.
       this.autoSyncOnConnect(accountId);
       return true;
-    } catch (err) {
+    } catch (err: any) {
       const instance = this.instances.get(accountId);
       if (instance) instance.status = 'disconnected';
+      // LOG lý do THẬT (trước đây nuốt im → không chẩn đoán được vì sao reconnect fail).
+      // step cho biết hụt ở đâu; err.code là Zalo error_code nếu bị server từ chối.
+      const zCode = err?.code != null ? ` [zalo:${err.code}]` : '';
+      logger.warn(`[zalo:${accountId}] Reconnect FAILED tại step=${step}: ${err?.name || 'Error'}: ${err?.message || String(err)}${zCode}`);
       await this.updateAccountDB(accountId, 'qr_pending', null, 'reconnect_failed');
       this.io?.emit('zalo:reconnect-failed', { accountId, error: String(err) });
       return false;
