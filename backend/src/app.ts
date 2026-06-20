@@ -10,6 +10,10 @@
   return this.toString();
 };
 
+// Ép ưu tiên IPv4 cho mọi DNS lookup — PHẢI chạy trước khi zca-js/fetch gọi ra Zalo.
+// Khắc phục ETIMEDOUT "fetch failed" do VPS không có IPv6 mà DNS Zalo trả cả AAAA. Xem file.
+import './shared/utils/prefer-ipv4.js';
+
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import fastifyJwt from '@fastify/jwt';
