@@ -14,7 +14,7 @@ import { logger } from '../../shared/utils/logger.js';
 
 // Public API image-send limits. Ảnh tải từ URL (HTTPS only — qua ssrf-guard).
 const PUBLIC_IMAGE_MAX = 25 * 1024 * 1024; // 25MB/ảnh
-const PUBLIC_MAX_IMAGES = 10;
+export const PUBLIC_MAX_IMAGES = 10;
 const PUBLIC_IMAGE_EXT: Record<string, string> = {
   'image/jpeg': '.jpg',
   'image/png': '.png',
@@ -62,7 +62,7 @@ const IMG_SEND_ECHO_WAIT_MS = Number(process.env.PUBLIC_IMAGE_SEND_ECHO_WAIT_MS 
 const IMG_SEND_RETRY_DELAY_MS = Number(process.env.PUBLIC_IMAGE_SEND_RETRY_DELAY_MS ?? 1500);
 
 /** Lỗi gửi ảnh nghi đã giao một phần — caller KHÔNG được tự gửi lại (tránh trùng). */
-class PartialSendError extends Error {
+export class PartialSendError extends Error {
   constructor(message: string, public readonly deliveredCount: number) {
     super(message);
     this.name = 'PartialSendError';
@@ -152,7 +152,7 @@ async function sendAlbumWithSafeRetry(
  * (nằm NGOÀI vòng retry → không bao giờ nhân đôi), rồi gửi ẢNH (msg='') qua
  * sendAlbumWithSafeRetry (retry an toàn, chỉ đếm ảnh). Thứ tự hiển thị: TEXT trên, ẢNH dưới.
  */
-async function sendToThread(
+export async function sendToThread(
   api: any,
   orgId: string,
   zaloAccountId: string,
@@ -189,7 +189,7 @@ async function sendToThread(
 
 // ── API key auth middleware ────────────────────────────────────────────────────
 
-async function apiKeyAuth(request: FastifyRequest, reply: FastifyReply) {
+export async function apiKeyAuth(request: FastifyRequest, reply: FastifyReply) {
   const apiKey = request.headers['x-api-key'] as string;
   if (!apiKey) return reply.status(401).send({ error: 'API key required' });
 

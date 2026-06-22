@@ -933,6 +933,66 @@ model GroupPostLog {
   @@map("group_post_logs")
 }
 
+// ── CHÀO HÀNG ────────────────────────────────────────────────────────────────
+// Job chào hàng do BOT nội bộ bắn sang public API (POST /api/public/chao-hang/jobs).
+// CRM gửi ảnh chào hàng (theo tier khách) qua 1 nick cố định, chạy nền có throttle,
+// callback kết quả về BOT. Mỗi job_id (per org) đúng 1 row → idempotent (re-trigger
+// bỏ qua khách đã 'sent'). KHÔNG khai relation Organization (giảm blast radius).
+model ChaoHangJob {
+  id            String  @id @default(uuid()) // crm_job_ref trả về BOT
+  orgId         String  @map("org_id")
+  botJobId      Int     @map("bot_job_id") // job_id phía BOT (nguồn chân lý)
+  poCode        String? @map("po_code") // mã phiếu nhập (hiển thị)
+  botBaseUrl    String  @map("bot_base_url") // gọi ngược BOT recipients/uid/ket-qua
+  internalKey   String  @map("internal_key") // BÍ MẬT — header x-internal-key, KHÔNG log/serve ra UI
+  zaloAccountId String  @map("zalo_account_id") // nick gửi cố định
+  config        Json    @default("{}") // { send_delay_sec, uid_lookup_daily_limit, ... }
+  products      Json    @default("[]") // snapshot sản phẩm + ảnh 4 mức (base/SL5/SL10/SL20)
+
+  status         String    @default("running") // running | done | failed
+  totalCount     Int       @default(0) @map("total_count")
+  sentCount      Int       @default(0) @map("sent_count")
+  failedCount    Int       @default(0) @map("failed_count")
+  skippedCount   Int       @default(0) @map("skipped_count")
+  error          String? // lỗi cấp job (vd không lấy được recipients)
+  lastCallbackAt DateTime? @map("last_callback_at")
+  finishedAt     DateTime? @map("finished_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  results ChaoHangResult[]
+
+  @@unique([orgId, botJobId]) // idempotent theo job_id
+  @@index([orgId, createdAt(sort: Desc)])
+  @@map("chaohang_jobs")
+}
+
+// Kết quả gửi chào hàng cho từng khách trong 1 job. Unique [jobId, customerId] để
+// re-trigger idempotent (upsert), và để biết khách nào đã 'sent' mà bỏ qua.
+model ChaoHangResult {
+  id          String  @id @default(uuid())
+  jobId       String  @map("job_id") // FK ChaoHangJob.id
+  customerId  Int     @map("customer_id") // id khách phía BOT
+  name        String?
+  phone       String?
+  tier        String? // base | SL5 | SL10 | SL20
+  uidUsed     String? @map("uid_used") // UID Zalo đã dùng để gửi
+  status      String  @default("pending") // pending | sent | failed | skipped
+  error       String?
+  imagesCount Int     @default(0) @map("images_count")
+
+  uidLookupAt DateTime? @map("uid_lookup_at") // mốc tìm UID (đếm hạn mức/ngày)
+  sentAt      DateTime? @map("sent_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  job ChaoHangJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@unique([jobId, customerId])
+  @@index([jobId])
+  @@map("chaohang_results")
+}
+
 // Groups of potentially duplicate contacts detected by the intelligence cron
 model DuplicateGroup {
   id         String   @id @default(uuid())

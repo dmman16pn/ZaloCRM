@@ -67,6 +67,12 @@ const routes = [
     component: () => import('@/views/GroupPostsView.vue'),
     meta: { requiresAuth: true },
   },
+  {
+    path: '/chao-hang',
+    name: 'ChaoHang',
+    component: () => import('@/views/ChaoHangView.vue'),
+    meta: { requiresAuth: true },
+  },
   // ════════ NEW Settings — 6-group sidebar layout ════════
   {
     path: '/settings',

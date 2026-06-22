@@ -6,6 +6,8 @@ import type { ZaloCrmPlugin } from '../../plugin-api/index.js';
 import { publicApiRoutes } from './public-api-routes.js';
 import { webhookSettingsRoutes } from './webhook-settings-routes.js';
 import { groupPostLogRoutes } from './group-post-log-routes.js';
+import { chaoHangPublicRoutes } from './chao-hang-public-routes.js';
+import { chaoHangRoutes } from './chao-hang-routes.js';
 
 export const apiPlugin: ZaloCrmPlugin = {
   name: 'api',
@@ -15,5 +17,7 @@ export const apiPlugin: ZaloCrmPlugin = {
     await app.register(publicApiRoutes);
     await app.register(webhookSettingsRoutes);
     await app.register(groupPostLogRoutes);
+    await app.register(chaoHangPublicRoutes);
+    await app.register(chaoHangRoutes);
   },
 };

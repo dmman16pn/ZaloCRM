@@ -93,6 +93,21 @@ export function mockPrisma() {
       findMany: vi.fn(),
       count: vi.fn(),
     },
+    chaoHangJob: {
+      findUnique: vi.fn(),
+      findFirst: vi.fn(),
+      findMany: vi.fn(),
+      count: vi.fn(),
+      create: vi.fn(),
+      update: vi.fn(),
+    },
+    chaoHangResult: {
+      findUnique: vi.fn(),
+      findMany: vi.fn(),
+      count: vi.fn(),
+      groupBy: vi.fn(),
+      upsert: vi.fn(),
+    },
     zaloAccountAccess: {
       findFirst: vi.fn(),
       findMany: vi.fn(),

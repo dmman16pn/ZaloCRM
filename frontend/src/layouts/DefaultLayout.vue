@@ -161,6 +161,7 @@ const primaryTabs: NavTab[] = [
   { path: '/analytics',              label: 'Phân tích',   icon: '📈' },
   { path: '/reports',                label: 'Báo cáo',     icon: '📊' },
   { path: '/group-posts',            label: 'Đăng nhóm',   icon: '📢' },
+  { path: '/chao-hang',              label: 'Chào hàng',   icon: '🛍️' },
 ];
 
 function isActive(tab: NavTab): boolean {
