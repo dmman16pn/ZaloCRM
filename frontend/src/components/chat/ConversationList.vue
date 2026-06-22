@@ -110,6 +110,25 @@
                Merge Contact.tags + Friend.crmTagsPerNick (Zalo-mirrored 🔵 X).
                Show 3 tag đầu + "+N" chip click xem rest qua v-menu. -->
           <div class="ci-tag-row">
+            <!-- Nick nhận tin — chỉ hiện khi inbox gộp nhiều nick (≥2 nick trong list).
+                 Giúp sale biết hội thoại thuộc nick nào mà không cần mở ra xem.
+                 Auto-ẩn khi đã lọc về 1 nick (distinctNickCount <= 1). -->
+            <span
+              v-if="conv.zaloAccount"
+              class="ci-nick-chip"
+              :style="{ '--nick-color': nickColor(conv.zaloAccount?.id) }"
+              :title="`Nick nhận: ${convNickName(conv)}`"
+            >
+              <img
+                v-if="conv.zaloAccount?.avatarUrl"
+                :src="conv.zaloAccount.avatarUrl"
+                class="ci-nick-av"
+                alt=""
+              />
+              <span v-else class="ci-nick-dot"></span>
+              <span class="ci-nick-name">{{ convNickName(conv) }}</span>
+            </span>
+
             <span
               v-for="tag in mergedTags(conv).slice(0, 3)"
               :key="tag"
@@ -358,6 +377,27 @@ function avatarSrcOf(conv: Conversation): string | null {
     return (conv as Conversation & { groupAvatarUrl?: string }).groupAvatarUrl || null;
   }
   return conv.contact?.avatarUrl || null;
+}
+
+// ── Nick nhận tin (multi-account inbox) ──────────────────────────────────────
+// Inbox gộp nhiều nick → mỗi hội thoại thuộc 1 nick (conv.zaloAccount). Luôn hiện
+// nhãn nick ở list ngoài để sale phân biệt mà không phải mở từng hội thoại xem.
+function convNickName(conv: Conversation): string {
+  const acc = conv.zaloAccount;
+  if (!acc) return 'Nick ?';
+  return isUsableName(acc.displayName) ? acc.displayName! : 'Nick ?';
+}
+
+// Màu nhãn ổn định theo nick id → cùng 1 nick luôn cùng màu, quét mắt nhanh.
+const NICK_PALETTE = [
+  '#2563EB', '#7C3AED', '#059669', '#D97706',
+  '#DB2777', '#0891B2', '#65A30D', '#DC2626',
+];
+function nickColor(id: string | null | undefined): string {
+  if (!id) return '#6B7280';
+  let hash = 0;
+  for (let i = 0; i < id.length; i++) hash = (hash * 31 + id.charCodeAt(i)) | 0;
+  return NICK_PALETTE[Math.abs(hash) % NICK_PALETTE.length];
 }
 
 function friendshipStatus(conv: Conversation): string | null {
@@ -1069,6 +1109,45 @@ function onPatternLeave() {
   flex-wrap: nowrap; overflow: hidden;
   height: 16px;
 }
+/* Nick nhận tin — chip phân biệt nick trong inbox gộp. Style riêng (viền trái
+   đậm theo màu nick) để KHÔNG nhầm với tag CRM. flex-shrink:0 giữ nguyên khi
+   tag bên cạnh bị clip. */
+.ci-nick-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 0;
+  max-width: 110px;
+  height: 16px;
+  padding: 0 6px 0 3px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--nick-color, #6B7280) 11%, white);
+  border: 1px solid color-mix(in srgb, var(--nick-color, #6B7280) 35%, white);
+  border-left: 3px solid var(--nick-color, #6B7280);
+  font-size: 10px;
+  font-weight: 700;
+  color: color-mix(in srgb, var(--nick-color, #6B7280) 75%, black);
+  white-space: nowrap;
+  overflow: hidden;
+}
+.ci-nick-av {
+  width: 12px; height: 12px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+.ci-nick-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--nick-color, #6B7280);
+  flex-shrink: 0;
+}
+.ci-nick-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .tag-mini {
   display: inline-flex;
   align-items: center;
