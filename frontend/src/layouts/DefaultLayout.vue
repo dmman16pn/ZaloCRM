@@ -253,8 +253,13 @@ function logout() {
 .nav-tabs {
   display: flex; align-items: center; gap: 2px;
   flex-wrap: nowrap;
-  flex-shrink: 0; /* never compress — menu must stay visible */
+  /* Co lại + cuộn ngang khi chật (nhiều tab) để KHÔNG đẩy search/chuông/avatar ra
+     ngoài màn hình. Ẩn thanh cuộn cho gọn; tab vẫn vuốt/cuộn xem hết được. */
+  flex-shrink: 1; min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none; /* Firefox */
 }
+.nav-tabs::-webkit-scrollbar { display: none; } /* Chrome/Safari */
 .nav-tab {
   display: inline-flex; align-items: center; gap: 5px;
   padding: 9px 13px; border-radius: 7px;
