@@ -12,18 +12,44 @@
         <span>{{ workspaceName }}</span>
       </div>
 
-      <!-- Primary nav tabs (Excel structure) -->
-      <nav class="nav-tabs">
-        <RouterLink
-          v-for="tab in primaryTabs"
-          :key="tab.path"
-          :to="tab.path"
-          class="nav-tab"
-          :class="{ active: isActive(tab) }"
-        >
-          <span class="ic">{{ tab.icon }}</span>{{ tab.label }}
-        </RouterLink>
+      <!-- Primary nav tabs (Excel structure). nav-wrap cắt phần thừa; số tab hiển thị
+           do JS tính theo chiều rộng khả dụng, tab không vừa → gom vào menu "Thêm ▾". -->
+      <div ref="navWrapRef" class="nav-wrap">
+        <nav ref="navTabsRef" class="nav-tabs">
+          <RouterLink
+            v-for="tab in visibleTabs"
+            :key="tab.path"
+            :to="tab.path"
+            class="nav-tab"
+            :class="{ active: isActive(tab) }"
+          >
+            <span class="ic">{{ tab.icon }}</span>{{ tab.label }}
+          </RouterLink>
 
+          <!-- Overflow: các tab không vừa chiều ngang dồn vào đây -->
+          <v-menu v-if="overflowTabs.length" open-on-hover>
+            <template #activator="{ props: act }">
+              <button class="nav-tab" :class="{ active: overflowTabs.some(isActive) }" v-bind="act">
+                <span class="ic">⋯</span>Thêm<span class="caret">▾</span>
+              </button>
+            </template>
+            <v-list density="compact" min-width="200">
+              <v-list-item
+                v-for="tab in overflowTabs"
+                :key="tab.path"
+                :to="tab.path"
+                :title="tab.label"
+                :active="isActive(tab)"
+              >
+                <template #prepend><span class="overflow-ic">{{ tab.icon }}</span></template>
+              </v-list-item>
+            </v-list>
+          </v-menu>
+        </nav>
+      </div>
+
+      <!-- Trailing dropdowns (luôn hiển thị, không bị overflow) -->
+      <div class="nav-trailing">
         <!-- Legacy automation dropdown (kept for backward compat — Phase 7 Bot-Auto
              is now a top-level primary tab via primaryTabs array above) -->
         <v-menu open-on-hover>
@@ -66,10 +92,10 @@
             <v-list-item to="/settings" title="📋 Xem tất cả cài đặt" prepend-icon="mdi-cog-outline" />
           </v-list>
         </v-menu>
-      </nav>
+      </div>
 
       <!-- Flexible spacer pushes everything after it to the right edge. -->
-      <div class="topnav-spacer" />
+      <div ref="spacerRef" class="topnav-spacer" />
 
       <!--
         ATTRIBUTION BANNER — moved into DashboardView per copyright holder
@@ -118,7 +144,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue';
 import { useTheme } from 'vuetify';
 import { useRoute, RouterLink } from 'vue-router';
 import { useAuthStore } from '@/stores/auth';
@@ -179,6 +205,63 @@ const isSettingsActive = computed(() =>
 const isLegacyAutomationActive = computed(
   () => route.path === '/automation' || (route.path.startsWith('/automation') && !route.path.startsWith('/automation/bot')),
 );
+
+// ── Responsive overflow: tab nào không vừa chiều ngang → dồn vào menu "Thêm ▾" ──
+// Đo chiều rộng tự nhiên của từng tab MỘT LẦN (lúc render đầy đủ), rồi tính số tab
+// vừa khít theo chiều rộng vùng nav hiện tại; phần dư hiển thị trong dropdown.
+const navWrapRef = ref<HTMLElement | null>(null);
+const navTabsRef = ref<HTMLElement | null>(null);
+const spacerRef = ref<HTMLElement | null>(null);
+const tabWidths = ref<number[]>([]);
+const containerW = ref(0);
+
+const visibleCount = computed(() => {
+  const widths = tabWidths.value;
+  const avail = containerW.value;
+  if (!widths.length || !avail) return primaryTabs.length; // chưa đo → render đủ
+  const GAP = 2, SAFE = 6, THEM_W = 64; // nút "Thêm" ~64px
+  let total = SAFE;
+  for (const w of widths) total += w + GAP;
+  if (total <= avail) return primaryTabs.length; // vừa hết, không cần "Thêm"
+  let used = SAFE + THEM_W;
+  let count = 0;
+  for (const w of widths) {
+    if (used + w + GAP > avail) break;
+    used += w + GAP;
+    count++;
+  }
+  return Math.max(1, count); // luôn chừa ít nhất 1 tab
+});
+const visibleTabs = computed(() => primaryTabs.slice(0, visibleCount.value));
+const overflowTabs = computed(() => primaryTabs.slice(visibleCount.value));
+
+function measureTabs() {
+  const el = navTabsRef.value;
+  if (!el) return;
+  const ws: number[] = [];
+  el.querySelectorAll('.nav-tab').forEach((n) => ws.push((n as HTMLElement).offsetWidth));
+  // Chỉ ghi khi đo được TOÀN BỘ tập tab (lúc chưa cắt) — tránh ghi đè bằng tập đã cắt.
+  if (ws.length >= primaryTabs.length) tabWidths.value = ws.slice(0, primaryTabs.length);
+}
+// Chiều rộng KHẢ DỤNG cho dải tab = nav-wrap + spacer (bất biến: cắt tab thì nav-wrap
+// co lại, spacer giãn ra → tổng không đổi) → tránh vòng lặp dao động khi cắt/thêm.
+function updateContainer() {
+  const wrap = navWrapRef.value?.clientWidth ?? 0;
+  const slack = spacerRef.value?.clientWidth ?? 0;
+  containerW.value = wrap + slack;
+}
+
+let ro: ResizeObserver | null = null;
+onMounted(() => {
+  nextTick(() => {
+    measureTabs();
+    updateContainer();
+  });
+  ro = new ResizeObserver(() => updateContainer());
+  if (navWrapRef.value) ro.observe(navWrapRef.value);
+  if (spacerRef.value) ro.observe(spacerRef.value);
+});
+onBeforeUnmount(() => ro?.disconnect());
 
 // Workspace — placeholder single-tenant cho Phase 1
 const workspaceName = computed(() => authStore.user?.fullName?.split(' ')[0] || 'hsholding');
@@ -250,16 +333,22 @@ function logout() {
 }
 .opacity-50 { opacity: 0.5; }
 
+/* nav-wrap chiếm hết khoảng trống còn lại + cắt phần thừa; số tab hiển thị do JS
+   tính theo chiều rộng, phần dư nằm trong menu "Thêm" → KHÔNG bao giờ tràn. */
+.nav-wrap {
+  flex: 0 1 auto; min-width: 0;
+  overflow: hidden;
+  display: flex; align-items: center;
+}
+.nav-trailing {
+  display: flex; align-items: center; gap: 2px;
+  flex-shrink: 0;
+}
 .nav-tabs {
   display: flex; align-items: center; gap: 2px;
   flex-wrap: nowrap;
-  /* Co lại + cuộn ngang khi chật (nhiều tab) để KHÔNG đẩy search/chuông/avatar ra
-     ngoài màn hình. Ẩn thanh cuộn cho gọn; tab vẫn vuốt/cuộn xem hết được. */
-  flex-shrink: 1; min-width: 0;
-  overflow-x: auto;
-  scrollbar-width: none; /* Firefox */
 }
-.nav-tabs::-webkit-scrollbar { display: none; } /* Chrome/Safari */
+.overflow-ic { font-size: 15px; margin-right: 4px; }
 .nav-tab {
   display: inline-flex; align-items: center; gap: 5px;
   padding: 9px 13px; border-radius: 7px;
