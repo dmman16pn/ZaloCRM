@@ -9,7 +9,7 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { prisma } from '../../shared/database/prisma-client.js';
 import { logger } from '../../shared/utils/logger.js';
 import { apiKeyAuth } from './public-api-routes.js';
-import { runChaoHangJob } from './chao-hang-worker.js';
+import { runChaoHangJob, runUidResolve } from './chao-hang-worker.js';
 
 export async function chaoHangPublicRoutes(app: FastifyInstance): Promise<void> {
   app.addHook('preHandler', apiKeyAuth);
@@ -87,6 +87,28 @@ export async function chaoHangPublicRoutes(app: FastifyInstance): Promise<void> 
     } catch (err) {
       logger.error('[chao-hang] POST /jobs error:', err);
       return reply.status(500).send({ error: 'Failed to accept chao-hang job' });
+    }
+  });
+
+  // POST /api/public/uid-resolve - BOT cron day batch khach can tim UID (auto-RMKT).
+  app.post('/api/public/uid-resolve', async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const orgId = (request as any).orgId as string;
+      const body = request.body as Record<string, any>;
+      const botBaseUrl = typeof body?.bot_base_url === 'string' ? body.bot_base_url : '';
+      const internalKey = typeof body?.internal_key === 'string' ? body.internal_key : '';
+      const zaloAccountId = typeof body?.zalo_account_id === 'string' ? body.zalo_account_id : '';
+      const items = Array.isArray(body?.items) ? body.items : [];
+      const delaySec = Number(body?.config?.uid_lookup_delay_sec) || 30;
+      if (!botBaseUrl || !internalKey || !zaloAccountId) return reply.status(400).send({ error: 'thieu tham so' });
+      if (!items.length) return reply.send({ accepted: true, count: 0 });
+      const account = await prisma.zaloAccount.findFirst({ where: { id: zaloAccountId, orgId }, select: { id: true } });
+      if (!account) return reply.status(404).send({ error: 'Zalo account khong thuoc to chuc' });
+      setImmediate(() => void runUidResolve({ orgId, botBaseUrl, internalKey, zaloAccountId, items, delaySec }).catch((e) => logger.error('[uid-resolve] loi nen: ' + (e as Error).message)));
+      return reply.status(202).send({ accepted: true, count: items.length });
+    } catch (err) {
+      logger.error('[uid-resolve] POST error:', err);
+      return reply.status(500).send({ error: 'Failed to accept uid-resolve' });
     }
   });
 }

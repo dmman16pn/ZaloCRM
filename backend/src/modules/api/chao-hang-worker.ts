@@ -425,3 +425,39 @@ async function recountAndPersist(crmJobId: string) {
   await prisma.chaoHangJob.update({ where: { id: crmJobId }, data: counts }).catch(() => {});
   return counts;
 }
+
+
+// ── Auto tìm UID Zalo (nền tảng auto-RMKT) ──────────────────────────────────────
+// BOT cron đẩy batch khách cần tìm UID → resolver tìm dần (giãn cách), backoff khi
+// Zalo rate-limit (findUser THROW) — KHÔNG đánh dấu not_found trong trường hợp đó.
+export async function runUidResolve(params: {
+  orgId: string;
+  botBaseUrl: string;
+  internalKey: string;
+  zaloAccountId: string;
+  items: Array<{ customer_id: number; phone: string }>;
+  delaySec: number;
+}): Promise<void> {
+  const job = { botBaseUrl: params.botBaseUrl, internalKey: params.internalKey };
+  const delay = Number.isFinite(params.delaySec) ? params.delaySec : 30;
+  let done = 0;
+  for (const it of params.items) {
+    if (!it || !it.customer_id) continue;
+    const phone = (it.phone || "").trim();
+    if (!phone) { await postUidToBot(job, it.customer_id, null, "no_phone"); continue; }
+    if (delay > 0) await sleep(delay * 1000);
+    let foundUid: string | null = null;
+    try {
+      const res = (await zaloOps.findUser(params.zaloAccountId, phone)) as Record<string, unknown> | null;
+      foundUid = res ? String((res.uid as string) || (res.userId as string) || "") || null : null;
+    } catch (err) {
+      // Lỗi (rất có thể Zalo chặn vì tra quá nhiều) → BACKOFF: dừng batch, KHÔNG đánh dấu not_found.
+      logger.warn(`[uid-resolve] findUser customer=${it.customer_id} lỗi → backoff: ${(err as Error)?.message}`);
+      break;
+    }
+    if (foundUid) await postUidToBot(job, it.customer_id, foundUid, "found");
+    else await postUidToBot(job, it.customer_id, null, "not_found"); // trả rỗng = chặn tìm kiếm / không có Zalo
+    done++;
+  }
+  logger.info(`[uid-resolve] xử lý ${done}/${params.items.length} khách`);
+}
