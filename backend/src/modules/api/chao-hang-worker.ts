@@ -32,6 +32,7 @@ interface Recipient {
   zalo_uid?: string | null;
   uid_status?: 'found' | 'unknown' | 'not_found' | 'no_phone';
   tier?: string;
+  product_codes?: string[];
 }
 interface JobConfig {
   send_delay_sec: number;
@@ -94,9 +95,11 @@ function startOfTodayVN(): Date {
 }
 
 /** Gom ảnh chào hàng cho 1 khách: mỗi product lấy anh[tier], thiếu thì fallback base. */
-function imagesForRecipient(products: ChaoHangProduct[], tier?: string): string[] {
+function imagesForRecipient(products: ChaoHangProduct[], tier?: string, productCodes?: string[]): string[] {
   const out: string[] = [];
+  const allow = Array.isArray(productCodes) && productCodes.length ? new Set(productCodes) : null;
   for (const p of products) {
+    if (allow && !allow.has(p.ma)) continue;
     const anh = p.anh ?? {};
     const byTier = tier ? (anh as Record<string, string | undefined>)[tier] : undefined;
     const url = byTier || anh.base;
@@ -296,7 +299,7 @@ async function processJob(crmJobId: string): Promise<void> {
       return;
     }
 
-    const imageUrls = imagesForRecipient(products, r.tier);
+    const imageUrls = imagesForRecipient(products, r.tier, r.product_codes);
     if (imageUrls.length === 0) {
       await markResult(job.id, r, { status: 'skipped', error: 'không có ảnh phù hợp tier', uidUsed: r.zalo_uid ?? null, imagesCount: 0 });
       continue;
