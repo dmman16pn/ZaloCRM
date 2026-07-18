@@ -257,6 +257,9 @@ async function processJob(crmJobId: string): Promise<void> {
     ? data.products
     : (Array.isArray(job.products) ? (job.products as unknown as ChaoHangProduct[]) : []);
 
+  // Loi chao hang (text) tu BOT (BOT tao anh) — gui truoc anh, chi 1 lan o lo dau.
+  const chaoMessage = typeof (data as { message?: unknown })?.message === "string" ? ((data as { message?: string }).message ?? "") : "";
+
   // Seed kết quả pending cho khách mới (create-if-missing — KHÔNG ghi đè khách đã 'sent').
   for (const r of recipients) {
     await prisma.chaoHangResult.upsert({
@@ -351,9 +354,9 @@ async function processJob(crmJobId: string): Promise<void> {
     const lots = chunk(imageUrls, PUBLIC_MAX_IMAGES);
     let ok = true;
     let errMsg: string | undefined;
-    for (const lot of lots) {
+    for (let li = 0; li < lots.length; li++) {
       try {
-        await sendToThread(api, job.orgId, job.zaloAccountId, uid, 0 /* user */, '', lot);
+        await sendToThread(api, job.orgId, job.zaloAccountId, uid, 0 /* user */, li === 0 ? chaoMessage : '', lots[li]);
       } catch (err) {
         ok = false;
         errMsg = err instanceof PartialSendError
