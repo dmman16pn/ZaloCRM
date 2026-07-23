@@ -45,15 +45,17 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     return { token, user: payload };
   });
 
-  // POST /api/v1/auth/login — verify credentials, return JWT
+  // POST /api/v1/auth/login — verify credentials, return JWT.
+  // `identifier` = email HOẶC số điện thoại. Giữ tương thích với client cũ gửi `email`.
   app.post<{
-    Body: { email: string; password: string };
+    Body: { identifier?: string; email?: string; password: string };
   }>('/api/v1/auth/login', async (request, reply) => {
-    const { email, password } = request.body;
-    if (!email || !password) {
-      return reply.status(400).send({ error: 'Missing email or password' });
+    const { identifier, email, password } = request.body;
+    const loginId = (identifier ?? email ?? '').trim();
+    if (!loginId || !password) {
+      return reply.status(400).send({ error: 'Thiếu tài khoản hoặc mật khẩu' });
     }
-    const payload = await login(email, password);
+    const payload = await login(loginId, password);
     const token = app.jwt.sign(payload, { expiresIn: '7d' });
     // Phase 6 polish — fire-and-forget seed nếu org cũ chưa có scoring config.
     // Idempotent — skip nếu đã tồn tại. Không await.

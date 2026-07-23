@@ -6,9 +6,14 @@ const api = axios.create({
   timeout: 30000,
 });
 
+// Token có thể nằm ở localStorage (ghi nhớ) hoặc sessionStorage (phiên tạm).
+function readToken(): string | null {
+  return localStorage.getItem('token') || sessionStorage.getItem('token');
+}
+
 // JWT interceptor
 api.interceptors.request.use((config) => {
-  const token = localStorage.getItem('token');
+  const token = readToken();
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
@@ -21,6 +26,7 @@ api.interceptors.response.use(
   (error) => {
     if (error.response?.status === 401) {
       localStorage.removeItem('token');
+      sessionStorage.removeItem('token');
       // Use Vue Router instead of hard reload to prevent redirect loops
       const currentPath = router.currentRoute.value.path;
       if (currentPath !== '/login' && currentPath !== '/setup') {

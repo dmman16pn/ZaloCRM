@@ -98,6 +98,9 @@ model User {
   orgId        String   @map("org_id")
   teamId       String?  @map("team_id")
   email        String   @unique
+  // Đăng nhập bằng SĐT: lưu canonical "84xxxxxxxxx" (normalizePhone). Nullable + unique
+  // để user cũ (chỉ email) không vướng; Postgres cho nhiều NULL trên unique index.
+  phone        String?  @unique
   passwordHash String   @map("password_hash")
   fullName     String   @map("full_name")
   // RBAC Phase Phân Quyền 2026-05-21: legacy `role` còn giữ cho dual-read window 2 tuần,

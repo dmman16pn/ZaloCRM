@@ -11,6 +11,7 @@
     "db:migrate": "prisma migrate dev",
     "db:push": "prisma db push",
     "db:seed": "tsx prisma/seed.ts",
+    "ensure-admin": "tsx src/modules/auth/ensure-admin.ts",
     "db:studio": "prisma studio",
     "test": "vitest run",
     "test:watch": "vitest",

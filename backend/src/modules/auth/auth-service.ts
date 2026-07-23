@@ -5,6 +5,17 @@
 import bcrypt from 'bcryptjs';
 import { prisma } from '../../shared/database/prisma-client.js';
 import { logger } from '../../shared/utils/logger.js';
+import { normalizePhone } from '../../shared/utils/phone.js';
+
+/**
+ * Một chuỗi được coi là "có vẻ SĐT" khi bỏ hết ký tự không phải số vẫn còn
+ * ≥ 8 chữ số VÀ không chứa '@'. Dùng để quyết định tra theo phone hay email.
+ */
+function looksLikePhone(identifier: string): boolean {
+  if (identifier.includes('@')) return false;
+  const digits = identifier.replace(/[^\d]/g, '');
+  return digits.length >= 8;
+}
 
 export interface JwtPayload {
   id: string;
@@ -59,23 +70,39 @@ export async function setup(
   };
 }
 
-// Verify credentials, return JWT payload
-export async function login(email: string, password: string): Promise<JwtPayload> {
-  const user = await prisma.user.findUnique({
-    where: { email: email.toLowerCase().trim() },
-  });
+// Verify credentials, return JWT payload.
+// `identifier` chấp nhận EMAIL hoặc SỐ ĐIỆN THOẠI (VN). Nếu là SĐT thì tra theo
+// User.phone (canonical 84xxxxxxxxx); ngược lại tra theo email (lowercased).
+export async function login(identifier: string, password: string): Promise<JwtPayload> {
+  const raw = (identifier ?? '').trim();
+
+  const unauthorized = () => {
+    const err = new Error('Sai tài khoản hoặc mật khẩu') as Error & { statusCode: number };
+    err.statusCode = 401;
+    return err;
+  };
+
+  let user = null;
+  if (looksLikePhone(raw)) {
+    const phone = normalizePhone(raw);
+    if (phone) {
+      user = await prisma.user.findUnique({ where: { phone } });
+    }
+    // Fallback: cho phép trường hợp SĐT được lưu ở cột email (dữ liệu cũ)
+    if (!user) {
+      user = await prisma.user.findUnique({ where: { email: raw.toLowerCase() } });
+    }
+  } else {
+    user = await prisma.user.findUnique({ where: { email: raw.toLowerCase() } });
+  }
 
   if (!user || !user.isActive) {
-    const err = new Error('Invalid email or password') as Error & { statusCode: number };
-    err.statusCode = 401;
-    throw err;
+    throw unauthorized();
   }
 
   const valid = await bcrypt.compare(password, user.passwordHash);
   if (!valid) {
-    const err = new Error('Invalid email or password') as Error & { statusCode: number };
-    err.statusCode = 401;
-    throw err;
+    throw unauthorized();
   }
 
   return { id: user.id, email: user.email, role: user.role, orgId: user.orgId };

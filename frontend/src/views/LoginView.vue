@@ -11,10 +11,11 @@
 
     <v-form @submit.prevent="handleLogin">
       <v-text-field
-        v-model="email"
-        label="Email"
-        type="email"
-        prepend-inner-icon="mdi-email-outline"
+        v-model="identifier"
+        label="Email hoặc số điện thoại"
+        type="text"
+        autocomplete="username"
+        prepend-inner-icon="mdi-account-outline"
         required
         class="mb-3"
       />
@@ -22,9 +23,17 @@
         v-model="password"
         label="Mật khẩu"
         type="password"
+        autocomplete="current-password"
         prepend-inner-icon="mdi-lock-outline"
         required
-        class="mb-5"
+        class="mb-2"
+      />
+      <v-checkbox
+        v-model="remember"
+        label="Ghi nhớ đăng nhập"
+        density="compact"
+        hide-details
+        class="mb-4"
       />
       <v-btn type="submit" color="primary" block size="large" :loading="loading" rounded="xl">
         <v-icon start>mdi-login</v-icon>
@@ -43,8 +52,9 @@ import { ref, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { useAuthStore } from '@/stores/auth';
 
-const email = ref('');
+const identifier = ref('');
 const password = ref('');
+const remember = ref(true);
 const loading = ref(false);
 const error = ref('');
 const router = useRouter();
@@ -61,7 +71,7 @@ async function handleLogin() {
   loading.value = true;
   error.value = '';
   try {
-    await authStore.login(email.value, password.value);
+    await authStore.login(identifier.value.trim(), password.value, remember.value);
     router.push('/');
   } catch (err: any) {
     error.value = err.response?.data?.error || 'Đăng nhập thất bại';

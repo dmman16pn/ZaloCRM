@@ -29,6 +29,7 @@ import { config } from './config/index.js';
 import { prisma } from './shared/database/prisma-client.js';
 import { logger } from './shared/utils/logger.js';
 import { authRoutes } from './modules/auth/auth-routes.js';
+import { ensureBootstrapAdmin } from './modules/auth/ensure-admin.js';
 import { zaloRoutes } from './modules/zalo/zalo-routes.js';
 import { chatRoutes } from './modules/chat/chat-routes.js';
 import { folderRoutes } from './modules/chat/folder-routes.js';
@@ -272,6 +273,16 @@ async function bootstrap() {
   });
 
   // ── Start ─────────────────────────────────────────────────────────────────
+
+  // Đảm bảo tài khoản admin bootstrap tồn tại (idempotent, non-fatal).
+  // Chỉ chạy khi ENV BOOTSTRAP_ADMIN_PHONE/PASSWORD được cấu hình; bỏ qua khi test.
+  if (config.nodeEnv !== 'test') {
+    try {
+      await ensureBootstrapAdmin();
+    } catch (err) {
+      logger.error('[ensure-admin] bootstrap admin thất bại (bỏ qua):', err);
+    }
+  }
 
   try {
     await app.listen({ port: config.port, host: config.host });

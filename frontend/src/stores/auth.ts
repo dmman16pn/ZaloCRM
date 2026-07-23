@@ -13,9 +13,33 @@ interface User {
   orgTimezone?: string;
 }
 
+const TOKEN_KEY = 'token';
+
+// Đọc token từ localStorage (ghi nhớ) HOẶC sessionStorage (phiên tạm).
+function readToken(): string {
+  return localStorage.getItem(TOKEN_KEY) || sessionStorage.getItem(TOKEN_KEY) || '';
+}
+
+// Lưu token: remember=true → localStorage (bền qua lần mở sau);
+// remember=false → sessionStorage (mất khi đóng trình duyệt).
+function persistToken(value: string, remember: boolean): void {
+  if (remember) {
+    localStorage.setItem(TOKEN_KEY, value);
+    sessionStorage.removeItem(TOKEN_KEY);
+  } else {
+    sessionStorage.setItem(TOKEN_KEY, value);
+    localStorage.removeItem(TOKEN_KEY);
+  }
+}
+
+function clearToken(): void {
+  localStorage.removeItem(TOKEN_KEY);
+  sessionStorage.removeItem(TOKEN_KEY);
+}
+
 export const useAuthStore = defineStore('auth', () => {
   const user = ref<User | null>(null);
-  const token = ref(localStorage.getItem('token') || '');
+  const token = ref(readToken());
   const needsSetup = ref(false);
 
   const isAuthenticated = computed(() => !!token.value && !!user.value);
@@ -32,14 +56,15 @@ export const useAuthStore = defineStore('auth', () => {
     const res = await api.post('/setup', data);
     token.value = res.data.token;
     user.value = res.data.user;
-    localStorage.setItem('token', res.data.token);
+    persistToken(res.data.token, true);
   }
 
-  async function login(email: string, password: string) {
-    const res = await api.post('/auth/login', { email, password });
+  // identifier = email HOẶC số điện thoại. remember=true → ghi nhớ đăng nhập.
+  async function login(identifier: string, password: string, remember = true) {
+    const res = await api.post('/auth/login', { identifier, password });
     token.value = res.data.token;
     user.value = res.data.user;
-    localStorage.setItem('token', res.data.token);
+    persistToken(res.data.token, remember);
   }
 
   async function fetchProfile() {
@@ -65,7 +90,7 @@ export const useAuthStore = defineStore('auth', () => {
   function logout() {
     token.value = '';
     user.value = null;
-    localStorage.removeItem('token');
+    clearToken();
   }
 
   async function init() {
