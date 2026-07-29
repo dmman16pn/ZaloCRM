@@ -259,6 +259,9 @@ async function processJob(crmJobId: string): Promise<void> {
 
   // Loi chao hang (text) tu BOT (BOT tao anh) — gui truoc anh, chi 1 lan o lo dau.
   const chaoMessage = typeof (data as { message?: unknown })?.message === "string" ? ((data as { message?: string }).message ?? "") : "";
+  // Cau chao (text) tu BOT — gui NGAY SAU khi gui xong bo anh cua MOI khach,
+  // gui xong text moi chuyen sang khach ke tiep. Rong = khong gui.
+  const outroMessage = typeof (data as { message_after?: unknown })?.message_after === "string" ? ((data as { message_after?: string }).message_after ?? "").trim() : "";
 
   // Seed kết quả pending cho khách mới (create-if-missing — KHÔNG ghi đè khách đã 'sent').
   for (const r of recipients) {
@@ -368,9 +371,20 @@ async function processJob(crmJobId: string): Promise<void> {
         break;
       }
     }
+    // 4b) Gửi câu chào (text) NGAY SAU khi gửi xong bộ ảnh — xong mới sang khách kế tiếp.
+    // Ảnh đã gửi OK mà text lỗi → vẫn giữ status 'sent' (tránh re-send trùng ảnh), chỉ ghi chú lỗi.
+    let outroErr: string | undefined;
+    if (ok && outroMessage) {
+      try {
+        await sendToThread(api, job.orgId, job.zaloAccountId, uid, 0 /* user */, outroMessage, []);
+      } catch (err) {
+        outroErr = (err as Error)?.message ?? 'gửi câu chào thất bại';
+        logger.warn(`[chao-hang] gửi câu chào customer=${r.customer_id} LỖI: ${outroErr}`);
+      }
+    }
     await markResult(job.id, r, {
       status: ok ? 'sent' : 'failed',
-      error: ok ? null : (errMsg ?? 'gửi thất bại'),
+      error: ok ? (outroErr ? `ảnh OK, câu chào lỗi: ${outroErr}` : null) : (errMsg ?? 'gửi thất bại'),
       uidUsed: uid,
       imagesCount: imageUrls.length,
       sentAt: ok ? new Date() : undefined,
