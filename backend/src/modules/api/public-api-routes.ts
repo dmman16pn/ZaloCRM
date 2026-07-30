@@ -160,6 +160,7 @@ export async function sendToThread(
   threadType: number,
   content: string,
   imageUrls: string[],
+  captionMode = false,
 ): Promise<void> {
   if (imageUrls.length === 0) {
     await api.sendMessage(content, threadId, threadType);
@@ -174,6 +175,19 @@ export async function sendToThread(
       const tmpPath = path.join(tmpRoot, `${i}${img.ext}`);
       await writeFile(tmpPath, img.buffer);
       tmpPaths.push(tmpPath);
+    }
+
+    // captionMode: text đi làm DESC của ảnh CUỐI (zca-js: 1 ảnh jpg/png/webp + msg
+    // -> desc, KHÔNG đẻ tin text riêng) => tới được cả khách chặn tin text từ người lạ.
+    if (captionMode && content && content.trim()) {
+      const last = tmpPaths[tmpPaths.length - 1];
+      const rest = tmpPaths.slice(0, -1);
+      if (rest.length > 0) {
+        await sendAlbumWithSafeRetry(api, orgId, zaloAccountId, threadId, threadType, '', rest);
+      }
+      // Ảnh cuối + desc: gửi 1 lần, KHÔNG retry (retry sẽ nhân đôi cả ảnh lẫn lời nhắn).
+      await api.sendMessage({ msg: content, attachments: [last] }, threadId, threadType);
+      return;
     }
 
     // 1) Gửi TEXT trước, đúng 1 lần (ngoài vòng retry ảnh → không trùng).
@@ -471,7 +485,8 @@ export async function publicApiRoutes(app: FastifyInstance): Promise<void> {
       const threadType = body.threadType === 'group' ? 1 : 0;
 
       try {
-        await sendToThread(api, orgId, body.zaloAccountId, body.threadId, threadType, hasContent ? body.content : '', imageUrls);
+        // captionMode=true: lời nhắn đi làm desc của ảnh cuối (tới được khách chặn tin text).
+        await sendToThread(api, orgId, body.zaloAccountId, body.threadId, threadType, hasContent ? body.content : '', imageUrls, body.captionMode === true);
       } catch (err) {
         if (err instanceof PartialSendError) {
           // Đã qua pha upload, lỗi pha gửi → CÓ THỂ đã giao một phần ảnh. Báo riêng,

@@ -113,6 +113,50 @@ function chunk<T>(arr: T[], size: number): T[][] {
   return out;
 }
 
+/** Lỗi Zalo chặn tin TEXT (khách chưa kết bạn + tắt nhận tin từ người lạ). */
+function isTextBlockedError(msg: string): boolean {
+  const m = (msg || '').toLowerCase();
+  return m.includes('không thể nhận tin nhắn')
+    || m.includes('không muốn nhận tin nhắn')
+    || m.includes('chưa thể gửi tin nhắn');
+}
+
+/**
+ * Khách này có cần gửi lời nhắn dạng DESC của ảnh (captionMode) thay vì tin text riêng?
+ * TRUE khi: (a) chưa kết bạn với nick gửi → Zalo hay chặn tin text từ người lạ, HOẶC
+ *           (b) đã từng bị chặn tin text ở lần chào trước (học từ lịch sử).
+ * captionMode gửi lời nhắn kèm ảnh trong 1 tin ảnh → không bị chặn, lại đỡ 1 tin/khách.
+ */
+async function shouldUseCaption(
+  orgId: string,
+  zaloAccountId: string,
+  customerId: number,
+  uid: string,
+): Promise<boolean> {
+  try {
+    const friend = await prisma.friend.findFirst({
+      where: { orgId, zaloAccountId, zaloUidInNick: uid },
+      select: { friendshipStatus: true },
+    });
+    if (!friend || friend.friendshipStatus !== 'accepted') return true;
+    const blocked = await prisma.chaoHangResult.findFirst({
+      where: {
+        customerId,
+        job: { orgId, zaloAccountId },
+        OR: [
+          { error: { contains: 'không thể nhận tin nhắn', mode: 'insensitive' } },
+          { error: { contains: 'không muốn nhận tin nhắn', mode: 'insensitive' } },
+        ],
+      },
+      select: { id: true },
+    });
+    return !!blocked;
+  } catch (err) {
+    logger.warn(`[chao-hang] shouldUseCaption customer=${customerId} lỗi: ${(err as Error)?.message}`);
+    return false; // lỗi tra cứu → giữ luồng cũ (tin text riêng)
+  }
+}
+
 // ── Gọi ngược BOT (đính x-internal-key, KHÔNG log key) ──────────────────────────
 async function botFetch(
   baseUrl: string,
@@ -354,12 +398,21 @@ async function processJob(crmJobId: string): Promise<void> {
     }
 
     // 4) Gửi ảnh chào hàng (chia lô theo PUBLIC_MAX_IMAGES; threadType user = 0).
+    // Khách đã từng bị Zalo chặn tin TEXT (chưa kết bạn + tắt nhận tin người lạ) → gửi lời
+    // nhắn làm DESC của ảnh cuối ngay từ đầu (1 tin ảnh, không bị chặn) thay vì tin text riêng.
+    const useCaption = outroMessage ? await shouldUseCaption(job.orgId, job.zaloAccountId, r.customer_id, uid) : false;
     const lots = chunk(imageUrls, PUBLIC_MAX_IMAGES);
     let ok = true;
     let errMsg: string | undefined;
     for (let li = 0; li < lots.length; li++) {
+      const isLastLot = li === lots.length - 1;
       try {
-        await sendToThread(api, job.orgId, job.zaloAccountId, uid, 0 /* user */, li === 0 ? chaoMessage : '', lots[li]);
+        await sendToThread(
+          api, job.orgId, job.zaloAccountId, uid, 0 /* user */,
+          useCaption && isLastLot ? outroMessage : (li === 0 ? chaoMessage : ''),
+          lots[li],
+          useCaption && isLastLot,
+        );
       } catch (err) {
         ok = false;
         errMsg = err instanceof PartialSendError
@@ -372,14 +425,16 @@ async function processJob(crmJobId: string): Promise<void> {
       }
     }
     // 4b) Gửi câu chào (text) NGAY SAU khi gửi xong bộ ảnh — xong mới sang khách kế tiếp.
+    // useCaption=true: lời nhắn ĐÃ đi kèm ảnh cuối ở bước 4 → không gửi tin text nữa.
     // Ảnh đã gửi OK mà text lỗi → vẫn giữ status 'sent' (tránh re-send trùng ảnh), chỉ ghi chú lỗi.
     let outroErr: string | undefined;
-    if (ok && outroMessage) {
+    if (ok && outroMessage && !useCaption) {
       try {
         await sendToThread(api, job.orgId, job.zaloAccountId, uid, 0 /* user */, outroMessage, []);
       } catch (err) {
         outroErr = (err as Error)?.message ?? 'gửi câu chào thất bại';
-        logger.warn(`[chao-hang] gửi câu chào customer=${r.customer_id} LỖI: ${outroErr}`);
+        logger.warn(`[chao-hang] gửi câu chào customer=${r.customer_id} LỖI: ${outroErr}`
+          + (isTextBlockedError(outroErr) ? ' → lần chào sau sẽ tự gửi kèm ảnh (caption)' : ''));
       }
     }
     await markResult(job.id, r, {
