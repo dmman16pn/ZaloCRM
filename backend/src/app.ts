@@ -128,6 +128,30 @@ async function bootstrap() {
     },
   });
 
+  // POST/PUT/PATCH KHÔNG có body (reconnect, pin, block, leave-group, sync...) — frontend
+  // gọi `api.post(url)` không kèm data nên không có Content-Type.
+  //
+  // Fastify chỉ bỏ qua bước parse body khi vừa thiếu Content-Type VỪA thiếu
+  // Transfer-Encoding (lib/handle-request.js). Nhưng cloudflared nhận HTTP/2 từ trình duyệt
+  // (không có content-length) rồi phát lại xuống origin bằng HTTP/1.1 kèm
+  // `Transfer-Encoding: chunked` → Fastify rơi vào nhánh parser cho content-type rỗng,
+  // không ai đăng ký → trả 415 Unsupported Media Type. Request thậm chí chưa vào handler.
+  //
+  // Vì vậy CHỈ hỏng khi đi qua tunnel; gọi thẳng 127.0.0.1:3080 vẫn 200 — đây là hồi quy
+  // sinh ra lúc chuyển sang Cloudflare Tunnel (2026-08-10), không phải lỗi của route.
+  // Phải đăng ký bằng RegExp khớp "/": Fastify 5 chặn thẳng chuỗi rỗng
+  // (FST_ERR_CTP_EMPTY_TYPE), còn khi tra parser thì nó chuẩn hoá content-type rỗng
+  // thành media-type "/" (lib/content-type.js) rồi mới dò danh sách RegExp.
+  app.addContentTypeParser(/^\/$/, { parseAs: 'string' }, (_request, body: string, done) => {
+    if (!body || body.trim() === '') return done(null, {});
+    try {
+      done(null, JSON.parse(body));
+    } catch {
+      // Không phải JSON thì trả nguyên văn, để route tự quyết — không nuốt dữ liệu.
+      done(null, body as unknown as Record<string, unknown>);
+    }
+  });
+
   // Serve compiled frontend assets in production
   if (config.isProduction) {
     await app.register(fastifyStatic, {
