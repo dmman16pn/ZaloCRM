@@ -6,6 +6,7 @@
 import { ref, onUnmounted } from 'vue';
 import { api } from '@/api/index';
 import { io, Socket } from 'socket.io-client';
+import { useToast } from '@/composables/use-toast';
 
 export interface ZaloAccount {
   id: string;
@@ -37,6 +38,18 @@ export function useZaloAccounts() {
   const currentLoginAccountId = ref('');
 
   let socket: Socket | null = null;
+
+  const toast = useToast();
+
+  // API /reconnect trả 200 ngay lập tức rồi mới thử login ngầm — kết quả thật về sau
+  // 1-3s qua socket. Không có set này thì mọi phản hồi (kể cả THẤT BẠI) đều im lặng,
+  // người dùng tưởng nút hỏng. Chỉ báo cho nick do người dùng tự bấm, để lúc app khởi
+  // động lại 8-10 nick tự connect không bắn ra một loạt toast.
+  const manualReconnects = new Set<string>();
+
+  function nameOf(accountId: string): string {
+    return accounts.value.find(a => a.id === accountId)?.displayName || 'Nick Zalo';
+  }
 
   function statusColor(status: string) {
     switch (status) {
@@ -113,9 +126,20 @@ export function useZaloAccounts() {
   async function reconnectAccount(accountId: string) {
     try {
       await api.post(`/zalo-accounts/${accountId}/reconnect`);
+      manualReconnects.add(accountId);
+      // Chuỗi thử của backend có thể kéo dài; 90s là quá đủ cho 1 lượt login.
+      setTimeout(() => manualReconnects.delete(accountId), 90_000);
+      toast.push(`Đang kết nối lại "${nameOf(accountId)}"...`);
       await fetchAccounts();
     } catch (err: any) {
       console.error('Reconnect failed:', err);
+      const serverMsg = err?.response?.data?.error;
+      toast.error(
+        serverMsg === 'No saved session — please login with QR first'
+          ? `"${nameOf(accountId)}" chưa có phiên đăng nhập nào — hãy bấm "Đăng nhập QR".`
+          : `Không gửi được lệnh kết nối lại: ${serverMsg || err?.message || 'lỗi không rõ'}`,
+        5000,
+      );
     }
   }
 
@@ -159,8 +183,11 @@ export function useZaloAccounts() {
       }
     });
 
-    socket.on('zalo:connected', (_data: { accountId: string }) => {
+    socket.on('zalo:connected', (data: { accountId: string }) => {
       showQRDialog.value = false;
+      if (manualReconnects.delete(data.accountId)) {
+        toast.success(`Đã kết nối lại "${nameOf(data.accountId)}".`);
+      }
       fetchAccounts();
       onStatusChangeCb?.();
     });
@@ -183,7 +210,15 @@ export function useZaloAccounts() {
       }
     });
 
-    socket.on('zalo:reconnect-failed', (_data: { accountId: string }) => {
+    socket.on('zalo:reconnect-failed', (data: { accountId: string }) => {
+      if (manualReconnects.delete(data.accountId)) {
+        // Login bằng cookie đã lưu mà hỏng thì gần như luôn là phiên hết hạn/bị Zalo
+        // thu hồi — bấm Reconnect thêm lần nữa cũng vô ích, phải quét QR lại.
+        toast.error(
+          `"${nameOf(data.accountId)}" kết nối lại thất bại — phiên Zalo đã hết hạn. Hãy bấm "Đăng nhập QR" để quét lại.`,
+          6000,
+        );
+      }
       fetchAccounts();
       onStatusChangeCb?.();
     });
