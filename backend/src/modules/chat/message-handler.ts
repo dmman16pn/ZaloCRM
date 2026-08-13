@@ -10,7 +10,7 @@ import { runAutomationRules } from '../automation/automation-service.js';
 import { applyContactAggregateFromMessage, applyContactInteraction, applyFriendAggregate } from '../contacts/contact-aggregate.js';
 import { onInboundMessage as onInboundScoring, onOutboundMessage as onOutboundScoring } from '../scoring/scoring-hooks.js';
 import { syncReminderFromMessage } from '../contacts/reminder-sync.js';
-import { uploadBuffer } from '../../shared/storage/minio-client.js';
+import { uploadBuffer } from '../../shared/storage/r2-client.js';
 import { config } from '../../config/index.js';
 
 export interface IncomingMessage {
@@ -82,8 +82,12 @@ function safeParseJsonObject(value: string): Record<string, unknown> | null {
   }
 }
 
+// URL đã nằm trong kho của mình thì không mirror lại (tránh vòng lặp tự sao chép).
+// Nhận cả URL MinIO cũ (host 127.0.0.1:9000, còn trong DB trước 2026-08-13) lẫn
+// URL R2 mới — kho cũ không còn ghi nhưng dữ liệu cũ vẫn chảy qua đây.
 function isLocalStorageUrl(value: string): boolean {
-  return value.startsWith(`${config.s3PublicUrl}/${config.s3Bucket}/`);
+  if (value.startsWith(`${config.s3PublicUrl}/`)) return true;
+  return value.startsWith(`${config.s3Endpoint}/`) || value.includes('127.0.0.1:9000/');
 }
 
 function isMirrorableUrl(value: unknown): value is string {
