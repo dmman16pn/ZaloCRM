@@ -2028,9 +2028,9 @@ socket.on('chat:typing', (data) => {
 
 ## Liên Kết Hữu Ích
 
-- **Kho GitHub:** https://github.com/locphamnguyen/zalo-crm
-- **Theo Dõi Vấn Đề:** https://github.com/locphamnguyen/zalo-crm/issues
-- **Thảo Luận:** https://github.com/locphamnguyen/zalo-crm/discussions
+- **Kho GitHub:** https://github.com/dmman16pn/ZaloCRM
+- **Theo Dõi Vấn Đề:** https://github.com/dmman16pn/ZaloCRM/issues
+- **Thảo Luận:** https://github.com/dmman16pn/ZaloCRM/discussions
 
 ---
 

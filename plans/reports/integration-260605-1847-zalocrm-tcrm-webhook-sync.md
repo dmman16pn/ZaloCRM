@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-05  
 **Status:** DESIGN  
-**User:** Loc Nguyen  
+**User:** Dương Minh Mẫn  
 
 ---
 

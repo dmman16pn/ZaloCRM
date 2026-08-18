@@ -1,7 +1,7 @@
 # Contributor License Agreement (CLA)
 
 Thank you for your interest in contributing to ZaloCRM (the "Project"),
-maintained by Loc Nguyen (the "Maintainer").
+maintained by Dương Minh Mẫn (the "Maintainer").
 
 This Contributor License Agreement ("Agreement") sets out the terms under which
 You provide Contributions to the Project. By submitting a Contribution (for

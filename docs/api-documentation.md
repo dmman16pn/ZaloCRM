@@ -2052,9 +2052,9 @@ socket.on('chat:typing', (data) => {
 
 ## Useful Links
 
-- **GitHub Repository:** https://github.com/locphamnguyen/zalo-crm
-- **Issue Tracker:** https://github.com/locphamnguyen/zalo-crm/issues
-- **Discussions:** https://github.com/locphamnguyen/zalo-crm/discussions
+- **GitHub Repository:** https://github.com/dmman16pn/ZaloCRM
+- **Issue Tracker:** https://github.com/dmman16pn/ZaloCRM/issues
+- **Discussions:** https://github.com/dmman16pn/ZaloCRM/discussions
 
 ---
 

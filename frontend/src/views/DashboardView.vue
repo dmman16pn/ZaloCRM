@@ -5,7 +5,7 @@
       Source data is obfuscated in src/composables/use-attribution.ts; see that
       file + the NOTICE file at the repository root before modifying.
       Removing this element is a license violation unless you hold a commercial
-      license from the maintainer (locnt@locnguyendata.com).
+      license from the maintainer (dmman16pn@gmail.com).
     -->
     <a
       v-if="attribution.enabled.value"

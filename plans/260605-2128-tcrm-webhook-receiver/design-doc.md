@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-05
 **Status:** DESIGN
-**Owner:** Loc Nguyen
+**Owner:** Dương Minh Mẫn
 **Bridge:** ZaloCRM (push) → TCRM (receive + display)
 
 ---

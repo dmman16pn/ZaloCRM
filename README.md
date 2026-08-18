@@ -2,7 +2,7 @@
 
 Hệ thống quản lý tập trung nhiều tài khoản Zalo cá nhân trên 1 giao diện web. Chat real-time, gửi ảnh/video/audio/file qua MinIO/S3/R2, Facebook Lead Ingestion, AI assistant, workflow tự động, tích hợp đa nền tảng, analytics nâng cao, PWA mobile.
 
-**GitHub:** [https://github.com/locphamnguyen/ZaloCRM](https://github.com/locphamnguyen/ZaloCRM)
+**GitHub:** [https://github.com/dmman16pn/ZaloCRM](https://github.com/dmman16pn/ZaloCRM)
 
 ## Ảnh chụp giao diện v3.3
 
@@ -115,7 +115,7 @@ Hệ thống quản lý tập trung nhiều tài khoản Zalo cá nhân trên 1 
 ## Cài đặt mới
 
 ```bash
-git clone https://github.com/locphamnguyen/ZaloCRM.git
+git clone https://github.com/dmman16pn/ZaloCRM.git
 cd ZaloCRM
 cp .env.example .env
 # Sửa file .env — đặt JWT_SECRET, ENCRYPTION_KEY, DB_PASSWORD, MINIO_ROOT_PASSWORD
@@ -430,8 +430,8 @@ Tham gia nhóm Telegram để trao đổi, hỏi đáp, nhận thông báo bản
 
 Bạn cần triển khai ZaloCRM cho doanh nghiệp, custom thêm tính năng riêng, hoặc tích hợp với hệ thống có sẵn? Liên hệ trực tiếp tôi để được tư vấn:
 
-- 🌐 **Website:** [https://locnguyendata.com](https://locnguyendata.com)
-- 📧 **Email:** [locnt@locnguyendata.com](mailto:locnt@locnguyendata.com)
+- 🌐 **Website:** [https://shinsulab.com](https://shinsulab.com)
+- 📧 **Email:** [dmman16pn@gmail.com](mailto:dmman16pn@gmail.com)
 - 💬 **Telegram:** [Tham gia group](https://t.me/+KKJ3SJSx6PA3NDE1)
 
 ### Dịch vụ cung cấp

@@ -317,5 +317,5 @@ Trao đổi, hỏi đáp, nhận thông báo bản phát hành mới:
 
 Cần tư vấn, custom thêm tính năng, hoặc triển khai ZaloCRM cho doanh nghiệp:
 
-- 🌐 [https://locnguyendata.com](https://locnguyendata.com)
-- 📧 [locnt@locnguyendata.com](mailto:locnt@locnguyendata.com)
+- 🌐 [https://shinsulab.com](https://shinsulab.com)
+- 📧 [dmman16pn@gmail.com](mailto:dmman16pn@gmail.com)

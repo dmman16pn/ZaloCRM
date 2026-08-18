@@ -1,6 +1,6 @@
-# Adversarial Review: locphamnguyen/session-setup AI Feature
+# Adversarial Review: dmman16pn/session-setup AI Feature
 
-**Branch:** `locphamnguyen/session-setup` vs `origin/main`
+**Branch:** `dmman16pn/session-setup` vs `origin/main`
 **Date:** 2026-03-29
 **Scope:** AI reply-draft / summarize / sentiment features (Fastify + Prisma backend, Vue 3 frontend)
 

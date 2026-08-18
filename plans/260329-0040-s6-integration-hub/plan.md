@@ -4,7 +4,7 @@ description: "7-phase execution plan for a simple, high-value Integration Hub MV
 status: pending
 priority: P2
 effort: 18h
-branch: locphamnguyen/integration-hub
+branch: dmman16pn/integration-hub
 tags: [sprint-s6, integration-hub, backend, frontend, prisma]
 created: 2026-03-29
 ---

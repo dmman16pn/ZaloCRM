@@ -27,4 +27,4 @@ license your contributions as part of the project. See
 ## Questions
 
 For licensing questions or commercial inquiries, contact the maintainer:
-Loc Nguyen <locnt@locnguyendata.com>.
+Dương Minh Mẫn <dmman16pn@gmail.com>.

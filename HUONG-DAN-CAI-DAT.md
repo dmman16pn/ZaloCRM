@@ -31,7 +31,7 @@ docker compose version
 
 ```bash
 # Tải ZaloCRM từ GitHub
-git clone https://github.com/locphamnguyen/ZaloCRM.git
+git clone https://github.com/dmman16pn/ZaloCRM.git
 
 # Vào thư mục dự án
 cd ZaloCRM

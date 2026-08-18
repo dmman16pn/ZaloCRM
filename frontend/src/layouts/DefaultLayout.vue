@@ -99,7 +99,7 @@
 
       <!--
         ATTRIBUTION BANNER — moved into DashboardView per copyright holder
-        (locnt@locnguyendata.com). Rendering still required by Apache 2.0 §4(d);
+        (dmman16pn@gmail.com). Rendering still required by Apache 2.0 §4(d);
         see src/views/DashboardView.vue and src/composables/use-attribution.ts.
       -->
 

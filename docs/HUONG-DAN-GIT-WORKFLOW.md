@@ -1,7 +1,7 @@
 # Hướng dẫn Git workflow — hsholding fork
 
-> Tài liệu nội bộ cho HS Holding khi phát triển song song với upstream `locphamnguyen/ZaloCRM`.
-> Đọc khi: setup máy mới, chuẩn bị push code, đóng góp ngược upstream, sync update từ locpham.
+> Tài liệu nội bộ cho HS Holding khi phát triển song song với upstream `dmman16pn/ZaloCRM`.
+> Đọc khi: setup máy mới, chuẩn bị push code, đóng góp ngược upstream, sync update từ Dương Minh Mẫn.
 
 ---
 
@@ -12,7 +12,7 @@
 | Remote | URL | Quyền | Mục đích |
 |---|---|---|---|
 | `fork` | `https://github.com/hsholding/ZaloCRM.git` | ✅ read + write | Push toàn bộ work của HS Holding |
-| `origin` | `https://github.com/locphamnguyen/ZaloCRM.git` | 🔒 chỉ read | Fetch updates từ locphamnguyen về |
+| `origin` | `https://github.com/dmman16pn/ZaloCRM.git` | 🔒 chỉ read | Fetch updates từ dmman16pn về |
 
 ### Ba branches trên fork
 
@@ -35,7 +35,7 @@ git checkout stable-2026-05-18
 
 ## 🚀 Phát triển code hàng ngày (push lên đâu?)
 
-**Luôn push lên `fork` (= `hsholding/ZaloCRM`)**. KHÔNG bao giờ push vào `origin` (locphamnguyen) — không có quyền write.
+**Luôn push lên `fork` (= `hsholding/ZaloCRM`)**. KHÔNG bao giờ push vào `origin` (dmman16pn) — không có quyền write.
 
 ### Cách 1: Test nhanh, sửa nhỏ → push thẳng main
 
@@ -80,15 +80,15 @@ Sau này restore: `git checkout stable-YYYY-MM-DD`.
 
 ---
 
-## 🔼 Đóng góp ngược lên upstream locphamnguyen (Pull Request)
+## 🔼 Đóng góp ngược lên upstream dmman16pn (Pull Request)
 
-Locpham phải tự click merge — anh không tự push vào repo của họ được.
+Dương Minh Mẫn phải tự click merge — anh không tự push vào repo của họ được.
 
 ### Khi nào nên PR ngược upstream?
 
 | Loại work | Có nên PR? |
 |---|---|
-| Fix bug chung (ai cũng cần) | ✅ Nên — locpham + community được lợi |
+| Fix bug chung (ai cũng cần) | ✅ Nên — Dương Minh Mẫn + community được lợi |
 | Performance fix (vd flicker fix) | ✅ Nên |
 | Refactor code core có lợi ích chung | ✅ Nên |
 | Tính năng nội bộ HS Holding (vd Phase 6 scoring) | ❌ Giữ riêng trên fork |
@@ -101,13 +101,13 @@ Locpham phải tự click merge — anh không tự push vào repo của họ đ
 2. Mở **https://github.com/hsholding/ZaloCRM**
 3. GitHub tự hiện banner *"Contribute"* → click *"Open pull request"*
 4. Chọn:
-   - **base repository**: `locphamnguyen/ZaloCRM` — branch: `main`
+   - **base repository**: `dmman16pn/ZaloCRM` — branch: `main`
    - **head repository**: `hsholding/ZaloCRM` — branch: `main` (hoặc `feat/abc`)
 5. Viết:
    - **Title** ngắn gọn (vd `fix(chat): triệt để flicker cột 2 hội thoại`)
    - **Description** có: lý do, root cause, screenshot test, breaking changes (nếu có)
 6. Click *"Create pull request"*
-7. Đợi locpham review → merge / request changes / close
+7. Đợi Dương Minh Mẫn review → merge / request changes / close
 
 ### Tip: PR từ feature branch focused — review nhẹ hơn
 
@@ -123,21 +123,21 @@ git cherry-pick 8f50e1e
 # Push lên fork:
 git push fork contrib/fix-chat-flicker
 
-# Vào GitHub → tạo PR từ contrib/fix-chat-flicker → locphamnguyen:main
+# Vào GitHub → tạo PR từ contrib/fix-chat-flicker → dmman16pn:main
 ```
 
-Locpham review nhẹ hơn, dễ merge hơn vì branch chỉ chứa commit liên quan.
+Dương Minh Mẫn review nhẹ hơn, dễ merge hơn vì branch chỉ chứa commit liên quan.
 
 ---
 
-## 🔽 Sync update từ locphamnguyen về fork
+## 🔽 Sync update từ dmman16pn về fork
 
-Khi locpham release version mới (v3.1.3, v3.2…) hoặc fix bug quan trọng. Quy trình **fetch → review → merge**.
+Khi Dương Minh Mẫn release version mới (v3.1.3, v3.2…) hoặc fix bug quan trọng. Quy trình **fetch → review → merge**.
 
 ### Bước 1: Fetch (không động vào main)
 
 ```bash
-git fetch origin                          # lấy commits mới từ locpham
+git fetch origin                          # lấy commits mới từ Dương Minh Mẫn
 # KHÔNG merge tự động — chỉ download
 ```
 
@@ -160,7 +160,7 @@ git show <commit-hash>                    # đọc chi tiết 1 commit
 ```bash
 git checkout main
 git merge upstream-mirror
-# Nếu conflict (vd Phase 6 sửa file locpham cũng sửa):
+# Nếu conflict (vd Phase 6 sửa file Dương Minh Mẫn cũng sửa):
 # → resolve manually, git add <file>, git commit
 git push fork main
 ```
@@ -173,11 +173,11 @@ git push fork main
 ```
 
 **Cách C — Bỏ qua commit không phù hợp**:
-Nếu locpham có commit anh không muốn (vd breaking change, conflict nặng với Phase 6) → dùng cách B (cherry-pick) và bỏ commit đó. Fork sẽ diverge — chỉ sync khi cần.
+Nếu Dương Minh Mẫn có commit anh không muốn (vd breaking change, conflict nặng với Phase 6) → dùng cách B (cherry-pick) và bỏ commit đó. Fork sẽ diverge — chỉ sync khi cần.
 
 ### Khi nào nên sync upstream?
 
-- ✅ Locpham announce release mới (v3.1.3, v3.2…)
+- ✅ Dương Minh Mẫn announce release mới (v3.1.3, v3.2…)
 - ✅ Có security fix quan trọng
 - ✅ Anh thấy bug ở upstream đã fix, anh cũng đang bị
 - ⏰ Định kỳ mỗi 2-4 tuần để không bị tụt quá xa
@@ -192,15 +192,15 @@ git clone https://github.com/hsholding/ZaloCRM.git
 cd ZaloCRM
 git remote rename origin fork
 
-# Thêm upstream gốc của locpham (read-only)
-git remote add origin https://github.com/locphamnguyen/ZaloCRM.git
+# Thêm upstream gốc của Dương Minh Mẫn (read-only)
+git remote add origin https://github.com/dmman16pn/ZaloCRM.git
 
 # Verify
 git remote -v
 # fork    https://github.com/hsholding/ZaloCRM.git (fetch)
 # fork    https://github.com/hsholding/ZaloCRM.git (push)
-# origin  https://github.com/locphamnguyen/ZaloCRM.git (fetch)
-# origin  https://github.com/locphamnguyen/ZaloCRM.git (push)
+# origin  https://github.com/dmman16pn/ZaloCRM.git (fetch)
+# origin  https://github.com/dmman16pn/ZaloCRM.git (push)
 
 # Fetch tags + upstream-mirror branch
 git fetch fork --tags
@@ -230,15 +230,15 @@ git checkout main
 git merge feat/abc
 git push fork main
 
-# ========== ĐÓNG GÓP CHO LOCPHAM ==========
+# ========== ĐÓNG GÓP CHO DƯƠNG MINH MẪN ==========
 # Cherry-pick commits muốn đóng góp sang branch contrib:
 git checkout -b contrib/fix-xxx upstream-mirror
 git cherry-pick <hash>
 git push fork contrib/fix-xxx
 # → Vào https://github.com/hsholding/ZaloCRM → "Contribute" → "Open pull request"
-# → Target: locphamnguyen/ZaloCRM:main
+# → Target: dmman16pn/ZaloCRM:main
 
-# ========== LẤY UPDATE TỪ LOCPHAM ==========
+# ========== LẤY UPDATE TỪ DƯƠNG MINH MẪN ==========
 git fetch origin
 git checkout upstream-mirror
 git merge --ff-only origin/main
@@ -268,7 +268,7 @@ git checkout -b restore-branch stable-2026-05-18
 
 | Hành động | Lý do |
 |---|---|
-| ❌ `git push origin` | Không có quyền — repo của locpham |
+| ❌ `git push origin` | Không có quyền — repo của Dương Minh Mẫn |
 | ❌ `git push fork main --force` (không có lý do) | Mất history của teammates |
 | ❌ Commit secret/`.env` vào git | Lộ password, JWT key, MinIO credentials |
 | ⚠️ `git reset --hard` khi có uncommitted changes | Mất work — `git stash` trước |
@@ -280,6 +280,6 @@ git checkout -b restore-branch stable-2026-05-18
 ## 🔗 Tham khảo
 
 - **Fork GitHub**: https://github.com/hsholding/ZaloCRM
-- **Upstream gốc**: https://github.com/locphamnguyen/ZaloCRM
+- **Upstream gốc**: https://github.com/dmman16pn/ZaloCRM
 - **README fork**: [../README.md](../README.md)
-- **README upstream** (gốc locpham): xem phần dưới của README.md (line 175+)
+- **README upstream** (gốc Dương Minh Mẫn): xem phần dưới của README.md (line 175+)
