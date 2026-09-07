@@ -4,6 +4,7 @@ import { requireRole } from '../auth/role-middleware.js';
 import { requireZaloAccess } from '../zalo/zalo-access-middleware.js';
 import { getAiConfig, getAiUsage, updateAiConfig, generateAiOutput, aiFormatRichText } from './ai-service.js';
 import { getAvailableProviders } from './provider-registry.js';
+import { askDailyBrief, collectDailySnapshot, sanitizeHistory } from './daily-brief-service.js';
 import { logger } from '../../shared/utils/logger.js';
 import { prisma } from '../../shared/database/prisma-client.js';
 
@@ -110,6 +111,38 @@ export async function aiRoutes(app: FastifyInstance) {
     } catch (err) {
       logger.error('[ai] Sentiment error:', err);
       return sendHandledError(reply, err, 'Failed to analyze sentiment');
+    }
+  });
+
+  // ── Daily brief — popup "Hỏi AI về tình trạng khách hàng hôm nay" ─────────
+  // GET  /ai/daily-brief      → snapshot số liệu hôm nay (KPI + danh sách ngắn)
+  // POST /ai/daily-brief/ask  → { question, history? } → { answer, source, snapshot }
+  //   source='fallback' khi AI tắt / thiếu key / provider lỗi → FE vẫn hiển thị tóm tắt.
+  app.get('/api/v1/ai/daily-brief', async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const user = request.user!;
+      return await collectDailySnapshot({ id: user.id, orgId: user.orgId, role: user.role });
+    } catch (err) {
+      logger.error('[ai] Daily brief snapshot error:', err);
+      return reply.status(500).send({ error: 'Không lấy được số liệu hôm nay' });
+    }
+  });
+
+  app.post('/api/v1/ai/daily-brief/ask', async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const body = (request.body || {}) as { question?: unknown; history?: unknown };
+      const question = typeof body.question === 'string' ? body.question.trim() : '';
+      if (!question) return reply.status(400).send({ error: 'question is required' });
+      if (question.length > 500) return reply.status(400).send({ error: 'Câu hỏi quá dài (tối đa 500 ký tự)' });
+      const user = request.user!;
+      return await askDailyBrief({
+        user: { id: user.id, orgId: user.orgId, role: user.role },
+        question,
+        history: sanitizeHistory(body.history),
+      });
+    } catch (err) {
+      logger.error('[ai] Daily brief ask error:', err);
+      return sendHandledError(reply, err, 'Không hỏi được AI lúc này');
     }
   });
 

@@ -2,6 +2,12 @@
 
 Tất cả thay đổi đáng chú ý của ZaloCRM được ghi lại tại đây. Dự án dùng nhánh `main` làm dòng phát hành chính.
 
+## Unreleased
+
+### Added
+
+- **Popup "Hỏi AI về tình trạng khách hàng hôm nay"**: nút nổi góc phải dưới (desktop + mobile) mở hộp chat với trợ lý AI. Backend gom snapshot trong ngày theo org timezone (KH mới, tin vào/ra, hội thoại chưa trả lời, KH đang tương tác, lịch hẹn, ghi chú, KH đình trệ, pipeline) rồi ghép với câu hỏi + 8 lượt gần nhất gửi provider AI đang cấu hình. Member chỉ thấy KH được gán / nick Zalo được cấp quyền. Khi AI tắt, thiếu key hoặc provider lỗi → trả tóm tắt rule-based (`source='fallback'`) để popup vẫn dùng được. Endpoint mới: `GET /api/v1/ai/daily-brief`, `POST /api/v1/ai/daily-brief/ask`. Có nút đọc to câu trả lời (Web Speech API, giọng vi-VN nếu trình duyệt hỗ trợ). Files: `backend/src/modules/ai/daily-brief-service.ts`, `frontend/src/components/ai/ai-daily-brief-popup.vue`, `frontend/src/composables/use-daily-brief.ts`, test `backend/tests/ai-daily-brief.test.ts`.
+
 ## v3.3.4 — 06/06/2026
 
 > Bản phát hành tài liệu — không thay đổi code runtime. Bổ sung tài liệu kiến trúc, API và thiết kế tích hợp TCRM.

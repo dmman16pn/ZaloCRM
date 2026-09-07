@@ -140,6 +140,9 @@
 
     <!-- Global toast queue -->
     <ToastContainer />
+
+    <!-- Popup hỏi AI về tình trạng khách hàng hôm nay (nút nổi góc phải dưới) -->
+    <AiDailyBriefPopup />
   </v-app>
 </template>
 
@@ -153,6 +156,7 @@ import NotificationBell from '@/components/NotificationBell.vue';
 import GlobalSearch from '@/components/GlobalSearch.vue';
 import ToastContainer from '@/components/ui/ToastContainer.vue';
 import ExtensionSlot from '@/components/ExtensionSlot.vue';
+import AiDailyBriefPopup from '@/components/ai/ai-daily-brief-popup.vue';
 const theme = useTheme();
 const route = useRoute();
 const authStore = useAuthStore();
