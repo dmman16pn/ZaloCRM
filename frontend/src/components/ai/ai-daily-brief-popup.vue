@@ -65,8 +65,12 @@
               <span class="adb-cell__n">{{ snapshot.counts.inboundMessages }}</span>
               <span class="adb-cell__l">Tin đến</span>
             </div>
-            <div class="adb-cell" :class="{ 'adb-cell--warn': snapshot.counts.unrepliedConversations > 0 }">
-              <span class="adb-cell__n">{{ snapshot.counts.unrepliedConversations }}</span>
+            <div
+              class="adb-cell"
+              :class="{ 'adb-cell--warn': snapshot.counts.unrepliedConversations > 0 }"
+              :title="snapshot.counts.unrepliedBacklog ? `Khách nhắn hôm nay chưa được trả lời. Còn ${snapshot.counts.unrepliedBacklog} hội thoại tồn từ các ngày trước.` : 'Khách nhắn hôm nay chưa được trả lời'"
+            >
+              <span class="adb-cell__n">{{ snapshot.counts.unrepliedConversations }}<span v-if="snapshot.counts.unrepliedBacklog" class="adb-cell__sub">+{{ formatCompact(snapshot.counts.unrepliedBacklog) }}</span></span>
               <span class="adb-cell__l">Chờ trả lời</span>
             </div>
             <div class="adb-cell">
@@ -167,6 +171,10 @@ const dayNumber = computed(() => String(todayParts.value?.day ?? '').padStart(2,
 const weekdayLabel = computed(() => (todayParts.value ? WEEKDAY[todayParts.value.dayOfWeek] : ''));
 const monthLabel = computed(() => (todayParts.value ? `tháng ${todayParts.value.month}, ${todayParts.value.year}` : ''));
 
+/** 3549 → "3,5k" cho ô số liệu chật. */
+function formatCompact(n: number): string {
+  return n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1).replace('.0', '').replace('.', ',')}k` : String(n);
+}
 function formatShort(dateKey: string): string {
   const [y, m, d] = dateKey.split('-');
   return `${d}/${m}/${y}`;

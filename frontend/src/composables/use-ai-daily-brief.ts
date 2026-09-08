@@ -26,6 +26,7 @@ export interface BriefConversation {
   zaloAccount: string;
   lastMessageAt: string | null;
   waitingMinutes: number | null;
+  waiting: string | null;
   unreadCount: number;
 }
 
@@ -53,6 +54,7 @@ export interface DailyBriefSnapshot {
     inboundMessages: number;
     outboundMessages: number;
     unrepliedConversations: number;
+    unrepliedBacklog: number;
     appointmentsTotal: number;
     appointmentsScheduled: number;
     appointmentsCompleted: number;

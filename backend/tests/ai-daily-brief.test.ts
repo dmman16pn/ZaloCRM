@@ -33,11 +33,13 @@ vi.mock('../src/modules/auth/auth-middleware.js', () => ({
 
 const {
   buildDailyBriefSnapshot, askDailyBrief, orgDayRange, sanitizeHistory,
-  buildDailyBriefUserPrompt, PER_USER_DAILY_CAP, _resetUserCounters,
+  buildDailyBriefUserPrompt, PER_USER_DAILY_CAP, _resetUserCounters, waitingLabel,
 } = await import('../src/modules/ai/daily-brief-service.js');
 const { dailyBriefRoutes } = await import('../src/modules/ai/daily-brief-routes.js');
 
 const NOW = new Date('2026-09-08T03:30:00.000Z'); // 10:30 sáng 08/09 giờ VN
+const snapStart = () => new Date('2026-09-07T17:00:00.000Z');
+const snapEnd = () => new Date('2026-09-08T17:00:00.000Z');
 
 const CONTACT = {
   id: 'c1', fullName: 'Nguyễn Văn A', crmName: null, phone: '0901', leadScore: 72,
@@ -96,6 +98,17 @@ describe('orgDayRange', () => {
   });
 });
 
+describe('waitingLabel', () => {
+  it('đổi phút thành nhãn dễ đọc', () => {
+    expect(waitingLabel(0)).toBe('vừa xong');
+    expect(waitingLabel(45)).toBe('45 phút');
+    expect(waitingLabel(85)).toBe('1 giờ 25 phút');
+    expect(waitingLabel(180)).toBe('3 giờ');
+    expect(waitingLabel(115421)).toBe('80 ngày 3 giờ');
+    expect(waitingLabel(null)).toBeNull();
+  });
+});
+
 describe('buildDailyBriefSnapshot', () => {
   it('gom số liệu + danh sách, admin không lọc theo nick', async () => {
     const snap = await buildDailyBriefSnapshot({ orgId: 'org-1', userId: 'user-1', role: 'admin' }, NOW);
@@ -107,7 +120,12 @@ describe('buildDailyBriefSnapshot', () => {
     expect(snap.counts.appointmentsScheduled).toBe(1);
     expect(snap.counts.appointmentsCompleted).toBe(1);
     expect(snap.counts.notesWritten).toBe(4);
-    expect(snap.unrepliedConversations[0]).toMatchObject({ contactName: 'Nguyễn Văn A', waitingMinutes: 30, zaloAccount: 'Nick 1' });
+    expect(snap.counts.unrepliedConversations).toBe(2);
+    expect(snap.counts.unrepliedBacklog).toBe(2);
+    expect(snap.unrepliedConversations[0]).toMatchObject({ contactName: 'Nguyễn Văn A', waitingMinutes: 30, waiting: '30 phút', zaloAccount: 'Nick 1' });
+    // Danh sách chờ trả lời chỉ lấy hội thoại có tin cuối HÔM NAY; backlog đếm riêng (tin cuối trước hôm nay)
+    expect(prismaMock.conversation.findMany.mock.calls[0][0].where.lastMessageAt).toEqual({ gte: snapStart(), lt: snapEnd() });
+    expect(prismaMock.conversation.count.mock.calls[1][0].where.lastMessageAt).toEqual({ lt: snapStart() });
     expect(snap.appointments[1]).toMatchObject({ contactName: 'Chị Hoa', time: '08:00', status: 'completed' });
     expect(snap.activeContacts[0]).toMatchObject({ name: 'Nguyễn Văn A', status: 'Nóng', assignedTo: 'Sale B' });
     expect(prismaMock.zaloAccountAccess.findMany).not.toHaveBeenCalled();
