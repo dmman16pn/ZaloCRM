@@ -4,6 +4,7 @@
  */
 import type { ZaloCrmPlugin } from '../../plugin-api/index.js';
 import { aiRoutes } from './ai-routes.js';
+import { dailyBriefRoutes } from './daily-brief-routes.js';
 
 export const aiPlugin: ZaloCrmPlugin = {
   name: 'ai',
@@ -11,5 +12,7 @@ export const aiPlugin: ZaloCrmPlugin = {
   edition: 'core',
   async register({ app }) {
     await app.register(aiRoutes);
+    // Popup "Hỏi AI về khách hôm nay" — snapshot + hỏi đáp.
+    await app.register(dailyBriefRoutes);
   },
 };

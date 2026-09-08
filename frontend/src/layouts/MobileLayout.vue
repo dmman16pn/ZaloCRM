@@ -29,6 +29,9 @@
       </div>
     </v-main>
 
+    <!-- Popup nổi: hỏi AI về tình trạng khách hàng hôm nay -->
+    <AiDailyBriefPopup />
+
     <BottomNav />
   </v-app>
 </template>
@@ -41,6 +44,7 @@ import { useRouter } from 'vue-router';
 import NotificationBell from '@/components/NotificationBell.vue';
 import BottomNav from '@/components/BottomNav.vue';
 import OfflineIndicator from '@/components/OfflineIndicator.vue';
+import AiDailyBriefPopup from '@/components/ai/ai-daily-brief-popup.vue';
 
 const theme = useTheme();
 const authStore = useAuthStore();
