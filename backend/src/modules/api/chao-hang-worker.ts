@@ -4,7 +4,7 @@
  *
  * Luồng: GET recipients từ BOT → lặp từng khách (giãn cách, chỉ trong khung giờ VN,
  * có hạn mức tìm UID/ngày) → nếu thiếu UID thì findUser theo SĐT qua 1 nick cố định
- * → gửi ảnh chào hàng theo tier (chunk theo PUBLIC_MAX_IMAGES) → ghi ChaoHangResult
+ * → gửi ảnh chào hàng theo tier (chunk theo CHAO_HANG_IMAGE_LOT) → ghi ChaoHangResult
  * → callback BOT /uid (UID mới) + /ket-qua (định kỳ partial, 1 lần cuối final).
  *
  * Idempotent theo job_id: re-trigger cùng job bỏ qua khách đã 'sent' (không gửi trùng).
@@ -15,7 +15,7 @@ import { prisma } from '../../shared/database/prisma-client.js';
 import { logger } from '../../shared/utils/logger.js';
 import { zaloOps } from '../../shared/zalo-operations.js';
 import { SsrfBlockedError } from '../../shared/utils/ssrf-guard.js';
-import { sendToThread, PartialSendError, PUBLIC_MAX_IMAGES } from './public-api-routes.js';
+import { sendToThread, PartialSendError, CHAO_HANG_IMAGE_LOT } from './public-api-routes.js';
 
 // ── Kiểu dữ liệu hợp đồng với BOT ───────────────────────────────────────────────
 export interface ChaoHangProduct {
@@ -397,11 +397,11 @@ async function processJob(crmJobId: string): Promise<void> {
       await postUidToBot(job, r.customer_id, uid, 'found');
     }
 
-    // 4) Gửi ảnh chào hàng (chia lô theo PUBLIC_MAX_IMAGES; threadType user = 0).
+    // 4) Gửi ảnh chào hàng (chia lô theo CHAO_HANG_IMAGE_LOT; threadType user = 0).
     // Khách đã từng bị Zalo chặn tin TEXT (chưa kết bạn + tắt nhận tin người lạ) → gửi lời
     // nhắn làm DESC của ảnh cuối ngay từ đầu (1 tin ảnh, không bị chặn) thay vì tin text riêng.
     const useCaption = outroMessage ? await shouldUseCaption(job.orgId, job.zaloAccountId, r.customer_id, uid) : false;
-    const lots = chunk(imageUrls, PUBLIC_MAX_IMAGES);
+    const lots = chunk(imageUrls, CHAO_HANG_IMAGE_LOT);
     let ok = true;
     let errMsg: string | undefined;
     for (let li = 0; li < lots.length; li++) {

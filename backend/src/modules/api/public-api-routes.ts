@@ -14,7 +14,12 @@ import { logger } from '../../shared/utils/logger.js';
 
 // Public API image-send limits. Ảnh tải từ URL (HTTPS only — qua ssrf-guard).
 const PUBLIC_IMAGE_MAX = 25 * 1024 * 1024; // 25MB/ảnh
-export const PUBLIC_MAX_IMAGES = 10;
+// Trần ảnh MỖI REQUEST public (messages/send, groups/broadcast). Đổi qua env PUBLIC_MAX_IMAGES
+// (mặc định 50 — bot chào hàng nhóm gửi gộp tới 50 SP/lần, xem chaoHangGroup.js bên bot).
+export const PUBLIC_MAX_IMAGES = Math.max(1, Number(process.env.PUBLIC_MAX_IMAGES) || 50);
+// Cỡ lô ảnh khi worker chào hàng 1-1 gửi cho TỪNG khách — giữ 10, KHÔNG đi theo trần request
+// (album quá to gửi cho người lạ dễ fail/khoá nick hơn gửi vào nhóm).
+export const CHAO_HANG_IMAGE_LOT = 10;
 const PUBLIC_IMAGE_EXT: Record<string, string> = {
   'image/jpeg': '.jpg',
   'image/png': '.png',
