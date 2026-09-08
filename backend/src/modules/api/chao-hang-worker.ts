@@ -502,6 +502,11 @@ async function recountAndPersist(crmJobId: string) {
 // ── Auto tìm UID Zalo (nền tảng auto-RMKT) ──────────────────────────────────────
 // BOT cron đẩy batch khách cần tìm UID → resolver tìm dần (giãn cách), backoff khi
 // Zalo rate-limit (findUser THROW) — KHÔNG đánh dấu not_found trong trường hợp đó.
+/** Mã lỗi findUser mang nghĩa "SĐT này không có/không dùng được Zalo" — không phải bị chặn tra cứu. */
+export function isFindUserNotFoundError(message: string): boolean {
+  return /\[zalo:(212|216|219)\]/.test(message);
+}
+
 export async function runUidResolve(params: {
   orgId: string;
   botBaseUrl: string;
@@ -523,8 +528,18 @@ export async function runUidResolve(params: {
       const res = (await zaloOps.findUser(params.zaloAccountId, phone)) as Record<string, unknown> | null;
       foundUid = res ? String((res.uid as string) || (res.userId as string) || "") || null : null;
     } catch (err) {
-      // Lỗi (rất có thể Zalo chặn vì tra quá nhiều) → BACKOFF: dừng batch, KHÔNG đánh dấu not_found.
-      logger.warn(`[uid-resolve] findUser customer=${it.customer_id} lỗi → backoff: ${(err as Error)?.message}`);
+      const msg = (err as Error)?.message || String(err);
+      // 2026-09-08: Zalo trả LỖI riêng cho từng SĐT (không phải rate-limit) → coi là not_found
+      // và đi tiếp. Trước đây mọi lỗi đều break → batch dừng ở khách đầu tiên, khách đó không
+      // được báo về BOT nên BOT đẩy lại đúng 20 khách ấy mỗi 5 phút → cả ngày chỉ tìm được ~25.
+      //   [zalo:212] Không tìm thấy · [zalo:216] User không hợp lệ · [zalo:219] SĐT không hợp lệ
+      if (isFindUserNotFoundError(msg)) {
+        await postUidToBot(job, it.customer_id, null, 'not_found');
+        done++;
+        continue;
+      }
+      // Lỗi khác (rất có thể Zalo chặn vì tra quá nhiều) → BACKOFF: dừng batch, KHÔNG đánh dấu not_found.
+      logger.warn(`[uid-resolve] findUser customer=${it.customer_id} lỗi → backoff: ${msg}`);
       break;
     }
     if (foundUid) await postUidToBot(job, it.customer_id, foundUid, "found");
