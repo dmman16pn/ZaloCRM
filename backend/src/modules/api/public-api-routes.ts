@@ -14,7 +14,12 @@ import { logger } from '../../shared/utils/logger.js';
 
 // Public API image-send limits. Ảnh tải từ URL (HTTPS only — qua ssrf-guard).
 const PUBLIC_IMAGE_MAX = 25 * 1024 * 1024; // 25MB/ảnh
-export const PUBLIC_MAX_IMAGES = 10;
+// Trần ảnh MỖI REQUEST public (messages/send, groups/broadcast). Đổi qua env PUBLIC_MAX_IMAGES
+// (mặc định 50 — bot chào hàng nhóm gửi gộp tới 50 SP/lần, xem chaoHangGroup.js bên bot).
+export const PUBLIC_MAX_IMAGES = Math.max(1, Number(process.env.PUBLIC_MAX_IMAGES) || 50);
+// Cỡ lô ảnh khi worker chào hàng 1-1 gửi cho TỪNG khách — giữ 10, KHÔNG đi theo trần request
+// (album quá to gửi cho người lạ dễ fail/khoá nick hơn gửi vào nhóm).
+export const CHAO_HANG_IMAGE_LOT = 10;
 const PUBLIC_IMAGE_EXT: Record<string, string> = {
   'image/jpeg': '.jpg',
   'image/png': '.png',
@@ -28,7 +33,25 @@ const PUBLIC_IMAGE_EXT: Record<string, string> = {
  */
 async function downloadImage(rawUrl: string): Promise<{ buffer: Buffer; ext: string }> {
   const safeUrl = assertSafeOutboundUrl(rawUrl); // throws SsrfBlockedError nếu không hợp lệ/HTTP/private
-  const res = await fetch(safeUrl.toString(), { signal: AbortSignal.timeout(15_000) });
+  // 2026-09-08: lỗi mạng thoáng qua (DNS ENOTFOUND, "fetch failed", 5xx CDN) làm cả broadcast
+  // trả 500 "Failed to broadcast" dù chỉ 1 ảnh tải hụt → thử lại tối đa 3 lần, giãn 2s.
+  let res: Response | null = null;
+  let lastErr: unknown = null;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      res = await fetch(safeUrl.toString(), { signal: AbortSignal.timeout(15_000) });
+      if (res.ok || (res.status >= 400 && res.status < 500)) break; // 4xx là lỗi thật, không thử lại
+      lastErr = new Error(`fetch ${res.status}`);
+    } catch (err) {
+      lastErr = err;
+      res = null;
+    }
+    if (attempt < 3) {
+      logger.warn(`[public-api] tải ảnh lỗi lần ${attempt}/3 (${(lastErr as Error)?.message}) — thử lại: ${safeUrl.host}`);
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+  }
+  if (!res) throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
   if (!res.ok) throw new Error(`fetch ${res.status}`);
   const mime = (res.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
   const ext = PUBLIC_IMAGE_EXT[mime];
@@ -722,6 +745,42 @@ export async function publicApiRoutes(app: FastifyInstance): Promise<void> {
     } catch (err) {
       logger.error('[public-api] POST /groups/broadcast error:', err);
       return reply.status(500).send({ error: 'Failed to broadcast' });
+    }
+  });
+
+  // ── Tra kết quả đăng nhóm theo externalRef ────────────────────────────────
+  // Bot gọi khi request /groups/broadcast bị TIMEOUT phía bot (Zalo upload chậm, album
+  // nhiều ảnh × nhiều nhóm có thể mất 5–15 phút) để đối chiếu kết quả THẬT thay vì
+  // ghi nhận "failed" trong khi CRM vẫn đăng xong. Trả found=false nếu CRM chưa xong.
+  app.get('/api/public/group-post-logs', async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const orgId = (request as any).orgId as string;
+      const { externalRef } = request.query as Record<string, string>;
+      if (!externalRef || typeof externalRef !== 'string') {
+        return reply.status(400).send({ error: 'externalRef is required' });
+      }
+      const log = await prisma.groupPostLog.findFirst({
+        where: { orgId, externalRef },
+        orderBy: { createdAt: 'desc' },
+        select: {
+          id: true, status: true, sentCount: true, failedCount: true,
+          groupResults: true, createdAt: true, zaloAccountId: true,
+        },
+      });
+      if (!log) return { found: false };
+      return {
+        found: true,
+        id: log.id,
+        status: log.status,
+        sent: log.sentCount,
+        failed: log.failedCount,
+        results: log.groupResults,
+        createdAt: log.createdAt,
+        zaloAccountId: log.zaloAccountId,
+      };
+    } catch (err) {
+      logger.error('[public-api] GET /group-post-logs error:', err);
+      return reply.status(500).send({ error: 'Failed to fetch group post log' });
     }
   });
 }

@@ -21,7 +21,7 @@ vi.mock('../src/modules/api/public-api-routes.js', async (orig) => {
 });
 
 const { chaoHangPublicRoutes } = await import('../src/modules/api/chao-hang-public-routes.js');
-const { runChaoHangJob } = await import('../src/modules/api/chao-hang-worker.js');
+const { runChaoHangJob, runUidResolve, isFindUserNotFoundError } = await import('../src/modules/api/chao-hang-worker.js');
 
 const HEADERS = { 'x-api-key': 'zcrm_testkey', 'content-type': 'application/json' };
 
@@ -178,5 +178,54 @@ describe('runChaoHangJob (worker)', () => {
     // có gọi /uid về bot
     const uidPost = (global.fetch as any).mock.calls.find((c: any[]) => String(c[0]).includes('/uid'));
     expect(uidPost).toBeTruthy();
+  });
+});
+
+// ── runUidResolve: batch tìm UID nền do BOT đẩy sang mỗi 5 phút ─────────────────
+describe('runUidResolve (auto tìm UID)', () => {
+  const P = { orgId: 'org-1', botBaseUrl: 'https://noibo.example.shop', internalKey: 'k', zaloAccountId: 'za-1', delaySec: 0 };
+
+  function uidPosts() {
+    return (global.fetch as any).mock.calls
+      .filter((c: any[]) => String(c[0]).endsWith('/api/chao-hang/uid'))
+      .map((c: any[]) => JSON.parse(c[1].body));
+  }
+  beforeEach(() => {
+    global.fetch = vi.fn(async () => ({ ok: true, headers: { get: () => 'application/json' }, json: async () => ({ success: true }) })) as any;
+  });
+
+  it('phân loại mã lỗi findUser "không có Zalo" (212/216/219) khác lỗi bị chặn', () => {
+    expect(isFindUserNotFoundError('findUser failed: Không tìm thấy [zalo:212]')).toBe(true);
+    expect(isFindUserNotFoundError('findUser failed: User không hợp lệ [zalo:216]')).toBe(true);
+    expect(isFindUserNotFoundError('findUser failed: Số điện thoại không hợp lệ [zalo:219]')).toBe(true);
+    expect(isFindUserNotFoundError('findUser failed: rate limited [zalo:114]')).toBe(false);
+    expect(isFindUserNotFoundError('fetch failed')).toBe(false);
+  });
+
+  it('SĐT không có Zalo (zalo:212) → báo not_found về BOT và ĐI TIẾP khách sau', async () => {
+    findUserMock
+      .mockRejectedValueOnce(new Error('findUser failed: Không tìm thấy [zalo:212]'))
+      .mockResolvedValueOnce({ uid: 'uid-2' })
+      .mockRejectedValueOnce(new Error('findUser failed: Số điện thoại không hợp lệ [zalo:219]'));
+    await runUidResolve({ ...P, items: [{ customer_id: 1, phone: '0901' }, { customer_id: 2, phone: '0902' }, { customer_id: 3, phone: '0903' }] });
+    expect(findUserMock).toHaveBeenCalledTimes(3);
+    expect(uidPosts()).toEqual([
+      { customer_id: 1, zalo_uid: null, status: 'not_found' },
+      { customer_id: 2, zalo_uid: 'uid-2', status: 'found' },
+      { customer_id: 3, zalo_uid: null, status: 'not_found' },
+    ]);
+  });
+
+  it('lỗi khác (nghi Zalo chặn tra cứu) → backoff: dừng batch, KHÔNG báo not_found', async () => {
+    findUserMock.mockRejectedValueOnce(new Error('findUser failed: Lỗi không xác định [zalo:112]'));
+    await runUidResolve({ ...P, items: [{ customer_id: 1, phone: '0901' }, { customer_id: 2, phone: '0902' }] });
+    expect(findUserMock).toHaveBeenCalledTimes(1);
+    expect(uidPosts()).toEqual([]);
+  });
+
+  it('không có SĐT → báo no_phone, không gọi findUser', async () => {
+    await runUidResolve({ ...P, items: [{ customer_id: 7, phone: '' }] });
+    expect(findUserMock).not.toHaveBeenCalled();
+    expect(uidPosts()).toEqual([{ customer_id: 7, zalo_uid: null, status: 'no_phone' }]);
   });
 });

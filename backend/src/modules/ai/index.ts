@@ -10,6 +10,7 @@ export const aiPlugin: ZaloCrmPlugin = {
   version: '1.0.0',
   edition: 'core',
   async register({ app }) {
+    // aiRoutes gồm cả 2 endpoint của popup "Hỏi AI về khách hàng hôm nay".
     await app.register(aiRoutes);
   },
 };
