@@ -580,7 +580,15 @@ async function cancelFriendRequest(accountId: string, userId: string) {
 }
 
 async function getSentFriendRequests(accountId: string) {
-  return exec({ accountId, category: 'friend_read', operation: 'getSentFriendRequests' },
+  return exec(
+    {
+      accountId,
+      category: 'friend_read',
+      operation: 'getSentFriendRequests',
+      // 18/09/2026: [zalo:112] ở lệnh này là nick không được Zalo cho xem lời mời đã gửi (Minmy Luxury) —
+      // lỗi bền, caller đã xử lý (bỏ qua bước). Không in ERROR + stack mỗi 15 phút nữa.
+      suppressErrorLog: (err) => err?.code === 112,
+    },
     (api) => api.getSentFriendRequest());
 }
 
