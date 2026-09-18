@@ -646,42 +646,46 @@ async function upsertContact(msg: IncomingMessage, orgId: string): Promise<strin
   //  2. By zaloUsername — Zalo handle (t_xxx) cũng toàn cục
   //  3. By zaloUid (per-account) — fallback khi global identifiers chưa resolve
   //  4. Create new contact
-  let contact: { id: string; fullName: string | null; zaloGlobalId: string | null; zaloUid: string | null } | null = null;
-  if (globalId) {
-    contact = await prisma.contact.findFirst({
-      where: { orgId, zaloGlobalId: globalId },
-      select: { id: true, fullName: true, zaloGlobalId: true, zaloUid: true },
-    });
-  }
-  if (!contact && username) {
-    contact = await prisma.contact.findFirst({
-      where: { orgId, zaloUsername: username },
-      select: { id: true, fullName: true, zaloGlobalId: true, zaloUid: true },
-    });
-  }
-  if (!contact) {
-    contact = await prisma.contact.findFirst({
-      where: { orgId, zaloUid: contactUid },
-      select: { id: true, fullName: true, zaloGlobalId: true, zaloUid: true },
-    });
-  }
+  type ContactPick = { id: string; fullName: string | null; zaloGlobalId: string | null; zaloUid: string | null };
+  const sel = { id: true, fullName: true, zaloGlobalId: true, zaloUid: true } as const;
+  const findContact = async (): Promise<ContactPick | null> => {
+    let c: ContactPick | null = null;
+    if (globalId) c = await prisma.contact.findFirst({ where: { orgId, zaloGlobalId: globalId }, select: sel });
+    if (!c && username) c = await prisma.contact.findFirst({ where: { orgId, zaloUsername: username }, select: sel });
+    if (!c) c = await prisma.contact.findFirst({ where: { orgId, zaloUid: contactUid }, select: sel });
+    return c;
+  };
+  let contact: ContactPick | null = await findContact();
+  let justCreated = false;
 
   if (!contact) {
-    const created = await prisma.contact.create({
-      data: {
-        id: randomUUID(),
-        orgId,
-        zaloUid: contactUid,
-        zaloGlobalId: globalId || null,
-        zaloUsername: username || null,
-        fullName: contactName || 'Unknown',
-      },
-      select: { id: true, fullName: true, zaloGlobalId: true, zaloUid: true },
-    });
-    contact = created;
-    emitWebhook(orgId, 'contact.created', { contactId: contact.id, fullName: contact.fullName });
-  } else {
+    try {
+      const created = await prisma.contact.create({
+        data: {
+          id: randomUUID(),
+          orgId,
+          zaloUid: contactUid,
+          zaloGlobalId: globalId || null,
+          zaloUsername: username || null,
+          fullName: contactName || 'Unknown',
+        },
+        select: sel,
+      });
+      contact = created;
+      justCreated = true;
+      emitWebhook(orgId, 'contact.created', { contactId: contact.id, fullName: contact.fullName });
+    } catch (err) {
+      // 18/09/2026: ĐUA TẠO CONTACT — cùng 1 khách nhắn 2 nick (hoặc 2 tin liền nhau) → 2 luồng cùng thấy "chưa có"
+      // rồi cùng create → luồng sau đụng UNIQUE (org_id, zalo_global_id) = P2002 và CẢ TIN NHẮN đó bị bỏ
+      // (handleIncomingMessage error, 13 lần/giờ). Không trong transaction → tra lại là có ngay row luồng kia vừa tạo.
+      if ((err as { code?: string })?.code !== 'P2002') throw err;
+      contact = await findContact();
+      if (!contact) throw err;
+    }
+  }
+  if (!justCreated) {
     // Backfill globalId/username nếu vừa resolve được, hoặc cập nhật fullName từ Unknown.
+    // (cũng chạy sau khi thua cuộc đua tạo: luồng kia có thể tạo với ít thông tin hơn)
     const patch: { zaloGlobalId?: string; zaloUsername?: string; fullName?: string; zaloUid?: string } = {};
     if (globalId && contact.zaloGlobalId !== globalId) patch.zaloGlobalId = globalId;
     if (username) patch.zaloUsername = username;

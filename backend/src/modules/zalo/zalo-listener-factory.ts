@@ -73,7 +73,10 @@ async function handleZaloReaction(accountId: string, io: Server | null, reaction
         where: { messageId: message.id, reactorId: reactorZaloUid, reactorSource: 'zalo' },
       });
     } else {
-      await prisma.messageReaction.upsert({
+      // 18/09/2026: Zalo đôi khi bắn CÙNG 1 reaction 2 lần sát nhau → 2 upsert song song, Prisma upsert không
+      // atomic (find-rồi-create) → cái sau đụng UNIQUE (message_id, reactor_id, emoji) = P2002 (2 lần/ngày, in stack).
+      // Thử lại 1 lần: lần 2 thấy row → nhánh update, không mất gì.
+      const upsertReaction = () => prisma.messageReaction.upsert({
         where: {
           messageId_reactorId_emoji: {
             messageId: message.id,
@@ -91,6 +94,12 @@ async function handleZaloReaction(accountId: string, io: Server | null, reaction
           emoji: displayEmoji,
         },
       });
+      try {
+        await upsertReaction();
+      } catch (err) {
+        if ((err as { code?: string })?.code !== 'P2002') throw err;
+        await upsertReaction();
+      }
     }
 
     // ANTI-DRIFT FIX 2026-05-22: emit authoritative totalCount từ DB sau upsert/delete.
