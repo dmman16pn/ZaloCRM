@@ -138,11 +138,11 @@
       <slot />
     </v-main>
 
-    <!-- Popup nổi: hỏi AI về tình trạng khách hàng hôm nay -->
-    <AiDailyBriefPopup />
-
     <!-- Global toast queue -->
     <ToastContainer />
+
+    <!-- Popup hỏi AI về tình trạng khách hàng hôm nay (nút nổi góc phải dưới) -->
+    <AiDailyBriefPopup />
   </v-app>
 </template>
 

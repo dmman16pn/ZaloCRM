@@ -29,8 +29,8 @@
       </div>
     </v-main>
 
-    <!-- Popup nổi: hỏi AI về tình trạng khách hàng hôm nay -->
-    <AiDailyBriefPopup />
+    <!-- Popup hỏi AI về khách hàng hôm nay — đẩy lên trên bottom nav -->
+    <AiDailyBriefPopup :bottom-offset="88" />
 
     <BottomNav />
   </v-app>
